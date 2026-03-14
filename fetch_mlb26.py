@@ -576,6 +576,18 @@ def extract_missions_from_html(html_body: str) -> list[dict]:
         if not title:
             continue
 
+        # Description: <p> text in accordion-content before the meter paragraph
+        desc_parts = []
+        for para_m in re.finditer(r'<p[^>]*>(.*?)</p>', blk, re.DOTALL | re.IGNORECASE):
+            inner = para_m.group(1)
+            if '<meter' in inner:
+                break
+            text = html_module.unescape(re.sub(r'<[^>]+>', ' ', inner)).strip()
+            text = re.sub(r'\s+', ' ', text).strip()
+            if text and text.lower() not in (title.lower(), 'reward'):
+                desc_parts.append(text)
+        desc = ' '.join(desc_parts)
+
         # Progress from <meter max='N' value='M'>
         m_meter = re.search(r'<meter[^>]+max=["\'](\d+)["\'][^>]+value=["\'](\d+)["\']', blk, re.IGNORECASE)
         if not m_meter:
@@ -607,7 +619,7 @@ def extract_missions_from_html(html_body: str) -> list[dict]:
             if m_rnum:
                 reward = m_rnum.group(1).replace(",", "") + " XP"
 
-        missions.append({"t": title, "r": reward, "p": prog_str, "pct": pct})
+        missions.append({"t": title, "r": reward, "p": prog_str, "pct": pct, "d": desc})
 
     if missions:
         return missions
@@ -627,7 +639,7 @@ def extract_missions_from_html(html_body: str) -> list[dict]:
         m_rnum = re.search(r"class=['\"]reward['\"].*?([\d,]+)", blk, re.DOTALL)
         reward = (m_rnum.group(1).replace(",", "") + " XP") if m_rnum else ""
         if title:
-            missions.append({"t": title, "r": reward, "p": f"{cur_v}/{max_v}", "pct": pct})
+            missions.append({"t": title, "r": reward, "p": f"{cur_v}/{max_v}", "pct": pct, "d": ""})
 
     return missions
 

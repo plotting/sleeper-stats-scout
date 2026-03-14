@@ -147,10 +147,12 @@ body { font-family: "Segoe UI", Arial, sans-serif; background: var(--bg); color:
 
 .card-badges { display: flex; gap: 5px; margin-bottom: 8px; flex-wrap: wrap; }
 .badge { display: inline-flex; align-items: center; gap: 3px; padding: 2px 7px; border-radius: 4px; font-size: 10px; font-weight: 700; }
-.badge-done { background: rgba(34,197,94,0.15); color: #22c55e; border: 1px solid rgba(34,197,94,0.3); }
-.badge-owned { background: rgba(245,197,24,0.15); color: #f5c518; border: 1px solid rgba(245,197,24,0.3); }
+.badge-done   { background: rgba(34,197,94,0.15);  color: #22c55e; border: 1px solid rgba(34,197,94,0.3); }
+.badge-owned  { background: rgba(245,197,24,0.15); color: #f5c518; border: 1px solid rgba(245,197,24,0.3); }
+.badge-moment { background: rgba(147,51,234,0.15); color: #c084fc; border: 1px solid rgba(147,51,234,0.3); }
 
-.mcard-title { font-size: 12px; font-weight: 500; color: var(--text); line-height: 1.45; margin-bottom: 10px; }
+.mcard-title { font-size: 12px; font-weight: 500; color: var(--text); line-height: 1.45; margin-bottom: 5px; }
+.mcard-desc  { font-size: 11px; color: var(--muted); line-height: 1.45; margin-bottom: 8px; }
 .mcard-meta { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; }
 .mcard-prog-txt { font-size: 11px; color: var(--muted); font-weight: 600; min-width: 76px; }
 .prog-bar { flex: 1; height: 5px; background: rgba(255,255,255,0.08); border-radius: 3px; overflow: hidden; }
@@ -507,25 +509,7 @@ function renderOtherMissions(progName) {
       const doneCount = list.filter(function(x) { return x.pct >= 100; }).length;
       cards += '<div class="complete-divider">&#10003; ' + doneCount + ' completed</div>';
     }
-    const owned   = missionHasOwnedPlayer(m.t);
-    const matched = getMatchedPlayer(m.t);
-    const color   = progColor(m.pct);
-    let cls = 'mcard';
-    if (isDone)  cls += ' done';
-    if (owned && !isDone) cls += ' owned-player';
-    let badges = '';
-    if (isDone)  badges += '<span class="badge badge-done">&#10003; Complete</span>';
-    if (owned)   badges += '<span class="badge badge-owned">&#9733; ' + matched + '</span>';
-    cards += '<div class="' + cls + '">'
-      + (badges ? '<div class="card-badges">' + badges + '</div>' : '')
-      + '<div class="mcard-title">' + m.t + '</div>'
-      + '<div class="mcard-meta">'
-      +   '<span class="mcard-prog-txt">' + m.p + '</span>'
-      +   '<div class="prog-bar"><div class="prog-fill" style="width:' + Math.min(m.pct,100) + '%;background:' + color + '"></div></div>'
-      +   '<span class="prog-pct" style="color:' + color + '">' + m.pct + '%</span>'
-      + '</div>'
-      + '<div class="mcard-reward"><span class="xp-badge">XP</span>' + m.r + '</div>'
-      + '</div>';
+    cards += buildCard(m);
   }
   area.innerHTML = summHtml + '<div class="mission-grid">' + cards + '</div>';
 }
@@ -581,6 +565,33 @@ function renderContent() {
     + '<div id="mission-area"></div>';
 
   renderMissions();
+}
+
+// ── Card builder ───────────────────────────────────────────────────────────
+function buildCard(m) {
+  const isDone   = m.pct >= 100;
+  const owned    = missionHasOwnedPlayer(m.t);
+  const matched  = getMatchedPlayer(m.t);
+  const color    = progColor(m.pct);
+  const isMoment = m.d && m.d.toLowerCase().includes('moment');
+  let cls = 'mcard';
+  if (isDone)          cls += ' done';
+  if (owned && !isDone) cls += ' owned-player';
+  let badges = '';
+  if (isDone)            badges += '<span class="badge badge-done">&#10003; Complete</span>';
+  if (isMoment && !isDone) badges += '<span class="badge badge-moment">&#9654; Moment</span>';
+  if (owned)             badges += '<span class="badge badge-owned">&#9733; ' + matched + '</span>';
+  return '<div class="' + cls + '">'
+    + (badges ? '<div class="card-badges">' + badges + '</div>' : '')
+    + '<div class="mcard-title">' + m.t + '</div>'
+    + (m.d ? '<div class="mcard-desc">' + m.d + '</div>' : '')
+    + '<div class="mcard-meta">'
+    +   '<span class="mcard-prog-txt">' + m.p + '</span>'
+    +   '<div class="prog-bar"><div class="prog-fill" style="width:' + Math.min(m.pct,100) + '%;background:' + color + '"></div></div>'
+    +   '<span class="prog-pct" style="color:' + color + '">' + m.pct + '%</span>'
+    + '</div>'
+    + '<div class="mcard-reward"><span class="xp-badge">XP</span>' + m.r + '</div>'
+    + '</div>';
 }
 
 // ── Render mission cards ───────────────────────────────────────────────────
@@ -648,27 +659,7 @@ function renderMissions() {
       const doneCount = list.filter(function(x) { return x.pct >= 100; }).length;
       cards += '<div class="complete-divider">&#10003; ' + doneCount + ' completed</div>';
     }
-    const owned   = missionHasOwnedPlayer(m.t);
-    const matched = getMatchedPlayer(m.t);
-    const color   = progColor(m.pct);
-    let cls = 'mcard';
-    if (isDone)  cls += ' done';
-    if (owned && !isDone) cls += ' owned-player';
-
-    let badges = '';
-    if (isDone)  badges += '<span class="badge badge-done">&#10003; Complete</span>';
-    if (owned)   badges += '<span class="badge badge-owned">&#9733; ' + matched + '</span>';
-
-    cards += '<div class="' + cls + '">'
-      + (badges ? '<div class="card-badges">' + badges + '</div>' : '')
-      + '<div class="mcard-title">' + m.t + '</div>'
-      + '<div class="mcard-meta">'
-      +   '<span class="mcard-prog-txt">' + m.p + '</span>'
-      +   '<div class="prog-bar"><div class="prog-fill" style="width:' + Math.min(m.pct,100) + '%;background:' + color + '"></div></div>'
-      +   '<span class="prog-pct" style="color:' + color + '">' + m.pct + '%</span>'
-      + '</div>'
-      + '<div class="mcard-reward"><span class="xp-badge">XP</span>' + m.r + '</div>'
-      + '</div>';
+    cards += buildCard(m);
   }
 
   area.innerHTML = summHtml + '<div class="mission-grid">' + cards + '</div>';
