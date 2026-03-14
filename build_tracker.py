@@ -250,6 +250,23 @@ body { font-family: "Segoe UI", Arial, sans-serif; background: var(--bg); color:
 .inv-section-hdr { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; padding: 2px 0 4px; }
 .auto-player { border-color: rgba(59,158,221,0.2); gap: 10px; }
 
+/* HOME DASHBOARD */
+.home-banner { padding: 18px 22px; margin-bottom: 18px; border-radius: 10px; background: linear-gradient(135deg, #0d1d35 0%, #080d18 100%); border: 1px solid var(--border); display: flex; align-items: flex-end; gap: 20px; }
+.home-banner h1 { font-size: 22px; font-weight: 800; text-transform: uppercase; letter-spacing: 2px; color: #fff; }
+.home-banner p  { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.home-lineup-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 22px; }
+.home-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+.home-card-title { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 10px; }
+.home-player-row { display: flex; align-items: center; gap: 8px; padding: 5px 0; border-bottom: 1px solid rgba(30,53,84,0.6); }
+.home-player-row:last-child { border-bottom: none; }
+.home-player-name { flex: 1; font-size: 12px; font-weight: 500; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.home-player-bar  { width: 60px; height: 4px; background: var(--border); border-radius: 2px; flex-shrink: 0; }
+.home-player-pct  { font-size: 11px; font-weight: 600; white-space: nowrap; }
+.home-missions-hdr { display: flex; align-items: center; gap: 10px; margin: 6px 0 10px; }
+.home-missions-hdr h3 { font-size: 13px; font-weight: 700; }
+.home-missions-hdr .hm-count { font-size: 11px; color: var(--muted); }
+.home-empty { font-size: 12px; color: var(--muted); text-align: center; padding: 14px 0; }
+
 /* Other program sidebar buttons */
 .prog-icon {
   width: 24px; height: 24px; border-radius: 5px; flex-shrink: 0;
@@ -398,6 +415,36 @@ function extractOwnerFromMission(m) {
   return null;
 }
 
+// ── Flat mission list (all programs) ──────────────────────────────────────
+function getAllMissionsFlat() {
+  const all = [];
+  for (const progs of Object.values(D.missions)) {
+    for (const arr of Object.values(progs)) { for (const m of arr) all.push(m); }
+  }
+  for (const pd of Object.values(D.other_programs || {})) {
+    for (const m of (pd.missions || [])) all.push(m);
+  }
+  return all;
+}
+const allMissionsFlat = getAllMissionsFlat();
+
+// ── Mission state tracking (detect completions/new starts between refreshes) ─
+const PREV_PCT_KEY = 'mlb26_prev_pct';
+let prevPct = null;
+try { prevPct = JSON.parse(localStorage.getItem(PREV_PCT_KEY) || 'null'); } catch {}
+const curPct = {};
+for (const m of allMissionsFlat) curPct[m.t] = m.pct;
+localStorage.setItem(PREV_PCT_KEY, JSON.stringify(curPct));
+const recentlyCompleted = [];
+const recentlyStarted   = [];
+if (prevPct) {
+  for (const m of allMissionsFlat) {
+    const prev = prevPct[m.t];
+    if (prev !== undefined && prev < 100 && m.pct >= 100) recentlyCompleted.push(m);
+    if (prev !== undefined && prev === 0  && m.pct  >  0) recentlyStarted.push(m);
+  }
+}
+
 function buildAutoInventory() {
   autoInventory.clear();
   for (const [team, progs] of Object.entries(D.missions)) {
@@ -424,6 +471,18 @@ function buildAutoInventory() {
       }
     }
   }
+  // Merge last-name-only entries into their full-name counterpart
+  // e.g. "Lugo" → merged into "Seth Lugo"
+  for (const [shortName, shortEntries] of [...autoInventory]) {
+    if (shortName.includes(' ')) continue;
+    for (const [fullName, fullEntries] of autoInventory) {
+      if (fullName !== shortName && fullName.endsWith(' ' + shortName)) {
+        for (const e of shortEntries) fullEntries.push(e);
+        autoInventory.delete(shortName);
+        break;
+      }
+    }
+  }
 }
 
 // ── Global stats ───────────────────────────────────────────────────────────
@@ -446,8 +505,133 @@ document.getElementById('g-done').textContent  = gDone;
 document.getElementById('g-total').textContent = gTotal;
 document.getElementById('g-pct').textContent   = gTotal ? Math.round(gDone / gTotal * 100) + '%' : '—';
 
+// ── Home dashboard ─────────────────────────────────────────────────────────
+function selectHome() {
+  clearActive();
+  curTeam = null; curProg = null;
+  const hb = document.getElementById('home-btn');
+  if (hb) hb.classList.add('active');
+  renderHome();
+}
+
+function renderHome() {
+  const content = document.getElementById('content');
+
+  // Lineup advisor data from autoInventory
+  const useInLineup  = [];
+  const safeToRemove = [];
+  for (const [name, entries] of autoInventory) {
+    const allDone = entries.every(function(e) { return e.m.pct >= 100; });
+    if (allDone) {
+      safeToRemove.push(name);
+    } else {
+      const incomplete = entries.filter(function(e) { return e.m.pct < 100; });
+      incomplete.sort(function(a, b) { return b.m.pct - a.m.pct; });
+      useInLineup.push({name, best: incomplete[0]});
+    }
+  }
+  useInLineup.sort(function(a, b) { return b.best.m.pct - a.best.m.pct; });
+
+  // 10 closest incomplete missions (across all programs), pct > 0
+  const closest = allMissionsFlat
+    .filter(function(m) { return m.pct < 100 && m.pct > 0; })
+    .sort(function(a, b) { return b.pct - a.pct; })
+    .slice(0, 10);
+
+  // Recently completed: prefer delta since last refresh; otherwise nothing
+  const showRecent = recentlyCompleted.length > 0;
+  const recentShow = recentlyCompleted.slice(-10).reverse();
+
+  // Helper: render a lineup player row
+  function lineupRow(name, pct, color) {
+    return '<div class="home-player-row">'
+      + '<span class="home-player-name" style="color:#e2e8f0">&#9733; ' + name + '</span>'
+      + '<div class="home-player-bar"><div style="width:' + pct + '%;height:100%;background:' + color + ';border-radius:2px"></div></div>'
+      + '<span class="home-player-pct" style="color:' + color + '">' + pct + '%</span>'
+      + '</div>';
+  }
+
+  // Lineup card HTML
+  let useHtml = '';
+  if (useInLineup.length) {
+    for (const {name, best} of useInLineup) {
+      const c = progColor(best.m.pct);
+      useHtml += lineupRow(name, best.m.pct, c);
+    }
+  } else {
+    useHtml = '<div class="home-empty">No active missions detected</div>';
+  }
+
+  let removeHtml = '';
+  if (safeToRemove.length) {
+    for (const name of safeToRemove) {
+      removeHtml += '<div class="home-player-row">'
+        + '<span class="home-player-name" style="color:#64748b">&#10003; ' + name + '</span>'
+        + '<span class="home-player-pct" style="color:#22c55e;font-size:10px">All done</span>'
+        + '</div>';
+    }
+  } else {
+    removeHtml = '<div class="home-empty">None yet</div>';
+  }
+
+  // Mission section HTML
+  let closestHtml = '';
+  if (closest.length) {
+    closestHtml = '<div class="mission-grid">' + closest.map(buildCard).join('') + '</div>';
+  } else {
+    closestHtml = '<div class="home-empty">No missions in progress yet — run a fetch to load live data.</div>';
+  }
+
+  let recentHtml = '';
+  if (showRecent) {
+    recentHtml = '<div class="home-missions-hdr"><h3 style="color:#22c55e">&#10003; Completed Since Last Refresh</h3>'
+      + '<span class="hm-count">' + recentShow.length + ' mission' + (recentShow.length !== 1 ? 's' : '') + '</span></div>'
+      + '<div class="mission-grid">' + recentShow.map(buildCard).join('') + '</div>';
+  }
+
+  // Newly started since last refresh
+  let startedHtml = '';
+  if (recentlyStarted.length) {
+    const started = recentlyStarted.slice(-10).reverse();
+    startedHtml = '<div class="home-missions-hdr"><h3 style="color:#3b9edd">&#9654; Newly Started Since Last Refresh</h3>'
+      + '<span class="hm-count">' + started.length + '</span></div>'
+      + '<div class="mission-grid">' + started.map(buildCard).join('') + '</div>';
+  }
+
+  content.innerHTML =
+    '<div class="home-banner">'
+    + '<div><h1>Dashboard</h1><p>Your lineup advisor &bull; fetched ' + (D.data_date || 'unknown') + '</p></div>'
+    + '</div>'
+    + '<div class="home-lineup-grid">'
+    +   '<div class="home-card">'
+    +     '<div class="home-card-title" style="color:#22c55e">&#9654; Use in Lineup</div>'
+    +     useHtml
+    +   '</div>'
+    +   '<div class="home-card">'
+    +     '<div class="home-card-title" style="color:#64748b">&#10003; Safe to Remove</div>'
+    +     removeHtml
+    +   '</div>'
+    + '</div>'
+    + (recentHtml   ? recentHtml   : '')
+    + (startedHtml  ? startedHtml  : '')
+    + '<div class="home-missions-hdr"><h3>&#127919; 10 Closest to Finishing</h3>'
+    +   '<span class="hm-count">' + closest.length + ' missions</span></div>'
+    + closestHtml;
+}
+
 // ── Sidebar ────────────────────────────────────────────────────────────────
 const sidebar = document.getElementById('sidebar');
+
+// Dashboard home button
+const homeBtn = document.createElement('button');
+homeBtn.id = 'home-btn';
+homeBtn.className = 'team-btn';
+homeBtn.innerHTML = '<span style="font-size:13px;margin-right:2px">&#8962;</span><span style="flex:1">Dashboard</span>';
+homeBtn.addEventListener('click', selectHome);
+sidebar.appendChild(homeBtn);
+const homeDivSep = document.createElement('div');
+homeDivSep.style.cssText = 'height:1px;background:var(--border);margin:6px 14px 4px;';
+sidebar.appendChild(homeDivSep);
 
 // Other Programs — grouped by meta.group field
 const OP_GROUP_ORDER  = ['xp_path', 'assorted', 'multiplayer'];
@@ -687,20 +871,20 @@ function buildCard(m) {
   const owned    = missionHasOwnedPlayer(m.t);
   const matched  = getMatchedPlayer(m.t);
   const color    = progColor(m.pct);
-  // Moment: description says "moment", OR progress is "X/1", OR "Name - Country" WBC-style title
+  // WBC/country moment: "Name - Country" title — badge stays even when complete
   const isCountryMoment = /^[A-Z][A-Za-z\u00C0-\u024F'-]+(?: [A-Z][A-Za-z\u00C0-\u024F'-]+)+ - [A-Z][a-z]/.test(m.t);
-  const isMoment = !isDone && (
+  // Other moment types: only badge when incomplete (description gone once done)
+  const isMoment = isCountryMoment || (!isDone && (
     (m.d && m.d.toLowerCase().includes('moment')) ||
-    /^\\d+\\/1\\s*$/.test(m.p) ||
-    isCountryMoment
-  );
+    /^\\d+\\/1\\s*$/.test(m.p)
+  ));
   let cls = 'mcard';
   if (isDone)          cls += ' done';
   if (owned && !isDone) cls += ' owned-player';
   let badges = '';
-  if (isDone)            badges += '<span class="badge badge-done">&#10003; Complete</span>';
-  if (isMoment && !isDone) badges += '<span class="badge badge-moment">&#9654; Moment</span>';
-  if (owned)             badges += '<span class="badge badge-owned">&#9733; ' + matched + '</span>';
+  if (isDone)   badges += '<span class="badge badge-done">&#10003; Complete</span>';
+  if (isMoment) badges += '<span class="badge badge-moment">&#9654; Moment</span>';
+  if (owned)    badges += '<span class="badge badge-owned">&#9733; ' + matched + '</span>';
   return '<div class="' + cls + '">'
     + (badges ? '<div class="card-badges">' + badges + '</div>' : '')
     + '<div class="mcard-title">' + m.t + '</div>'
@@ -902,6 +1086,7 @@ function renderInvList() {
 function rerender() {
   if (curTeam) renderMissions();
   else if (curProg) renderOtherMissions(curProg);
+  else renderHome();
 }
 document.getElementById('search').addEventListener('input', rerender);
 document.getElementById('fstatus').addEventListener('change', rerender);
@@ -910,7 +1095,7 @@ document.getElementById('fsort').addEventListener('change', rerender);
 // ── Init ───────────────────────────────────────────────────────────────────
 buildAutoInventory();
 renderInvList();
-selectTeam('Yankees');
+selectHome();
 </script>
 </body>
 </html>''')
