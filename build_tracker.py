@@ -1,122 +1,42 @@
 import json, sys, os
-import pandas as pd
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# Accept --source path/to/live.json to use fetched live data instead of Excel
+# Require --source path/to/live.json
 live_source = None
 for i, arg in enumerate(sys.argv):
     if arg == '--source' and i + 1 < len(sys.argv):
         live_source = sys.argv[i + 1]
 
-divisions = {
-    'AL East':    ['Yankees', 'Red Sox', 'Blue Jays', 'Orioles', 'Rays'],
-    'AL Central': ['Guardians', 'Twins', 'Tigers', 'White Sox', 'Royals'],
-    'AL West':    ['Astros', 'Rangers', 'Angels', 'Athletics', 'Mariners'],
-    'NL East':    ['Braves', 'Phillies', 'Mets', 'Nationals', 'Marlins'],
-    'NL Central': ['Cubs', 'Brewers', 'Cardinals', 'Pirates', 'Reds'],
-    'NL West':    ['Dodgers', 'Giants', 'Padres', 'Diamondbacks', 'Rockies'],
-}
+if not live_source or not os.path.exists(live_source):
+    print('Usage: py -3 build_tracker.py --source mlb_data_live.json')
+    sys.exit(1)
 
-team_colors = {
-    'Angels':       ['#BA0021', '#003263'],
-    'Astros':       ['#002D62', '#EB6E1F'],
-    'Athletics':    ['#003831', '#EFB21E'],
-    'Blue Jays':    ['#134A8E', '#1D2D5C'],
-    'Braves':       ['#CE1141', '#13274F'],
-    'Brewers':      ['#12284B', '#FFC52F'],
-    'Cardinals':    ['#C41E3A', '#0C2340'],
-    'Cubs':         ['#0E3386', '#CC3433'],
-    'Diamondbacks': ['#A71930', '#E3D4AD'],
-    'Dodgers':      ['#005A9C', '#EF3E42'],
-    'Giants':       ['#FD5A1E', '#27251F'],
-    'Guardians':    ['#E31937', '#002B5C'],
-    'Mariners':     ['#0C2C56', '#005C5C'],
-    'Marlins':      ['#00A3E0', '#EF3340'],
-    'Mets':         ['#002D72', '#FF5910'],
-    'Nationals':    ['#AB0003', '#14225A'],
-    'Orioles':      ['#DF4601', '#231F20'],
-    'Padres':       ['#2F241D', '#FFC425'],
-    'Phillies':     ['#E81828', '#002D72'],
-    'Pirates':      ['#FDB827', '#27251F'],
-    'Rangers':      ['#003278', '#C0111F'],
-    'Rays':         ['#092C5C', '#8FBCE6'],
-    'Red Sox':      ['#BD3039', '#0D2B56'],
-    'Reds':         ['#C6011F', '#000000'],
-    'Rockies':      ['#33006F', '#C4CED4'],
-    'Royals':       ['#004687', '#BD9B60'],
-    'Tigers':       ['#0C2340', '#FA4616'],
-    'Twins':        ['#002B5C', '#D31145'],
-    'White Sox':    ['#27251F', '#C4CED4'],
-    'Yankees':      ['#132448', '#C4CED4'],
-}
+with open(live_source, encoding='utf-8') as f:
+    live = json.load(f)
 
-OTHER_PROGRAMS = {
-    '1st Inning XP Path': {'color': '#1e6fb5', 'icon': 'XP', 'desc': '1st Inning XP Reward Path milestones and boss collections.'},
-    'Assorted Programs':  {'color': '#8b5cf6', 'icon': 'AS', 'desc': 'Inning-based programs, themed programs, and special events.'},
-    'Multiplayer Program':{'color': '#059669', 'icon': 'MP', 'desc': 'Ranked and co-op multiplayer program missions.'},
-}
-
-if live_source and os.path.exists(live_source):
-    # Load live-fetched data
-    with open(live_source, encoding='utf-8') as f:
-        live = json.load(f)
-    missions_data   = live.get('missions', {})
-    other_programs  = live.get('other_programs', OTHER_PROGRAMS)
-    data_source     = 'live'
-    data_date       = live.get('data_date', 'live')
-    print(f'Using live data from: {live_source}')
-else:
-    # Fall back to Excel
-    excel_path = os.path.join(SCRIPT_DIR, 'MLB Team Affinity.xlsx')
-    df = pd.read_excel(excel_path, sheet_name='Query3')
-    df = df[df['Title'].notna() & df['Team'].notna() & df['ProgramType'].notna()]
-
-    missions_data = {}
-    for team in sorted(df['Team'].unique()):
-        team_df = df[df['Team'] == team]
-        missions_data[team] = {}
-        for prog in sorted(team_df['ProgramType'].unique()):
-            prog_df = team_df[team_df['ProgramType'] == prog].copy()
-            prog_df = prog_df.sort_values('PercentComplete', ascending=False)
-            missions = []
-            for _, row in prog_df.iterrows():
-                missions.append({
-                    't': str(row['Title']),
-                    'r': str(row['Reward']),
-                    'p': str(row['ProgressFixed']) if pd.notna(row['ProgressFixed']) else '',
-                    'pct': round(float(row['PercentComplete']) if pd.notna(row['PercentComplete']) else 0, 1)
-                })
-            missions_data[team][prog] = missions
-
-    other_programs = OTHER_PROGRAMS
-    data_source    = 'excel'
-    data_date      = '2025 season'
+missions_data  = live.get('missions', {})
+other_programs = live.get('other_programs', {})
+inventory_data = live.get('inventory', [])
+data_date      = live.get('data_date', 'live')
+print(f'Using live data from: {live_source}')
 
 app_data = {
-    'divisions':      divisions,
+    'divisions':      live.get('divisions', {}),
     'missions':       missions_data,
-    'colors':         team_colors,
+    'colors':         live.get('colors', {}),
     'other_programs': other_programs,
-    'data_source':    data_source,
+    'inventory':      inventory_data,
+    'data_source':    'live',
     'data_date':      data_date,
 }
 data_json = json.dumps(app_data, ensure_ascii=True)
 
-if data_source == 'live':
-    banner_content = (
-        '&#10003; Showing <strong style="color:#22c55e;margin:0 3px">live 2026 data</strong>'
-        f' &mdash; fetched {data_date}'
-        ' &nbsp;&bull;&nbsp; <a onclick="document.getElementById(\'data-banner\').style.display=\'none\'">Dismiss</a>'
-    )
-else:
-    banner_content = (
-        '&#9888; Showing <strong style="color:#f5c518;margin:0 3px">Excel data (2025 season)</strong> &mdash;'
-        ' not live 2026 data. Run'
-        ' <code style="background:rgba(0,0,0,0.3);padding:1px 6px;border-radius:3px;font-size:10px">py -3 fetch_mlb26.py</code>'
-        ' to refresh'
-        ' &nbsp;&bull;&nbsp; <a onclick="document.getElementById(\'data-banner\').style.display=\'none\'">Dismiss</a>'
-    )
+banner_content = (
+    '&#10003; Showing <strong style="color:#22c55e;margin:0 3px">live 2026 data</strong>'
+    f' &mdash; fetched {data_date}'
+    ' &nbsp;&bull;&nbsp; <a onclick="document.getElementById(\'data-banner\').style.display=\'none\'">Dismiss</a>'
+)
 
 html_parts = []
 
@@ -443,8 +363,13 @@ html_parts.append(data_json)
 
 html_parts.append(''';
 
-// ── Inventory (localStorage) ───────────────────────────────────────────────
+// ── Inventory (localStorage + API pre-seed) ────────────────────────────────
 let inventory = JSON.parse(localStorage.getItem('mlb26_inv') || '[]');
+// If the fetch script pulled the player inventory and localStorage is empty, seed it
+if (!inventory.length && D.inventory && D.inventory.length) {
+  inventory = D.inventory.slice();
+  localStorage.setItem('mlb26_inv', JSON.stringify(inventory));
+}
 function saveInv() { localStorage.setItem('mlb26_inv', JSON.stringify(inventory)); }
 function missionHasOwnedPlayer(title) {
   const t = title.toLowerCase();
@@ -478,19 +403,36 @@ document.getElementById('g-pct').textContent   = gTotal ? Math.round(gDone / gTo
 // ── Sidebar ────────────────────────────────────────────────────────────────
 const sidebar = document.getElementById('sidebar');
 
-// Other Programs section
-const opHdr = document.createElement('div');
-opHdr.className = 'div-hdr';
-opHdr.textContent = 'Programs';
-sidebar.appendChild(opHdr);
+// Other Programs — grouped by meta.group field
+const OP_GROUP_ORDER  = ['xp_path', 'assorted', 'multiplayer'];
+const OP_GROUP_LABELS = {xp_path: 'XP Path', assorted: 'Themed Programs', multiplayer: 'Multiplayer'};
+const opByGroup = {};
 for (const [progName, meta] of Object.entries(D.other_programs)) {
-  const btn = document.createElement('button');
-  btn.className = 'team-btn other-prog-btn';
-  btn.dataset.prog = progName;
-  btn.innerHTML = '<span class="prog-icon" style="background:' + meta.color + '">' + meta.icon + '</span>'
-                + '<span style="flex:1;text-align:left">' + progName + '</span>';
-  btn.addEventListener('click', function() { selectOtherProg(this.dataset.prog); });
-  sidebar.appendChild(btn);
+  const g = meta.group || 'assorted';
+  if (!opByGroup[g]) opByGroup[g] = [];
+  opByGroup[g].push([progName, meta]);
+}
+for (const grp of OP_GROUP_ORDER) {
+  const progs = opByGroup[grp] || [];
+  if (!progs.length) continue;
+  const h = document.createElement('div');
+  h.className = 'div-hdr';
+  h.textContent = OP_GROUP_LABELS[grp] || grp;
+  sidebar.appendChild(h);
+  for (const [progName, meta] of progs) {
+    const mlist = meta.missions || [];
+    const pdone = mlist.filter(function(m) { return m.pct >= 100; }).length;
+    const ppct  = mlist.length ? Math.round(pdone / mlist.length * 100) : 0;
+    const btn   = document.createElement('button');
+    btn.className = 'team-btn other-prog-btn';
+    btn.dataset.prog = progName;
+    btn.innerHTML =
+      '<span class="prog-icon" style="background:' + meta.color + '">' + meta.icon + '</span>'
+      + '<span style="flex:1;text-align:left;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + progName + '</span>'
+      + '<span class="team-pct">' + ppct + '%</span>';
+    btn.addEventListener('click', function() { selectOtherProg(this.dataset.prog); });
+    sidebar.appendChild(btn);
+  }
 }
 
 // Divider
@@ -699,7 +641,11 @@ function buildCard(m) {
   const owned    = missionHasOwnedPlayer(m.t);
   const matched  = getMatchedPlayer(m.t);
   const color    = progColor(m.pct);
-  const isMoment = m.d && m.d.toLowerCase().includes('moment');
+  // Moment: description says "moment", OR progress is purely "X/1" (no stat unit)
+  const isMoment = !isDone && (
+    (m.d && m.d.toLowerCase().includes('moment')) ||
+    /^\\d+\\/1\\s*$/.test(m.p)
+  );
   let cls = 'mcard';
   if (isDone)          cls += ' done';
   if (owned && !isDone) cls += ' owned-player';

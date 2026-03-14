@@ -40,11 +40,16 @@ TEAM_COLORS = {
     "Tigers":["#0C2340","#FA4616"],"Twins":["#002B5C","#D31145"],
     "White Sox":["#27251F","#C4CED4"],"Yankees":["#132448","#C4CED4"],
 }
-OTHER_PROGRAMS = {
-    "1st Inning XP Path": {"color":"#1e6fb5","icon":"XP"},
-    "Assorted Programs":  {"color":"#8b5cf6","icon":"AS"},
-    "Multiplayer Program":{"color":"#059669","icon":"MP"},
+PROG_GROUP_COLORS = {
+    "xp_path":    "#1e6fb5",
+    "assorted":   "#8b5cf6",
+    "multiplayer":"#059669",
 }
+
+def make_prog_icon(name: str) -> str:
+    stop = {"the","a","an","of","and","in","with","program","programs","classic","series"}
+    words = [w for w in name.split() if w.lower() not in stop]
+    return "".join(w[0] for w in words[:2]).upper()[:2] if words else "PR"
 TEAM_NAME_MAP = {
     "arizona":"Diamondbacks","diamondbacks":"Diamondbacks",
     "atlanta":"Braves","braves":"Braves",
@@ -644,6 +649,81 @@ def extract_missions_from_html(html_body: str) -> list[dict]:
     return missions
 
 
+def fetch_inventory(cookies: dict) -> list[str]:
+    """
+    Fetch the user's MLB player card names from their inventory.
+    Tries the Inertia JSON API, then HTML scraping.
+    Returns a sorted list of unique player name strings.
+    """
+    player_names: set[str] = set()
+
+    # Strategy 1: Inertia JSON API
+    hdrs = make_headers(cookies, inertia=True)
+    body, status = get(f"{BASE}/inventory", hdrs)
+    if status == 200 and body:
+        try:
+            data  = json.loads(body)
+            props = data.get("props", data)
+            # Different possible keys the API might use
+            items = (props.get("items") or props.get("inventory") or
+                     props.get("cards") or props.get("collection_items") or [])
+            if isinstance(items, list):
+                for item in items:
+                    if not isinstance(item, dict):
+                        continue
+                    itype = str(item.get("type") or item.get("item_type") or "").lower()
+                    # Skip non-player items (equipment, stadiums, etc.)
+                    if itype and "mlb_card" not in itype and "player" not in itype:
+                        continue
+                    name = (item.get("name") or item.get("player_name") or
+                            item.get("display_name") or "")
+                    if isinstance(name, str) and 2 < len(name.strip()) < 60:
+                        player_names.add(name.strip())
+        except Exception:
+            pass
+
+    # Strategy 2: HTML scraping of /inventory
+    if not player_names:
+        hdrs_html = make_headers(cookies)
+        body, status = get(f"{BASE}/inventory", hdrs_html)
+        if status == 200 and body:
+            # Look for JSON data embedded in the page (Inertia page data)
+            m_data = re.search(r'data-page=["\']({.*?})["\']', body, re.DOTALL)
+            if m_data:
+                try:
+                    page_data = json.loads(html_module.unescape(m_data.group(1)))
+                    props = page_data.get("props", {})
+                    items = (props.get("items") or props.get("inventory") or [])
+                    for item in (items if isinstance(items, list) else []):
+                        name = item.get("name") or item.get("player_name") or ""
+                        if isinstance(name, str) and 2 < len(name.strip()) < 60:
+                            player_names.add(name.strip())
+                except Exception:
+                    pass
+
+    # Strategy 3: Try the squad/roster endpoint for active team players
+    if not player_names:
+        body, status = get(f"{BASE}/squads", make_headers(cookies, inertia=True))
+        if status == 200 and body:
+            try:
+                data  = json.loads(body)
+                props = data.get("props", data)
+                for key in ("squad", "players", "roster", "lineup"):
+                    items = props.get(key) or []
+                    if isinstance(items, list) and items:
+                        for item in items:
+                            if not isinstance(item, dict):
+                                continue
+                            name = item.get("name") or item.get("player_name") or ""
+                            if isinstance(name, str) and 2 < len(name.strip()) < 60:
+                                player_names.add(name.strip())
+                        break
+            except Exception:
+                pass
+
+    return sorted(player_names)
+
+
 def normalize_team(text: str) -> str | None:
     t = text.strip().lower()
     if t in TEAM_NAME_MAP: return TEAM_NAME_MAP[t]
@@ -713,7 +793,7 @@ def main():
 
     # 4. Fetch and parse each program
     team_missions:  dict[str, dict[str, list]] = {}
-    other_missions: dict[str, list]            = {}
+    other_prog_raw: dict[str, dict]            = {}   # name → {group, missions}
     total = len(links)
 
     for i, url in enumerate(links, 1):
@@ -760,12 +840,16 @@ def main():
 
         if team:
             team_missions.setdefault(team, {}).setdefault(prog_type, []).extend(missions)
-        elif is_xp_path:
-            other_missions.setdefault("1st Inning XP Path", []).extend(missions)
-        elif is_multi:
-            other_missions.setdefault("Multiplayer Program", []).extend(missions)
         else:
-            other_missions.setdefault("Assorted Programs", []).extend(missions)
+            if is_xp_path:
+                group, prog_key = "xp_path",    h1 or "1st Inning XP Path"
+            elif is_multi:
+                group, prog_key = "multiplayer", h1 or "Multiplayer Program"
+            else:
+                group, prog_key = "assorted",    h1 or "Assorted Programs"
+            if prog_key not in other_prog_raw:
+                other_prog_raw[prog_key] = {"group": group, "missions": []}
+            other_prog_raw[prog_key]["missions"].extend(missions)
 
     # 5. Deduplicate and sort
     def dedup_sort(lst):
@@ -778,31 +862,37 @@ def main():
     for team in team_missions:
         for pt in team_missions[team]:
             team_missions[team][pt] = dedup_sort(team_missions[team][pt])
-    for k in other_missions:
-        other_missions[k] = dedup_sort(other_missions[k])
+    for k in other_prog_raw:
+        other_prog_raw[k]["missions"] = dedup_sort(other_prog_raw[k]["missions"])
 
     print()
     team_total  = sum(sum(len(v) for v in t.values()) for t in team_missions.values())
-    other_total = sum(len(v) for v in other_missions.values())
+    other_total = sum(len(v["missions"]) for v in other_prog_raw.values())
     print(f"Team missions:   {team_total:4d} across {len(team_missions)} teams")
-    print(f"Other missions:  {other_total:4d} across {len(other_missions)} programs")
+    print(f"Other missions:  {other_total:4d} across {len(other_prog_raw)} programs")
 
-    # 6. Build other_programs structure for the HTML
+    # 6. Build other_programs structure (one entry per individual program)
     op_for_html = {}
-    for name, meta in OTHER_PROGRAMS.items():
-        op_for_html[name] = {
-            "color":    meta["color"],
-            "icon":     meta["icon"],
-            "desc":     "",
-            "missions": other_missions.get(name, []),
+    for prog_name, pdata in other_prog_raw.items():
+        group = pdata["group"]
+        op_for_html[prog_name] = {
+            "color":    PROG_GROUP_COLORS.get(group, "#8b5cf6"),
+            "icon":     make_prog_icon(prog_name),
+            "group":    group,
+            "missions": pdata["missions"],
         }
+
+    # 7. Fetch player inventory
+    print("\nFetching player inventory...")
+    inventory = fetch_inventory(cookies)
+    print(f"  Found {len(inventory)} player cards")
 
     live_data = {
         "divisions":      DIVISIONS,
         "colors":         TEAM_COLORS,
         "missions":       team_missions,
-        "other_missions": other_missions,
         "other_programs": op_for_html,
+        "inventory":      inventory,
         "data_source":    "live",
         "data_date":      time.strftime("%Y-%m-%d %H:%M"),
     }
@@ -827,7 +917,10 @@ def main():
         print("  build_tracker.py not found – run it manually.")
 
     print()
-    print("All done!  Open 'MLB Team Affinity Tracker.html' in your browser.")
+    html_out = os.path.join(SCRIPT_DIR, "MLB Team Affinity Tracker.html")
+    print(f"\nAll done!  Opening tracker...")
+    import webbrowser
+    webbrowser.open("file:///" + html_out.replace("\\", "/"))
 
 
 if __name__ == "__main__":
