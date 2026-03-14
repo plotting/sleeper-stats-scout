@@ -466,7 +466,7 @@ for (const tm of Object.keys(D.missions)) {
 }
 document.getElementById('g-done').textContent  = gDone;
 document.getElementById('g-total').textContent = gTotal;
-document.getElementById('g-pct').textContent   = Math.round(gPctSum / gTotal) + '%';
+document.getElementById('g-pct').textContent   = gTotal ? Math.round(gPctSum / gTotal) + '%' : '—';
 
 // ── Sidebar ────────────────────────────────────────────────────────────────
 const sidebar = document.getElementById('sidebar');

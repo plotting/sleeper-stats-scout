@@ -1,22 +1,19 @@
 """
-fetch_mlb26.py  -  Pull live MLB The Show 26 program data and rebuild tracker
+fetch_mlb26.py  -  MLB The Show 26 live data fetcher
 
-Usage:
-    py -3 fetch_mlb26.py
+Just run:  py -3 fetch_mlb26.py
 
-How to get your cookie:
-  1. Log in at https://mlb26.theshow.com
-  2. Open DevTools (F12) -> Application tab -> Cookies -> mlb26.theshow.com
-  3. Copy the VALUE of '_theshow_session'
-  4. Paste it when prompted
+The script automatically reads your Chrome session from the browser
+(you must already be logged in at mlb26.theshow.com in Chrome).
+Fetches all program missions and rebuilds the HTML tracker.
 """
 
-import json, re, sys, os, time, html as html_module
-import urllib.request, urllib.error, urllib.parse
+import json, sys, os, re, time, shutil, sqlite3, tempfile, html as html_module
+import urllib.request, urllib.error, urllib.parse, ctypes, ctypes.wintypes, base64, subprocess
 
-BASE     = "https://mlb26.theshow.com"
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-OUT_JSON = os.path.join(SCRIPT_DIR, "mlb_data_live.json")
+BASE       = "https://mlb26.theshow.com"
+OUT_JSON   = os.path.join(SCRIPT_DIR, "mlb_data_live.json")
 
 DIVISIONS = {
     "AL East":    ["Yankees","Red Sox","Blue Jays","Orioles","Rays"],
@@ -26,7 +23,6 @@ DIVISIONS = {
     "NL Central": ["Cubs","Brewers","Cardinals","Pirates","Reds"],
     "NL West":    ["Dodgers","Giants","Padres","Diamondbacks","Rockies"],
 }
-
 TEAM_COLORS = {
     "Angels":["#BA0021","#003263"],"Astros":["#002D62","#EB6E1F"],
     "Athletics":["#003831","#EFB21E"],"Blue Jays":["#134A8E","#1D2D5C"],
@@ -44,26 +40,240 @@ TEAM_COLORS = {
     "Tigers":["#0C2340","#FA4616"],"Twins":["#002B5C","#D31145"],
     "White Sox":["#27251F","#C4CED4"],"Yankees":["#132448","#C4CED4"],
 }
-
 OTHER_PROGRAMS = {
-    "1st Inning XP Path": {"color": "#1e6fb5", "icon": "XP"},
-    "Assorted Programs":  {"color": "#8b5cf6", "icon": "AS"},
-    "Multiplayer Program":{"color": "#059669", "icon": "MP"},
+    "1st Inning XP Path": {"color":"#1e6fb5","icon":"XP"},
+    "Assorted Programs":  {"color":"#8b5cf6","icon":"AS"},
+    "Multiplayer Program":{"color":"#059669","icon":"MP"},
+}
+TEAM_NAME_MAP = {
+    "arizona":"Diamondbacks","diamondbacks":"Diamondbacks",
+    "atlanta":"Braves","braves":"Braves",
+    "baltimore":"Orioles","orioles":"Orioles",
+    "boston":"Red Sox","red sox":"Red Sox",
+    "chicago cubs":"Cubs","cubs":"Cubs",
+    "chicago white sox":"White Sox","white sox":"White Sox",
+    "cincinnati":"Reds","reds":"Reds",
+    "cleveland":"Guardians","guardians":"Guardians",
+    "colorado":"Rockies","rockies":"Rockies",
+    "detroit":"Tigers","tigers":"Tigers",
+    "houston":"Astros","astros":"Astros",
+    "kansas city":"Royals","royals":"Royals",
+    "los angeles angels":"Angels","angels":"Angels",
+    "los angeles dodgers":"Dodgers","dodgers":"Dodgers",
+    "miami":"Marlins","marlins":"Marlins",
+    "milwaukee":"Brewers","brewers":"Brewers",
+    "minnesota":"Twins","twins":"Twins",
+    "new york mets":"Mets","mets":"Mets",
+    "new york yankees":"Yankees","yankees":"Yankees",
+    "oakland":"Athletics","athletics":"Athletics",
+    "philadelphia":"Phillies","phillies":"Phillies",
+    "pittsburgh":"Pirates","pirates":"Pirates",
+    "san diego":"Padres","padres":"Padres",
+    "san francisco":"Giants","giants":"Giants",
+    "seattle":"Mariners","mariners":"Mariners",
+    "st. louis":"Cardinals","cardinals":"Cardinals",
+    "tampa bay":"Rays","rays":"Rays",
+    "texas":"Rangers","rangers":"Rangers",
+    "toronto":"Blue Jays","blue jays":"Blue Jays",
+    "washington":"Nationals","nationals":"Nationals",
 }
 
 
-# ── HTTP helpers ─────────────────────────────────────────────────────────────
+# ── Chrome cookie reading ─────────────────────────────────────────────────────
 
-def make_headers(cookie):
-    return {
-        "Cookie": f"_theshow_session={cookie}",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                      "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/json,*/*;q=0.9",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Referer": "https://mlb26.theshow.com/programs",
+class _DATABLOB(ctypes.Structure):
+    _fields_ = [("cbData", ctypes.wintypes.DWORD),
+                ("pbData", ctypes.POINTER(ctypes.c_char))]
+
+def _dpapi_decrypt(ciphertext: bytes) -> bytes:
+    buf = ctypes.create_string_buffer(ciphertext)
+    blob_in  = _DATABLOB(len(ciphertext), buf)
+    blob_out = _DATABLOB()
+    ok = ctypes.windll.crypt32.CryptUnprotectData(
+        ctypes.byref(blob_in), None, None, None, None, 0, ctypes.byref(blob_out))
+    if not ok:
+        raise RuntimeError("DPAPI decryption failed")
+    result = ctypes.string_at(blob_out.pbData, blob_out.cbData)
+    ctypes.windll.kernel32.LocalFree(blob_out.pbData)
+    return result
+
+def _get_chrome_aes_key(local_state_path: str) -> bytes | None:
+    try:
+        with open(local_state_path, encoding="utf-8") as f:
+            ls = json.load(f)
+        enc_key_b64 = ls["os_crypt"]["encrypted_key"]
+        enc_key = base64.b64decode(enc_key_b64)
+        # First 5 bytes are "DPAPI" prefix
+        return _dpapi_decrypt(enc_key[5:])
+    except Exception:
+        return None
+
+def _decrypt_cookie_value(value: bytes, aes_key: bytes) -> str:
+    try:
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+        # Chrome cookie format: b"v10" + 12-byte nonce + ciphertext
+        if value[:3] == b"v10":
+            nonce      = value[3:15]
+            ciphertext = value[15:]
+            aesgcm     = AESGCM(aes_key)
+            return aesgcm.decrypt(nonce, ciphertext, None).decode("utf-8", errors="replace")
+    except ImportError:
+        pass
+    except Exception:
+        pass
+    return ""
+
+def read_chrome_cookies(domain: str) -> dict[str, str]:
+    """
+    Read cookies for `domain` from Chrome's SQLite database.
+    Returns {name: value} dict. Handles both AES-GCM (v10) and legacy DPAPI.
+    """
+    local_appdata = os.environ.get("LOCALAPPDATA", "")
+    profiles = [
+        os.path.join(local_appdata, "Google", "Chrome", "User Data"),
+        os.path.join(local_appdata, "Microsoft", "Edge",  "User Data"),
+        os.path.join(local_appdata, "BraveSoftware", "Brave-Browser", "User Data"),
+    ]
+
+    results: dict[str, str] = {}
+
+    for user_data in profiles:
+        local_state_path = os.path.join(user_data, "Local State")
+        aes_key = _get_chrome_aes_key(local_state_path) if os.path.exists(local_state_path) else None
+
+        # Find all profile cookie files
+        for root, dirs, files in os.walk(user_data):
+            for fname in ("Cookies", "Network/Cookies"):
+                cookie_db = os.path.join(root, fname) if fname == "Cookies" else os.path.join(root, "Network", "Cookies")
+                if not os.path.exists(cookie_db):
+                    continue
+                # Copy to temp (Chrome locks the file)
+                tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
+                tmp.close()
+                try:
+                    shutil.copy2(cookie_db, tmp.name)
+                    con = sqlite3.connect(tmp.name)
+                    con.row_factory = sqlite3.Row
+                    # Query - column layout varies by Chrome version
+                    try:
+                        rows = con.execute(
+                            "SELECT name, value, encrypted_value FROM cookies "
+                            "WHERE host_key LIKE ? OR host_key LIKE ?",
+                            (f"%{domain}%", f"%.{domain}%")
+                        ).fetchall()
+                    except Exception:
+                        rows = []
+                    for row in rows:
+                        name  = row["name"]
+                        val   = row["value"]
+                        enc   = row["encrypted_value"]
+                        if not val and enc:
+                            if aes_key and enc[:3] == b"v10":
+                                val = _decrypt_cookie_value(enc, aes_key)
+                            else:
+                                try:
+                                    val = _dpapi_decrypt(enc).decode("utf-8", errors="replace")
+                                except Exception:
+                                    val = ""
+                        if val:
+                            results[name] = val
+                    con.close()
+                except Exception:
+                    pass
+                finally:
+                    try:
+                        os.unlink(tmp.name)
+                    except Exception:
+                        pass
+    return results
+
+def _open_browser_and_wait() -> dict[str, str]:
+    """Open mlb26.theshow.com in the default browser and wait for login."""
+    print()
+    print("  Opening https://mlb26.theshow.com in your browser...")
+    import webbrowser
+    webbrowser.open(BASE)
+    print("  Please log in, then press ENTER here to continue.")
+    input("  [Press ENTER after logging in] ")
+    return read_chrome_cookies("mlb26.theshow.com")
+
+
+# ── Auth ──────────────────────────────────────────────────────────────────────
+
+def get_auth() -> dict[str, str]:
+    """
+    Returns cookie dict with _tsn_session (and tsn_token if found).
+    Priority: Chrome auto-read → open browser → manual paste.
+    """
+    print("Checking Chrome for mlb26.theshow.com cookies...")
+    cookies = read_chrome_cookies("mlb26.theshow.com")
+
+    session = cookies.get("_tsn_session", "")
+    token   = cookies.get("tsn_token", "")
+
+    if session or token:
+        print(f"  Found: {', '.join(k for k in cookies if k in ('_tsn_session','tsn_token'))}")
+        return cookies
+
+    print("  Not found in Chrome – opening browser for login.")
+    cookies = _open_browser_and_wait()
+    session = cookies.get("_tsn_session", "")
+    token   = cookies.get("tsn_token", "")
+
+    if not session and not token:
+        print()
+        print("  Auto-read failed. Paste cookie manually.")
+        print("  F12 → Application → Cookies → mlb26.theshow.com → copy _tsn_session value:")
+        val = input("  _tsn_session value: ").strip()
+        if val:
+            cookies["_tsn_session"] = val
+        else:
+            sys.exit("No credentials found. Exiting.")
+
+    return cookies
+
+
+def make_headers(cookies: dict, inertia: bool = False) -> dict:
+    parts = []
+    for k in ("_tsn_session", "tsn_token"):
+        if k in cookies:
+            parts.append(f"{k}={cookies[k]}")
+    cookie_str = "; ".join(parts)
+    hdrs = {
+        "Cookie":           cookie_str,
+        "User-Agent":       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept":           "text/html,application/xhtml+xml,application/json,*/*;q=0.9",
+        "Accept-Language":  "en-US,en;q=0.9",
+        "Referer":          BASE + "/programs",
     }
+    if "tsn_token" in cookies:
+        hdrs["Authorization"] = f"Bearer {cookies['tsn_token']}"
+    if inertia:
+        hdrs["X-Inertia"] = "true"
+        hdrs["X-Requested-With"] = "XMLHttpRequest"
+        hdrs["Accept"] = "application/json"
+    return hdrs
 
+
+def try_inertia_programs(cookies: dict) -> list[dict] | None:
+    """Try to fetch programs listing via Inertia JSON API."""
+    hdrs = make_headers(cookies, inertia=True)
+    body, status = get(f"{BASE}/programs", hdrs)
+    if status != 200 or not body:
+        return None
+    try:
+        data = json.loads(body)
+        # Inertia wraps in {component, props, ...}
+        props = data.get("props", data)
+        programs = props.get("programs") or props.get("data") or []
+        if isinstance(programs, list) and programs:
+            return programs
+    except Exception:
+        pass
+    return None
+
+
+# ── HTTP ──────────────────────────────────────────────────────────────────────
 
 def get(url, headers, timeout=20):
     req = urllib.request.Request(url, headers=headers)
@@ -76,157 +286,115 @@ def get(url, headers, timeout=20):
         return None, str(e)
 
 
-# ── Program page discovery ────────────────────────────────────────────────────
+# ── Program discovery & parsing ───────────────────────────────────────────────
 
-def find_program_links(html_body):
-    """Find program_view links in the programs listing page."""
+def find_program_links(html_body: str) -> list[str]:
     links = []
-    # Match href="/programs/program_view?..."
+    seen = set()
+
+    # Pattern 1: explicit program_view links
     for m in re.finditer(r'href=["\']([^"\']*program_view[^"\']*)["\']', html_body):
         raw = html_module.unescape(m.group(1))
-        if raw.startswith("/"):
-            raw = BASE + raw
-        if raw not in links:
-            links.append(raw)
+        url = BASE + raw if raw.startswith("/") else raw
+        if url not in seen:
+            seen.add(url); links.append(url)
+
+    # Pattern 2: /programs/NNN or /programs/NNN/anything
+    for m in re.finditer(r'href=["\'](/programs/(\d+)[^"\']*)["\']', html_body):
+        raw = html_module.unescape(m.group(1))
+        url = BASE + raw
+        if url not in seen:
+            seen.add(url); links.append(url)
+
+    # Pattern 3: JSON embedded data – look for program IDs in JSON blobs
+    for m in re.finditer(r'"id"\s*:\s*(\d+).*?"type"\s*:\s*"Program"', html_body, re.DOTALL):
+        pid = m.group(1)
+        url = f"{BASE}/programs/{pid}"
+        if url not in seen:
+            seen.add(url); links.append(url)
+
     return links
 
 
-def parse_url_params(url):
-    parsed = urllib.parse.urlparse(url)
-    return dict(urllib.parse.parse_qsl(parsed.query))
+def parse_url_params(url: str) -> dict:
+    return dict(urllib.parse.parse_qsl(urllib.parse.urlparse(url).query))
 
 
-# ── Mission extraction from program_view HTML ─────────────────────────────────
-
-def extract_json_blob(html_body, key):
-    """Try to pull a JSON array/object for 'key' from embedded script tags."""
-    patterns = [
-        rf'"{key}"\s*:\s*(\[.*?\])',
-        rf'"{key}"\s*:\s*(\{{.*?\}})',
-        rf"'{key}'\s*:\s*(\[.*?\])",
-        rf'var {key}\s*=\s*(\[.*?\]);',
-        rf'window\.{key}\s*=\s*(\[.*?\]);',
-        rf'gon\.{key}\s*=\s*(\[.*?\]);',
-    ]
-    for pat in patterns:
-        m = re.search(pat, html_body, re.DOTALL)
-        if m:
-            try:
-                return json.loads(m.group(1))
-            except Exception:
-                pass
-    return None
-
-
-def parse_missions_from_html(html_body, program_name=""):
-    """
-    Multi-strategy mission extraction from program_view HTML.
-    The Rails app embeds data in several possible formats.
-    """
+def extract_missions_from_html(html_body: str) -> list[dict]:
     missions = []
 
-    # Strategy 1: Look for a JSON blob containing missions array
-    for key in ("missions", "program_missions", "tasks", "objectives", "items"):
-        blob = extract_json_blob(html_body, key)
-        if isinstance(blob, list) and blob:
-            for item in blob:
-                if not isinstance(item, dict):
-                    continue
-                title = (item.get("title") or item.get("name") or
-                         item.get("description") or item.get("objective") or "")
-                current = item.get("progress", item.get("current_value",
-                          item.get("current", item.get("count", 0))))
-                goal    = item.get("goal", item.get("requirement",
-                          item.get("target", item.get("max_value", 0))))
-                stat    = item.get("stat_type", item.get("stat", ""))
-                reward  = (item.get("reward", item.get("xp_reward",
-                           item.get("xp", item.get("points", "")))))
-                pct     = item.get("percent_complete", item.get("pct",
-                          item.get("progress_pct", 0)))
-                if not pct and goal:
-                    try:
-                        pct = min(100.0, round(float(current) / float(goal) * 100, 1))
-                    except Exception:
-                        pct = 0.0
-                prog_str = f"{current}/{goal} {stat}".strip() if goal else str(current)
-                missions.append({
-                    "t": str(title).strip(),
-                    "r": str(reward),
-                    "p": prog_str,
-                    "pct": float(pct),
-                })
-            if missions:
-                return missions
+    # Strategy 1 – JSON blob embedded in script tag
+    for key in ("missions", "program_missions", "tasks", "objectives"):
+        for pat in (
+            rf'"{key}"\s*:\s*(\[.*?\])',
+            rf"gon\.{key}\s*=\s*(\[.*?\]);",
+            rf"window\.{key}\s*=\s*(\[.*?\]);",
+        ):
+            m = re.search(pat, html_body, re.DOTALL)
+            if m:
+                try:
+                    blob = json.loads(m.group(1))
+                    if isinstance(blob, list) and blob:
+                        for item in blob:
+                            if not isinstance(item, dict):
+                                continue
+                            title   = item.get("title") or item.get("name") or item.get("description") or ""
+                            current = item.get("progress", item.get("current_value", item.get("count", 0)))
+                            goal    = item.get("goal", item.get("requirement", item.get("target", 0)))
+                            stat    = item.get("stat_type", item.get("stat", ""))
+                            reward  = item.get("reward", item.get("xp_reward", item.get("xp", "")))
+                            pct     = item.get("percent_complete", item.get("pct", 0))
+                            if not pct and goal:
+                                try:
+                                    pct = min(100.0, round(float(current) / float(goal) * 100, 1))
+                                except Exception:
+                                    pass
+                            prog_str = f"{current}/{goal} {stat}".strip() if goal else str(current)
+                            missions.append({"t": str(title).strip(), "r": str(reward), "p": prog_str, "pct": float(pct or 0)})
+                        if missions:
+                            return missions
+                except Exception:
+                    pass
 
-    # Strategy 2: Scrape HTML elements (mission cards / task rows)
-    # Look for repeating patterns that contain mission data
-    # Pattern: data-title="..." data-progress="..." data-reward="..."
-    for m in re.finditer(
-        r'data-title="([^"]+)"[^>]*data-progress="([^"]*)"[^>]*data-reward="([^"]*)"',
-        html_body
-    ):
-        missions.append({
-            "t": html_module.unescape(m.group(1)),
-            "r": m.group(3),
-            "p": m.group(2),
-            "pct": 0.0,
-        })
-    if missions:
-        return missions
-
-    # Strategy 3: Look for Inertia/Vue/React initial props JSON
+    # Strategy 2 – Inertia / data-page JSON
     for m in re.finditer(r'data-page="([^"]+)"', html_body):
         try:
             props = json.loads(html_module.unescape(m.group(1)))
-            # Recursively search for a "missions" key
-            def find_missions(obj, depth=0):
-                if depth > 5:
-                    return []
-                if isinstance(obj, list):
-                    results = []
-                    for item in obj:
-                        results.extend(find_missions(item, depth+1))
-                    return results
+            def find_key(obj, key, depth=0):
+                if depth > 6: return None
                 if isinstance(obj, dict):
-                    if "missions" in obj:
-                        return obj["missions"] if isinstance(obj["missions"], list) else []
+                    if key in obj: return obj[key]
                     for v in obj.values():
-                        r = find_missions(v, depth+1)
-                        if r:
-                            return r
-                return []
-            raw_missions = find_missions(props)
-            for item in raw_missions:
-                if isinstance(item, dict):
-                    title = item.get("title", item.get("name", ""))
-                    missions.append({
-                        "t": str(title),
-                        "r": str(item.get("reward", "")),
-                        "p": str(item.get("progress", "")),
-                        "pct": float(item.get("percent_complete", 0)),
-                    })
+                        r = find_key(v, key, depth+1)
+                        if r is not None: return r
+                return None
+            raw = find_key(props, "missions")
+            if isinstance(raw, list):
+                for item in raw:
+                    if isinstance(item, dict):
+                        title = item.get("title", item.get("name", ""))
+                        missions.append({
+                            "t": str(title),
+                            "r": str(item.get("reward", "")),
+                            "p": str(item.get("progress", "")),
+                            "pct": float(item.get("percent_complete", 0)),
+                        })
+                if missions: return missions
         except Exception:
             pass
-    if missions:
-        return missions
 
-    # Strategy 4: HTML table/list scraping as last resort
-    # Look for <li> or <tr> elements with XP reward patterns
-    rows = re.findall(
-        r'<(?:li|tr)[^>]*>(.*?)</(?:li|tr)>',
-        html_body, re.DOTALL | re.IGNORECASE
-    )
-    for row in rows:
-        text = re.sub(r'<[^>]+>', ' ', row).strip()
-        text = re.sub(r'\s+', ' ', text)
-        # Must look like a mission (contains XP and a progress indicator)
-        if re.search(r'\d+[,\d]*\s*XP', text, re.I) and re.search(r'\d+/\d+', text):
-            xp = re.search(r'([\d,]+)\s*XP', text, re.I)
-            prog = re.search(r'(\d+/\d+[^\s]*)', text)
-            title_part = text[:80].strip()
+    # Strategy 3 – HTML scraping: look for XP reward + progress patterns in list items
+    blocks = re.findall(r'<(?:li|div|tr)[^>]*class="[^"]*mission[^"]*"[^>]*>(.*?)</(?:li|div|tr)>',
+                        html_body, re.DOTALL | re.IGNORECASE)
+    for blk in blocks:
+        text = re.sub(r'<[^>]+>', ' ', blk)
+        text = html_module.unescape(re.sub(r'\s+', ' ', text)).strip()
+        xp   = re.search(r'([\d,]+)\s*XP', text, re.I)
+        prog = re.search(r'(\d[\d,]*/[\d,]+[^\s]*)', text)
+        if xp and text:
             missions.append({
-                "t": html_module.unescape(title_part),
-                "r": xp.group(1) if xp else "",
+                "t": text[:120],
+                "r": xp.group(1),
                 "p": prog.group(1) if prog else "",
                 "pct": 0.0,
             })
@@ -234,219 +402,281 @@ def parse_missions_from_html(html_body, program_name=""):
     return missions
 
 
-# ── Team name normalization ───────────────────────────────────────────────────
-
-TEAM_NAME_MAP = {
-    "arizona": "Diamondbacks", "diamondbacks": "Diamondbacks",
-    "atlanta": "Braves", "braves": "Braves",
-    "baltimore": "Orioles", "orioles": "Orioles",
-    "boston": "Red Sox", "red sox": "Red Sox",
-    "chicago cubs": "Cubs", "cubs": "Cubs",
-    "chicago white sox": "White Sox", "white sox": "White Sox",
-    "cincinnati": "Reds", "reds": "Reds",
-    "cleveland": "Guardians", "guardians": "Guardians",
-    "colorado": "Rockies", "rockies": "Rockies",
-    "detroit": "Tigers", "tigers": "Tigers",
-    "houston": "Astros", "astros": "Astros",
-    "kansas city": "Royals", "royals": "Royals",
-    "los angeles angels": "Angels", "angels": "Angels",
-    "los angeles dodgers": "Dodgers", "dodgers": "Dodgers",
-    "miami": "Marlins", "marlins": "Marlins",
-    "milwaukee": "Brewers", "brewers": "Brewers",
-    "minnesota": "Twins", "twins": "Twins",
-    "new york mets": "Mets", "mets": "Mets",
-    "new york yankees": "Yankees", "yankees": "Yankees",
-    "oakland": "Athletics", "athletics": "Athletics",
-    "philadelphia": "Phillies", "phillies": "Phillies",
-    "pittsburgh": "Pirates", "pirates": "Pirates",
-    "san diego": "Padres", "padres": "Padres",
-    "san francisco": "Giants", "giants": "Giants",
-    "seattle": "Mariners", "mariners": "Mariners",
-    "st. louis": "Cardinals", "cardinals": "Cardinals",
-    "tampa bay": "Rays", "rays": "Rays",
-    "texas": "Rangers", "rangers": "Rangers",
-    "toronto": "Blue Jays", "blue jays": "Blue Jays",
-    "washington": "Nationals", "nationals": "Nationals",
-}
-
-
-def normalize_team(raw):
-    raw = raw.strip().lower()
-    if raw in TEAM_NAME_MAP:
-        return TEAM_NAME_MAP[raw]
-    for key, val in TEAM_NAME_MAP.items():
-        if key in raw:
-            return val
+def normalize_team(text: str) -> str | None:
+    t = text.strip().lower()
+    if t in TEAM_NAME_MAP: return TEAM_NAME_MAP[t]
+    for k, v in TEAM_NAME_MAP.items():
+        if k in t: return v
     return None
 
 
-# ── Main fetch logic ──────────────────────────────────────────────────────────
+# ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
-    print("=" * 62)
-    print("  MLB The Show 26 - Live Data Fetcher")
-    print("=" * 62)
-    print()
-    print("Steps to get your session cookie:")
-    print("  1. Log in at https://mlb26.theshow.com")
-    print("  2. Press F12 -> Application -> Cookies -> mlb26.theshow.com")
-    print("  3. Find '_theshow_session' and copy its VALUE")
-    print()
-    cookie = input("Paste _theshow_session value: ").strip()
-    if not cookie:
-        sys.exit("No cookie provided.")
+    debug = "--debug" in sys.argv
 
-    headers = make_headers(cookie)
+    print("=" * 62)
+    print("  MLB The Show 26 - Data Fetcher")
+    print("=" * 62)
     print()
 
-    # ── Verify auth ───────────────────────────────────────────────────────
+    # 1. Get auth cookies (auto from Chrome or prompt)
+    cookies = get_auth()
+    headers = make_headers(cookies)
+
+    # 2. Verify auth
+    print()
     print("Verifying authentication...")
     body, status = get(f"{BASE}/dashboard", headers)
     if status != 200 or not body:
-        print(f"  HTTP {status} - cookie may be expired. Log out, log back in, and try again.")
+        print(f"  HTTP {status}. Try logging out and back in, then run again.")
         sys.exit(1)
     if "sign_in" in body.lower() or 'href="/sessions/new"' in body.lower():
-        print("  Redirected to login page - cookie is invalid or expired.")
+        print("  Session expired. Log in again at mlb26.theshow.com and re-run.")
         sys.exit(1)
-    print("  Authentication OK!")
-    print()
+    print("  Authenticated!")
 
-    # ── Fetch programs listing page ───────────────────────────────────────
+    # 3. Fetch programs listing
+    print()
     print("Fetching programs page...")
+
+    # Try Inertia JSON API first
+    inertia_hdrs = make_headers(cookies, inertia=True)
+    inertia_body, inertia_status = get(f"{BASE}/programs", inertia_hdrs)
+    if debug and inertia_status == 200 and inertia_body:
+        dbg_inertia = os.path.join(SCRIPT_DIR, "debug_inertia_programs.json")
+        with open(dbg_inertia, "w", encoding="utf-8") as f:
+            f.write(inertia_body)
+        print(f"  [debug] Saved Inertia JSON response → {dbg_inertia}")
+
     prog_body, prog_status = get(f"{BASE}/programs", headers)
     if prog_status != 200 or not prog_body:
-        print(f"  Failed ({prog_status})")
+        print(f"  Failed ({prog_status}). Cannot continue.")
         sys.exit(1)
 
+    if debug:
+        dbg_path = os.path.join(SCRIPT_DIR, "debug_programs_page.html")
+        with open(dbg_path, "w", encoding="utf-8") as f:
+            f.write(prog_body)
+        print(f"  [debug] Saved programs listing page → {dbg_path}")
+
+    # Also look for program links using broader patterns
     links = find_program_links(prog_body)
+
+    # Try extracting program IDs from the Inertia JSON response
+    if not links and inertia_status == 200 and inertia_body:
+        try:
+            jdata = json.loads(inertia_body)
+            props = jdata.get("props", jdata)
+            # Look for programs array with IDs
+            def _find_programs(obj, depth=0):
+                if depth > 5: return []
+                if isinstance(obj, list) and obj and isinstance(obj[0], dict):
+                    if any("id" in item for item in obj[:3]):
+                        return obj
+                if isinstance(obj, dict):
+                    for k in ("programs", "data", "items"):
+                        if k in obj and isinstance(obj[k], list):
+                            return obj[k]
+                    for v in obj.values():
+                        r = _find_programs(v, depth+1)
+                        if r: return r
+                return []
+            progs = _find_programs(props)
+            for p in progs:
+                if isinstance(p, dict):
+                    pid = p.get("id") or p.get("program_id")
+                    if pid:
+                        url = f"{BASE}/programs/{pid}"
+                        if url not in links:
+                            links.append(url)
+        except Exception:
+            pass
+
+    # Fallback: look for any /programs/ or /program_view links
+    if not links:
+        for m in re.finditer(r'href=["\']([^"\']*(?:/programs?/|program_view)[^"\']*)["\']', prog_body):
+            raw = html_module.unescape(m.group(1))
+            if raw.startswith("/"):
+                url = BASE + raw
+            elif "mlb26.theshow.com" in raw:
+                url = raw
+            else:
+                continue
+            if url not in links:
+                links.append(url)
+
     print(f"  Found {len(links)} program links")
-    for l in links[:8]:
-        print(f"    {l}")
-    if len(links) > 8:
-        print(f"    ... and {len(links)-8} more")
+    if debug and links:
+        print(f"  [debug] First 5 links:")
+        for lnk in links[:5]:
+            print(f"    {lnk}")
     print()
 
-    # ── Categorize and fetch each program ────────────────────────────────
-    team_missions   = {}   # {team_name: {prog_type: [missions]}}
-    other_missions  = {}   # {prog_name: [missions]}
-
+    # 4. Fetch and parse each program
+    team_missions:  dict[str, dict[str, list]] = {}
+    other_missions: dict[str, list]            = {}
     total = len(links)
-    for i, url in enumerate(links, 1):
-        params = parse_url_params(url)
-        prog_id  = params.get("program_id", "?")
-        group_id = params.get("group_id", "")
-        team_id  = params.get("team_id", "")
 
-        print(f"  [{i:3}/{total}] Fetching program {prog_id} ...", end=" ", flush=True)
-        time.sleep(0.4)   # be polite to the server
+    for i, url in enumerate(links, 1):
+        params   = parse_url_params(url)
+        prog_id  = params.get("program_id", "?")
+        time.sleep(0.35)
 
         p_body, p_status = get(url, headers)
         if p_status != 200 or not p_body:
-            print(f"SKIP ({p_status})")
+            print(f"  [{i:3}/{total}] SKIP ({p_status}) {url[-50:]}")
             continue
 
-        missions = parse_missions_from_html(p_body)
+        if debug and i == 1:
+            dbg2 = os.path.join(SCRIPT_DIR, "debug_program_page.html")
+            with open(dbg2, "w", encoding="utf-8") as f:
+                f.write(p_body)
+            print(f"  [debug] Saved first program page → {dbg2}")
+            print(f"  [debug] Page length: {len(p_body)} bytes")
+            # Print first 3000 chars of response (no scripts) for quick inspection
+            stripped = re.sub(r'<script[^>]*>.*?</script>', '[SCRIPT]', p_body[:5000], flags=re.DOTALL)
+            print("  [debug] Page preview (first 3000 chars stripped):")
+            print(stripped[:3000])
+            print()
 
-        # Try to identify the program name and team from the page
-        page_title = ""
-        m_title = re.search(r'<h1[^>]*>(.*?)</h1>', p_body, re.DOTALL | re.IGNORECASE)
-        if m_title:
-            page_title = re.sub(r'<[^>]+>', '', m_title.group(1)).strip()
+        # Try Inertia JSON first for mission extraction
+        missions = []
+        p_inertia, p_ist = get(url, inertia_hdrs)
+        if p_ist == 200 and p_inertia:
+            try:
+                jdata = json.loads(p_inertia)
+                props = jdata.get("props", jdata)
+                # Search for missions/tasks array anywhere in props
+                def _find_missions(obj, depth=0):
+                    if depth > 5: return []
+                    if isinstance(obj, list):
+                        # Check if looks like missions list
+                        if obj and isinstance(obj[0], dict) and any(
+                            k in obj[0] for k in ("title","name","description","objective")
+                        ):
+                            return obj
+                    if isinstance(obj, dict):
+                        for k in ("missions","tasks","objectives","program_missions","activities"):
+                            if k in obj and isinstance(obj[k], list):
+                                return obj[k]
+                        for v in obj.values():
+                            r = _find_missions(v, depth+1)
+                            if r: return r
+                    return []
+                raw_ms = _find_missions(props)
+                for item in raw_ms:
+                    if not isinstance(item, dict): continue
+                    title   = item.get("title") or item.get("name") or item.get("description") or item.get("objective") or ""
+                    current = item.get("progress", item.get("current_value", item.get("count", 0))) or 0
+                    goal    = item.get("goal", item.get("requirement", item.get("target", 0))) or 0
+                    stat    = item.get("stat_type", item.get("stat", "")) or ""
+                    reward  = item.get("reward", item.get("xp_reward", item.get("xp", ""))) or ""
+                    pct     = item.get("percent_complete", item.get("pct", 0)) or 0
+                    if not pct and goal:
+                        try: pct = min(100.0, round(float(current) / float(goal) * 100, 1))
+                        except: pass
+                    prog_str = f"{current}/{goal} {stat}".strip() if goal else str(current)
+                    missions.append({"t": str(title).strip(), "r": str(reward), "p": prog_str, "pct": float(pct or 0)})
+                if debug and i == 1:
+                    dbg_j = os.path.join(SCRIPT_DIR, "debug_inertia_program.json")
+                    with open(dbg_j, "w", encoding="utf-8") as fj:
+                        fj.write(p_inertia[:50000])
+                    print(f"  [debug] Inertia JSON for program 1 → {dbg_j}, raw_missions={len(raw_ms)}")
+            except Exception as ex:
+                if debug and i == 1:
+                    print(f"  [debug] Inertia parse error: {ex}")
 
-        # Team affinity detection
-        team = normalize_team(page_title)
-        if not team and team_id:
-            # Try to find team name from page body
-            for candidate in TEAM_NAME_MAP:
-                if candidate in p_body.lower()[:2000]:
-                    team = TEAM_NAME_MAP[candidate]
-                    break
+        if not missions:
+            missions = extract_missions_from_html(p_body)
+        if debug and i == 1:
+            print(f"  [debug] Missions found from first page: {len(missions)}")
 
-        # Detect program sub-type (My Journey vs Color Storm)
-        is_color_storm = bool(re.search(r'color\s*storm', p_body[:3000], re.I))
-        prog_type = "Color Storm" if is_color_storm else "My Journey"
+        # Identify program name / team from page <h1>
+        h1 = ""
+        m_h1 = re.search(r'<h1[^>]*>(.*?)</h1>', p_body, re.DOTALL | re.IGNORECASE)
+        if m_h1:
+            h1 = re.sub(r'<[^>]+>', '', m_h1.group(1)).strip()
 
-        # Detect other programs by title/URL
-        is_xp_path = bool(re.search(r'xp\s*(reward\s*)?path|inning.*xp|1st inning', p_body[:3000], re.I))
-        is_multi   = bool(re.search(r'multiplayer|ranked|battle royale', p_body[:3000], re.I))
-        is_assorted= bool(re.search(r'assorted|themed|drop\s+\d', p_body[:3000], re.I))
+        team           = normalize_team(h1)
+        is_color_storm = bool(re.search(r'color\s*storm', p_body[:4000], re.I))
+        prog_type      = "Color Storm" if is_color_storm else "My Journey"
+        is_xp_path     = bool(re.search(r'xp.*path|1st inning', p_body[:4000], re.I))
+        is_multi       = bool(re.search(r'multiplayer|ranked.*season', p_body[:4000], re.I))
 
-        print(f"OK ({len(missions)} missions) - {page_title[:40] or '?'}")
+        label = h1[:45] or f"prog {prog_id}"
+        print(f"  [{i:3}/{total}] {len(missions):3} missions  {label}")
 
         if team:
-            if team not in team_missions:
-                team_missions[team] = {}
-            if prog_type not in team_missions[team]:
-                team_missions[team][prog_type] = []
-            team_missions[team][prog_type].extend(missions)
+            team_missions.setdefault(team, {}).setdefault(prog_type, []).extend(missions)
         elif is_xp_path:
-            key = "1st Inning XP Path"
-            other_missions.setdefault(key, []).extend(missions)
+            other_missions.setdefault("1st Inning XP Path", []).extend(missions)
         elif is_multi:
-            key = "Multiplayer Program"
-            other_missions.setdefault(key, []).extend(missions)
-        elif is_assorted or missions:
-            key = "Assorted Programs"
-            other_missions.setdefault(key, []).extend(missions)
+            other_missions.setdefault("Multiplayer Program", []).extend(missions)
+        else:
+            other_missions.setdefault("Assorted Programs", []).extend(missions)
 
-    # Deduplicate missions by title within each category
-    def dedup(lst):
+    # 5. Deduplicate and sort
+    def dedup_sort(lst):
         seen, out = set(), []
-        for m in lst:
-            if m["t"] not in seen and m["t"]:
-                seen.add(m["t"])
-                out.append(m)
+        for m in sorted(lst, key=lambda x: -x["pct"]):
+            if m["t"] and m["t"] not in seen:
+                seen.add(m["t"]); out.append(m)
         return out
 
     for team in team_missions:
         for pt in team_missions[team]:
-            team_missions[team][pt] = dedup(
-                sorted(team_missions[team][pt], key=lambda x: -x["pct"])
-            )
-    for key in other_missions:
-        other_missions[key] = dedup(
-            sorted(other_missions[key], key=lambda x: -x["pct"])
-        )
+            team_missions[team][pt] = dedup_sort(team_missions[team][pt])
+    for k in other_missions:
+        other_missions[k] = dedup_sort(other_missions[k])
 
     print()
-    print(f"Team missions:  {sum(sum(len(v) for v in t.values()) for t in team_missions.values())} across {len(team_missions)} teams")
-    print(f"Other missions: {sum(len(v) for v in other_missions.values())} across {len(other_missions)} programs")
+    team_total  = sum(sum(len(v) for v in t.values()) for t in team_missions.values())
+    other_total = sum(len(v) for v in other_missions.values())
+    print(f"Team missions:   {team_total:4d} across {len(team_missions)} teams")
+    print(f"Other missions:  {other_total:4d} across {len(other_missions)} programs")
 
-    # ── Save JSON ─────────────────────────────────────────────────────────
+    # 6. Build other_programs structure for the HTML
+    op_for_html = {}
+    for name, meta in OTHER_PROGRAMS.items():
+        op_for_html[name] = {
+            "color":    meta["color"],
+            "icon":     meta["icon"],
+            "desc":     "",
+            "missions": other_missions.get(name, []),
+        }
+
     live_data = {
-        "divisions":       DIVISIONS,
-        "colors":          TEAM_COLORS,
-        "missions":        team_missions,
-        "other_missions":  other_missions,
-        "other_programs":  {k: {"color": v["color"], "icon": v["icon"], "desc": "",
-                               "missions": other_missions.get(k, [])}
-                            for k, v in OTHER_PROGRAMS.items()},
-        "data_source":     "live",
-        "data_date":       time.strftime("%Y-%m-%d %H:%M"),
+        "divisions":      DIVISIONS,
+        "colors":         TEAM_COLORS,
+        "missions":       team_missions,
+        "other_missions": other_missions,
+        "other_programs": op_for_html,
+        "data_source":    "live",
+        "data_date":      time.strftime("%Y-%m-%d %H:%M"),
     }
+
     with open(OUT_JSON, "w", encoding="utf-8") as f:
         json.dump(live_data, f, indent=2, ensure_ascii=True)
     print(f"\nSaved: {OUT_JSON}")
 
-    # ── Rebuild tracker HTML ──────────────────────────────────────────────
+    # 7. Rebuild HTML
     print("Rebuilding tracker HTML...")
     build_script = os.path.join(SCRIPT_DIR, "build_tracker.py")
     if os.path.exists(build_script):
-        import subprocess
         result = subprocess.run(
             [sys.executable, build_script, "--source", OUT_JSON],
-            capture_output=True, text=True
+            capture_output=True, text=True, cwd=SCRIPT_DIR
         )
         if result.returncode == 0:
-            print("  Tracker rebuilt successfully!")
-            print(result.stdout.strip())
+            print("  Done!", result.stdout.strip())
         else:
-            print("  build_tracker.py error:", result.stderr[:200])
+            print("  build_tracker error:", result.stderr[:300])
     else:
-        print("  build_tracker.py not found - manually run it to rebuild the HTML.")
+        print("  build_tracker.py not found – run it manually.")
 
     print()
-    print("Done! Open 'MLB Team Affinity Tracker.html' in your browser.")
+    print("All done!  Open 'MLB Team Affinity Tracker.html' in your browser.")
 
 
 if __name__ == "__main__":
