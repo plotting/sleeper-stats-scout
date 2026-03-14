@@ -454,19 +454,24 @@ function getMatchedPlayer(title) {
 }
 
 // ── Global stats ───────────────────────────────────────────────────────────
-let gDone = 0, gTotal = 0, gPctSum = 0;
+let gDone = 0, gTotal = 0;
 for (const tm of Object.keys(D.missions)) {
   for (const arr of Object.values(D.missions[tm])) {
     for (const m of arr) {
       gTotal++;
       if (m.pct >= 100) gDone++;
-      gPctSum += m.pct;
     }
+  }
+}
+for (const prog of Object.values(D.other_programs)) {
+  for (const m of (prog.missions || [])) {
+    gTotal++;
+    if (m.pct >= 100) gDone++;
   }
 }
 document.getElementById('g-done').textContent  = gDone;
 document.getElementById('g-total').textContent = gTotal;
-document.getElementById('g-pct').textContent   = gTotal ? Math.round(gPctSum / gTotal) + '%' : '—';
+document.getElementById('g-pct').textContent   = gTotal ? Math.round(gDone / gTotal * 100) + '%' : '—';
 
 // ── Sidebar ────────────────────────────────────────────────────────────────
 const sidebar = document.getElementById('sidebar');
@@ -503,8 +508,9 @@ for (const [div, teams] of Object.entries(D.divisions)) {
   sidebar.appendChild(h);
   for (const team of teams) {
     if (!D.missions[team]) continue;
-    const all = Object.values(D.missions[team]).flat();
-    const pct = all.length ? Math.round(all.reduce((a, m) => a + m.pct, 0) / all.length) : 0;
+    const all  = Object.values(D.missions[team]).flat();
+    const done = all.filter(m => m.pct >= 100).length;
+    const pct  = all.length ? Math.round(done / all.length * 100) : 0;
     const c1  = D.colors[team] ? D.colors[team][0] : '#3b9edd';
     const btn = document.createElement('button');
     btn.className   = 'team-btn';
@@ -530,22 +536,124 @@ function selectOtherProg(progName) {
   const btn = document.querySelector('.other-prog-btn[data-prog="' + progName + '"]');
   if (btn) btn.classList.add('active');
   curTeam = null;
-  const meta = D.other_programs[progName] || {};
-  const content = document.getElementById('content');
+  curProg = progName;
+  const meta     = D.other_programs[progName] || {};
+  const missions = meta.missions || [];
+  const content  = document.getElementById('content');
+
+  if (!missions.length) {
+    content.innerHTML =
+      '<div class="team-banner" style="--c1:' + (meta.color || '#1e3a5f') + ';--c2:#0d1b2e">' +
+        '<div class="banner-info"><h1>' + progName + '</h1>' +
+        '<p>' + (meta.desc || '') + '</p></div>' +
+      '</div>' +
+      '<div class="live-data-needed">' +
+        '<div class="ldn-icon">&#9432;</div>' +
+        '<div class="ldn-body">' +
+          '<strong>Live data required for ' + progName + '</strong>' +
+          '<p>Run the fetch script to pull live 2026 data:</p>' +
+          '<code>py -3 fetch_mlb26.py</code>' +
+        '</div>' +
+      '</div>';
+    return;
+  }
+
+  const done    = missions.filter(function(m) { return m.pct >= 100; }).length;
+  const pct     = missions.length ? Math.round(done / missions.length * 100) : 0;
+  const R = 30, circ = Math.round(2 * Math.PI * R);
+  const offset  = Math.round(circ * (1 - pct / 100));
+
   content.innerHTML =
     '<div class="team-banner" style="--c1:' + (meta.color || '#1e3a5f') + ';--c2:#0d1b2e">' +
       '<div class="banner-info"><h1>' + progName + '</h1>' +
-      '<p>' + (meta.desc || '') + '</p></div>' +
-    '</div>' +
-    '<div class="live-data-needed">' +
-      '<div class="ldn-icon">&#9432;</div>' +
-      '<div class="ldn-body">' +
-        '<strong>Live data required for ' + progName + '</strong>' +
-        '<p>This program missions are not in the Excel file. Run the fetch script to pull live 2026 data:</p>' +
-        '<code>py -3 fetch_mlb26.py</code>' +
-        '<p style="margin-top:8px">You need your <strong>_theshow_session</strong> cookie from mlb26.theshow.com &rarr; DevTools &rarr; Application &rarr; Cookies.</p>' +
-      '</div>' +
-    '</div>';
+      '<p>' + done + ' / ' + missions.length + ' missions complete</p></div>' +
+      '<div class="ring-wrap">' +
+      '<svg width="70" height="70" viewBox="0 0 70 70">' +
+      '<circle cx="35" cy="35" r="' + R + '" fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="5"/>' +
+      '<circle cx="35" cy="35" r="' + R + '" fill="none" stroke="rgba(255,255,255,0.9)" stroke-width="5"' +
+      ' stroke-dasharray="' + circ + '" stroke-dashoffset="' + offset + '" stroke-linecap="round"/>' +
+      '</svg>' +
+      '<div class="ring-label"><span class="rn">' + pct + '%</span><span class="rl">done</span></div>' +
+      '</div></div>' +
+      '<div id="mission-area"></div>';
+
+  renderOtherMissions(progName);
+}
+
+function renderOtherMissions(progName) {
+  const meta    = D.other_programs[progName] || {};
+  let list      = (meta.missions || []).slice();
+  const search  = document.getElementById('search').value.toLowerCase();
+  const fstatus = document.getElementById('fstatus').value;
+  const fsort   = document.getElementById('fsort').value;
+
+  if (search)   list = list.filter(function(m) { return m.t.toLowerCase().includes(search) || m.p.toLowerCase().includes(search); });
+  if (fstatus === 'incomplete') list = list.filter(function(m) { return m.pct < 100; });
+  if (fstatus === 'complete')   list = list.filter(function(m) { return m.pct >= 100; });
+  if (fstatus === 'near')       list = list.filter(function(m) { return m.pct >= 75 && m.pct < 100; });
+  if (fstatus === 'owned')      list = list.filter(function(m) { return missionHasOwnedPlayer(m.t); });
+
+  if (fsort === 'pct-d') list.sort(function(a,b) { return b.pct - a.pct; });
+  if (fsort === 'pct-a') list.sort(function(a,b) { return a.pct - b.pct; });
+  if (fsort === 'rew-d') list.sort(function(a,b) { return parseInt(b.r.replace(/,/g,'')) - parseInt(a.r.replace(/,/g,'')); });
+  if (fsort === 'rew-a') list.sort(function(a,b) { return parseInt(a.r.replace(/,/g,'')) - parseInt(b.r.replace(/,/g,'')); });
+
+  if (fstatus !== 'complete') {
+    const incomplete = list.filter(function(m) { return m.pct < 100; });
+    const complete   = list.filter(function(m) { return m.pct >= 100; });
+    list = incomplete.concat(complete);
+  }
+
+  const area = document.getElementById('mission-area');
+  if (!area) return;
+
+  const allMissions = meta.missions || [];
+  const progDone    = allMissions.filter(function(m) { return m.pct >= 100; }).length;
+  const ownedCount  = allMissions.filter(function(m) { return missionHasOwnedPlayer(m.t); }).length;
+
+  if (!list.length) {
+    area.innerHTML = '<div class="empty"><svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.3"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg><p>No missions match your filters</p></div>';
+    return;
+  }
+
+  let summHtml = '<div class="summary-row">'
+    + '<div class="sum-pill">Showing <strong>' + list.length + '</strong> missions</div>'
+    + '<div class="sum-pill"><strong>' + progDone + '</strong> / ' + allMissions.length + ' complete</div>';
+  if (ownedCount > 0) {
+    summHtml += '<div class="sum-pill" style="border-color:rgba(245,197,24,0.3);color:#f5c518"><strong>' + ownedCount + '</strong> use your players</div>';
+  }
+  summHtml += '</div>';
+
+  let cards = '';
+  let shownDivider = false;
+  for (const m of list) {
+    const isDone = m.pct >= 100;
+    if (isDone && !shownDivider && fstatus !== 'complete') {
+      shownDivider = true;
+      const doneCount = list.filter(function(x) { return x.pct >= 100; }).length;
+      cards += '<div class="complete-divider">&#10003; ' + doneCount + ' completed</div>';
+    }
+    const owned   = missionHasOwnedPlayer(m.t);
+    const matched = getMatchedPlayer(m.t);
+    const color   = progColor(m.pct);
+    let cls = 'mcard';
+    if (isDone)  cls += ' done';
+    if (owned && !isDone) cls += ' owned-player';
+    let badges = '';
+    if (isDone)  badges += '<span class="badge badge-done">&#10003; Complete</span>';
+    if (owned)   badges += '<span class="badge badge-owned">&#9733; ' + matched + '</span>';
+    cards += '<div class="' + cls + '">'
+      + (badges ? '<div class="card-badges">' + badges + '</div>' : '')
+      + '<div class="mcard-title">' + m.t + '</div>'
+      + '<div class="mcard-meta">'
+      +   '<span class="mcard-prog-txt">' + m.p + '</span>'
+      +   '<div class="prog-bar"><div class="prog-fill" style="width:' + Math.min(m.pct,100) + '%;background:' + color + '"></div></div>'
+      +   '<span class="prog-pct" style="color:' + color + '">' + m.pct + '%</span>'
+      + '</div>'
+      + '<div class="mcard-reward"><span class="xp-badge">XP</span>' + m.r + '</div>'
+      + '</div>';
+  }
+  area.innerHTML = summHtml + '<div class="mission-grid">' + cards + '</div>';
 }
 
 function selectTeam(team) {
@@ -572,13 +680,15 @@ function renderContent() {
   const colors = D.colors[curTeam] || ['#1e3a5f', '#0d1b2e'];
   const c1 = colors[0], c2 = colors[1];
   const all     = Object.values(td).flat();
-  const teamPct = all.length ? Math.round(all.reduce((a, m) => a + m.pct, 0) / all.length) : 0;
   const done    = all.filter(m => m.pct >= 100).length;
+  const teamPct = all.length ? Math.round(done / all.length * 100) : 0;
   const R = 30, circ = Math.round(2 * Math.PI * R);
   const offset = Math.round(circ * (1 - teamPct / 100));
   const progs   = Object.keys(td);
+  const TAB_LABELS = {'My Journey': 'Team Affinity', 'Color Storm': '#1 Fan'};
   const tabsHtml = progs.map(function(p) {
-    return '<button class="ptab' + (p === curProg ? ' active' : '') + '" data-prog="' + p + '" onclick="switchProg(this)">' + p + '</button>';
+    const label = TAB_LABELS[p] || p;
+    return '<button class="ptab' + (p === curProg ? ' active' : '') + '" data-prog="' + p + '" onclick="switchProg(this)">' + label + '</button>';
   }).join('');
 
   document.getElementById('content').innerHTML =
@@ -745,9 +855,13 @@ function renderInvList() {
 }
 
 // ── Wire controls ──────────────────────────────────────────────────────────
-document.getElementById('search').addEventListener('input', function() { if (curTeam) renderMissions(); });
-document.getElementById('fstatus').addEventListener('change', function() { if (curTeam) renderMissions(); });
-document.getElementById('fsort').addEventListener('change', function() { if (curTeam) renderMissions(); });
+function rerender() {
+  if (curTeam) renderMissions();
+  else if (curProg) renderOtherMissions(curProg);
+}
+document.getElementById('search').addEventListener('input', rerender);
+document.getElementById('fstatus').addEventListener('change', rerender);
+document.getElementById('fsort').addEventListener('change', rerender);
 
 // ── Init ───────────────────────────────────────────────────────────────────
 renderInvList();
