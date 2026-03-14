@@ -429,31 +429,112 @@ def get(url, headers, timeout=20):
 # ── Program discovery & parsing ───────────────────────────────────────────────
 
 def find_program_links(html_body: str) -> list[str]:
+    """Find all program page links from the programs listing page."""
     links = []
     seen = set()
 
-    # Pattern 1: explicit program_view links
-    for m in re.finditer(r'href=["\']([^"\']*program_view[^"\']*)["\']', html_body):
+    # Match all mlb26-program-tile-text hrefs (the tile links on /programs)
+    for m in re.finditer(r'href=["\']([^"\']*(?:program_view|team_affinity|other_programs)[^"\']*)["\']', html_body):
         raw = html_module.unescape(m.group(1))
         url = BASE + raw if raw.startswith("/") else raw
         if url not in seen:
             seen.add(url); links.append(url)
 
-    # Pattern 2: /programs/NNN or /programs/NNN/anything
-    for m in re.finditer(r'href=["\'](/programs/(\d+)[^"\']*)["\']', html_body):
-        raw = html_module.unescape(m.group(1))
-        url = BASE + raw
-        if url not in seen:
-            seen.add(url); links.append(url)
-
-    # Pattern 3: JSON embedded data – look for program IDs in JSON blobs
-    for m in re.finditer(r'"id"\s*:\s*(\d+).*?"type"\s*:\s*"Program"', html_body, re.DOTALL):
-        pid = m.group(1)
-        url = f"{BASE}/programs/{pid}"
-        if url not in seen:
-            seen.add(url); links.append(url)
+    # Fallback: any /programs/... link
+    if not links:
+        for m in re.finditer(r'href=["\']([^"\']*(?:/programs/[^"\']+))["\']', html_body):
+            raw = html_module.unescape(m.group(1))
+            if raw.startswith("/"):
+                url = BASE + raw
+            elif "mlb26.theshow.com" in raw:
+                url = raw
+            else:
+                continue
+            if url not in seen:
+                seen.add(url); links.append(url)
 
     return links
+
+
+def expand_program_links(links: list[str], headers: dict) -> list[str]:
+    """
+    Expand top-level program tiles into individual program_view URLs.
+
+    Hierarchy:
+      team_affinity (AL/NL)
+        → team_affinity_by_team (one per team)
+          → program_view (My Journey, Color Storm)
+      other_programs
+        → program_view
+      program_view  (already direct)
+    """
+    expanded = []
+    seen = set()
+
+    def _add(url):
+        if url not in seen:
+            seen.add(url); expanded.append(url)
+
+    def _scrape_program_views(body):
+        views = []
+        for m in re.finditer(r'href=["\']([^"\']*program_view[^"\']*)["\']', body):
+            raw = html_module.unescape(m.group(1))
+            views.append(BASE + raw if raw.startswith("/") else raw)
+        return views
+
+    for url in links:
+        path = urllib.parse.urlparse(url).path
+
+        if "team_affinity_by_team" in path:
+            # Already a single team page — get program_view links
+            body, status = get(url, headers)
+            if status == 200 and body:
+                for pv in _scrape_program_views(body):
+                    _add(pv)
+            time.sleep(0.3)
+
+        elif "team_affinity" in path and "team_affinity_by_team" not in path:
+            # League listing (AL or NL) — find both AL + NL pages then all team links
+            league_pages = [url]
+            body, status = get(url, headers)
+            if status == 200 and body:
+                # Find the other league link on this page
+                for m in re.finditer(r'href=["\']([^"\']*team_affinity\?[^"\']*league=[^"\']*)["\']', body):
+                    raw = html_module.unescape(m.group(1))
+                    other = BASE + raw if raw.startswith("/") else raw
+                    if other not in league_pages:
+                        league_pages.append(other)
+            # Fetch each league page and collect team links
+            team_links_all = []
+            for league_url in league_pages:
+                lbody, lstatus = get(league_url, headers)
+                if lstatus == 200 and lbody:
+                    for m in re.finditer(r'href=["\']([^"\']*team_affinity_by_team[^"\']*)["\']', lbody):
+                        raw = html_module.unescape(m.group(1))
+                        turl = BASE + raw if raw.startswith("/") else raw
+                        if turl not in team_links_all:
+                            team_links_all.append(turl)
+                time.sleep(0.3)
+            for turl in team_links_all:
+                tbody, tstatus = get(turl, headers)
+                if tstatus == 200 and tbody:
+                    for pv in _scrape_program_views(tbody):
+                        _add(pv)
+                time.sleep(0.3)
+
+        elif "other_programs" in path:
+            # Other programs listing
+            body, status = get(url, headers)
+            if status == 200 and body:
+                for pv in _scrape_program_views(body):
+                    _add(pv)
+            time.sleep(0.3)
+
+        else:
+            # Direct program_view or other direct link
+            _add(url)
+
+    return expanded
 
 
 def parse_url_params(url: str) -> dict:
@@ -461,83 +542,92 @@ def parse_url_params(url: str) -> dict:
 
 
 def extract_missions_from_html(html_body: str) -> list[dict]:
+    """
+    Parse missions from mlb26.theshow.com program pages.
+
+    Page structure (mlb26-program-accordion-sub):
+      <div class='accordion title-accordion mlb26-program-accordion-sub'>
+        <div class='accordion-block'>
+          <div class='accordion-toggle'>
+            <span class='accordion-toggle-label mlb26-program-accordion-label'>TITLE</span>
+          </div>
+          <div class='accordion-content'>
+            <p>DESCRIPTION</p>
+            <p>N/GOAL STAT<meter max='GOAL' value='CURRENT'></meter></p>
+            <p>Reward<div class='reward'><img/>AMOUNT</div></p>
+          </div>
+        </div>
+      </div>
+    """
     missions = []
 
-    # Strategy 1 – JSON blob embedded in script tag
-    for key in ("missions", "program_missions", "tasks", "objectives"):
-        for pat in (
-            rf'"{key}"\s*:\s*(\[.*?\])',
-            rf"gon\.{key}\s*=\s*(\[.*?\]);",
-            rf"window\.{key}\s*=\s*(\[.*?\]);",
-        ):
-            m = re.search(pat, html_body, re.DOTALL)
-            if m:
-                try:
-                    blob = json.loads(m.group(1))
-                    if isinstance(blob, list) and blob:
-                        for item in blob:
-                            if not isinstance(item, dict):
-                                continue
-                            title   = item.get("title") or item.get("name") or item.get("description") or ""
-                            current = item.get("progress", item.get("current_value", item.get("count", 0)))
-                            goal    = item.get("goal", item.get("requirement", item.get("target", 0)))
-                            stat    = item.get("stat_type", item.get("stat", ""))
-                            reward  = item.get("reward", item.get("xp_reward", item.get("xp", "")))
-                            pct     = item.get("percent_complete", item.get("pct", 0))
-                            if not pct and goal:
-                                try:
-                                    pct = min(100.0, round(float(current) / float(goal) * 100, 1))
-                                except Exception:
-                                    pass
-                            prog_str = f"{current}/{goal} {stat}".strip() if goal else str(current)
-                            missions.append({"t": str(title).strip(), "r": str(reward), "p": prog_str, "pct": float(pct or 0)})
-                        if missions:
-                            return missions
-                except Exception:
-                    pass
-
-    # Strategy 2 – Inertia / data-page JSON
-    for m in re.finditer(r'data-page="([^"]+)"', html_body):
-        try:
-            props = json.loads(html_module.unescape(m.group(1)))
-            def find_key(obj, key, depth=0):
-                if depth > 6: return None
-                if isinstance(obj, dict):
-                    if key in obj: return obj[key]
-                    for v in obj.values():
-                        r = find_key(v, key, depth+1)
-                        if r is not None: return r
-                return None
-            raw = find_key(props, "missions")
-            if isinstance(raw, list):
-                for item in raw:
-                    if isinstance(item, dict):
-                        title = item.get("title", item.get("name", ""))
-                        missions.append({
-                            "t": str(title),
-                            "r": str(item.get("reward", "")),
-                            "p": str(item.get("progress", "")),
-                            "pct": float(item.get("percent_complete", 0)),
-                        })
-                if missions: return missions
-        except Exception:
-            pass
-
-    # Strategy 3 – HTML scraping: look for XP reward + progress patterns in list items
-    blocks = re.findall(r'<(?:li|div|tr)[^>]*class="[^"]*mission[^"]*"[^>]*>(.*?)</(?:li|div|tr)>',
-                        html_body, re.DOTALL | re.IGNORECASE)
+    # Primary strategy: parse mlb26-program-accordion-sub blocks
+    blocks = re.findall(
+        r'mlb26-program-accordion-sub["\'][^>]*>.*?</div>\s*</div>\s*</div>\s*</div>',
+        html_body, re.DOTALL | re.IGNORECASE
+    )
     for blk in blocks:
-        text = re.sub(r'<[^>]+>', ' ', blk)
-        text = html_module.unescape(re.sub(r'\s+', ' ', text)).strip()
-        xp   = re.search(r'([\d,]+)\s*XP', text, re.I)
-        prog = re.search(r'(\d[\d,]*/[\d,]+[^\s]*)', text)
-        if xp and text:
-            missions.append({
-                "t": text[:120],
-                "r": xp.group(1),
-                "p": prog.group(1) if prog else "",
-                "pct": 0.0,
-            })
+        # Title from accordion-toggle-label
+        m_title = re.search(
+            r'class=["\'][^"\']*accordion-toggle-label[^"\']*["\'][^>]*>\s*(.*?)\s*</span>',
+            blk, re.DOTALL | re.IGNORECASE
+        )
+        title = html_module.unescape(re.sub(r'<[^>]+>', '', m_title.group(1))).strip() if m_title else ""
+        if not title:
+            continue
+
+        # Progress from <meter max='N' value='M'>
+        m_meter = re.search(r'<meter[^>]+max=["\'](\d+)["\'][^>]+value=["\'](\d+)["\']', blk, re.IGNORECASE)
+        if not m_meter:
+            m_meter = re.search(r'<meter[^>]+value=["\'](\d+)["\'][^>]+max=["\'](\d+)["\']', blk, re.IGNORECASE)
+            if m_meter:
+                cur_val, max_val = m_meter.group(1), m_meter.group(2)
+            else:
+                cur_val, max_val = "0", "0"
+        else:
+            max_val, cur_val = m_meter.group(1), m_meter.group(2)
+
+        # Progress text (e.g. "1/10 HITS")
+        m_prog = re.search(r'(\d[\d,]*/\d[\d,]*\s*\w*)', blk)
+        prog_str = m_prog.group(1).strip() if m_prog else f"{cur_val}/{max_val}"
+
+        # Percent complete
+        try:
+            pct = min(100.0, round(int(cur_val) / int(max_val) * 100, 1)) if int(max_val) > 0 else 0.0
+        except Exception:
+            pct = 0.0
+
+        # Reward: number inside div.reward (after img)
+        m_reward = re.search(r"class=['\"]reward['\"][^>]*>(.*?)</div>", blk, re.DOTALL | re.IGNORECASE)
+        reward = ""
+        if m_reward:
+            r_text = html_module.unescape(re.sub(r'<[^>]+>', ' ', m_reward.group(1))).strip()
+            # Extract number (could be "2,500" or "2500 XP")
+            m_rnum = re.search(r'([\d,]+)', r_text)
+            if m_rnum:
+                reward = m_rnum.group(1).replace(",", "") + " XP"
+
+        missions.append({"t": title, "r": reward, "p": prog_str, "pct": pct})
+
+    if missions:
+        return missions
+
+    # Fallback: any accordion-block with meter tags (broader match)
+    for blk in re.findall(r'<div class=["\']accordion-block["\']>(.*?)</div>\s*</div>\s*</div>', html_body, re.DOTALL):
+        m_title = re.search(r'accordion-toggle-label[^>]*>\s*(.*?)\s*</span>', blk, re.DOTALL)
+        m_meter = re.search(r'<meter[^>]+max=["\'](\d+)["\'][^>]+value=["\'](\d+)["\']', blk)
+        if not m_title or not m_meter:
+            continue
+        title = html_module.unescape(re.sub(r'<[^>]+>', '', m_title.group(1))).strip()
+        max_v, cur_v = m_meter.group(1), m_meter.group(2)
+        try:
+            pct = min(100.0, round(int(cur_v) / int(max_v) * 100, 1)) if int(max_v) > 0 else 0.0
+        except Exception:
+            pct = 0.0
+        m_rnum = re.search(r"class=['\"]reward['\"].*?([\d,]+)", blk, re.DOTALL)
+        reward = (m_rnum.group(1).replace(",", "") + " XP") if m_rnum else ""
+        if title:
+            missions.append({"t": title, "r": reward, "p": f"{cur_v}/{max_v}", "pct": pct})
 
     return missions
 
@@ -584,15 +674,6 @@ def main():
     print()
     print("Fetching programs page...")
 
-    # Try Inertia JSON API first
-    inertia_hdrs = make_headers(cookies, inertia=True)
-    inertia_body, inertia_status = get(f"{BASE}/programs", inertia_hdrs)
-    if debug and inertia_status == 200 and inertia_body:
-        dbg_inertia = os.path.join(SCRIPT_DIR, "debug_inertia_programs.json")
-        with open(dbg_inertia, "w", encoding="utf-8") as f:
-            f.write(inertia_body)
-        print(f"  [debug] Saved Inertia JSON response → {dbg_inertia}")
-
     prog_body, prog_status = get(f"{BASE}/programs", headers)
     if prog_status != 200 or not prog_body:
         print(f"  Failed ({prog_status}). Cannot continue.")
@@ -604,51 +685,12 @@ def main():
             f.write(prog_body)
         print(f"  [debug] Saved programs listing page → {dbg_path}")
 
-    # Also look for program links using broader patterns
+    # Find top-level program links (includes team_affinity + other_programs tiles)
     links = find_program_links(prog_body)
 
-    # Try extracting program IDs from the Inertia JSON response
-    if not links and inertia_status == 200 and inertia_body:
-        try:
-            jdata = json.loads(inertia_body)
-            props = jdata.get("props", jdata)
-            # Look for programs array with IDs
-            def _find_programs(obj, depth=0):
-                if depth > 5: return []
-                if isinstance(obj, list) and obj and isinstance(obj[0], dict):
-                    if any("id" in item for item in obj[:3]):
-                        return obj
-                if isinstance(obj, dict):
-                    for k in ("programs", "data", "items"):
-                        if k in obj and isinstance(obj[k], list):
-                            return obj[k]
-                    for v in obj.values():
-                        r = _find_programs(v, depth+1)
-                        if r: return r
-                return []
-            progs = _find_programs(props)
-            for p in progs:
-                if isinstance(p, dict):
-                    pid = p.get("id") or p.get("program_id")
-                    if pid:
-                        url = f"{BASE}/programs/{pid}"
-                        if url not in links:
-                            links.append(url)
-        except Exception:
-            pass
-
-    # Fallback: look for any /programs/ or /program_view links
-    if not links:
-        for m in re.finditer(r'href=["\']([^"\']*(?:/programs?/|program_view)[^"\']*)["\']', prog_body):
-            raw = html_module.unescape(m.group(1))
-            if raw.startswith("/"):
-                url = BASE + raw
-            elif "mlb26.theshow.com" in raw:
-                url = raw
-            else:
-                continue
-            if url not in links:
-                links.append(url)
+    # Expand team_affinity and other_programs pages into individual program_view links
+    print(f"  Found {len(links)} top-level program tiles — expanding...")
+    links = expand_program_links(links, headers)
 
     print(f"  Found {len(links)} program links")
     if debug and links:
@@ -684,55 +726,7 @@ def main():
             print(stripped[:3000])
             print()
 
-        # Try Inertia JSON first for mission extraction
-        missions = []
-        p_inertia, p_ist = get(url, inertia_hdrs)
-        if p_ist == 200 and p_inertia:
-            try:
-                jdata = json.loads(p_inertia)
-                props = jdata.get("props", jdata)
-                # Search for missions/tasks array anywhere in props
-                def _find_missions(obj, depth=0):
-                    if depth > 5: return []
-                    if isinstance(obj, list):
-                        # Check if looks like missions list
-                        if obj and isinstance(obj[0], dict) and any(
-                            k in obj[0] for k in ("title","name","description","objective")
-                        ):
-                            return obj
-                    if isinstance(obj, dict):
-                        for k in ("missions","tasks","objectives","program_missions","activities"):
-                            if k in obj and isinstance(obj[k], list):
-                                return obj[k]
-                        for v in obj.values():
-                            r = _find_missions(v, depth+1)
-                            if r: return r
-                    return []
-                raw_ms = _find_missions(props)
-                for item in raw_ms:
-                    if not isinstance(item, dict): continue
-                    title   = item.get("title") or item.get("name") or item.get("description") or item.get("objective") or ""
-                    current = item.get("progress", item.get("current_value", item.get("count", 0))) or 0
-                    goal    = item.get("goal", item.get("requirement", item.get("target", 0))) or 0
-                    stat    = item.get("stat_type", item.get("stat", "")) or ""
-                    reward  = item.get("reward", item.get("xp_reward", item.get("xp", ""))) or ""
-                    pct     = item.get("percent_complete", item.get("pct", 0)) or 0
-                    if not pct and goal:
-                        try: pct = min(100.0, round(float(current) / float(goal) * 100, 1))
-                        except: pass
-                    prog_str = f"{current}/{goal} {stat}".strip() if goal else str(current)
-                    missions.append({"t": str(title).strip(), "r": str(reward), "p": prog_str, "pct": float(pct or 0)})
-                if debug and i == 1:
-                    dbg_j = os.path.join(SCRIPT_DIR, "debug_inertia_program.json")
-                    with open(dbg_j, "w", encoding="utf-8") as fj:
-                        fj.write(p_inertia[:50000])
-                    print(f"  [debug] Inertia JSON for program 1 → {dbg_j}, raw_missions={len(raw_ms)}")
-            except Exception as ex:
-                if debug and i == 1:
-                    print(f"  [debug] Inertia parse error: {ex}")
-
-        if not missions:
-            missions = extract_missions_from_html(p_body)
+        missions = extract_missions_from_html(p_body)
         if debug and i == 1:
             print(f"  [debug] Missions found from first page: {len(missions)}")
 
@@ -743,10 +737,11 @@ def main():
             h1 = re.sub(r'<[^>]+>', '', m_h1.group(1)).strip()
 
         team           = normalize_team(h1)
-        is_color_storm = bool(re.search(r'color\s*storm', p_body[:4000], re.I))
+        h1_lower       = h1.lower()
+        is_color_storm = bool(re.search(r'color\s*storm|#1 fan', h1_lower, re.I))
         prog_type      = "Color Storm" if is_color_storm else "My Journey"
-        is_xp_path     = bool(re.search(r'xp.*path|1st inning', p_body[:4000], re.I))
-        is_multi       = bool(re.search(r'multiplayer|ranked.*season', p_body[:4000], re.I))
+        is_xp_path     = bool(re.search(r'xp.*(path|reward)|1st inning', h1_lower, re.I))
+        is_multi       = bool(re.search(r'multiplayer|ranked.*season', h1_lower, re.I))
 
         label = h1[:45] or f"prog {prog_id}"
         print(f"  [{i:3}/{total}] {len(missions):3} missions  {label}")
