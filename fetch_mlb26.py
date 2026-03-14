@@ -291,7 +291,7 @@ def _manual_paste_flow(cookies: dict) -> dict:
     print("  Manual cookie entry:")
     print("  1. Open Chrome/Edge and go to https://mlb26.theshow.com")
     print("  2. Log in if needed")
-    print("  3. Press F12 → Application tab → Cookies → mlb26.theshow.com")
+    print("  3. Press F12 -> Application tab -> Cookies -> mlb26.theshow.com")
     print("  4. Click the '_tsn_session' row and copy its VALUE")
     print("  ─────────────────────────────────────────────────────────")
     val = input("  Paste _tsn_session value here: ").strip()
@@ -482,9 +482,14 @@ def try_inertia_programs(cookies: dict) -> list[dict] | None:
         data = json.loads(body)
         # Inertia wraps in {component, props, ...}
         props = data.get("props", data)
-        programs = props.get("programs") or props.get("data") or []
+        programs = (props.get("programs") or props.get("data") or
+                    props.get("tiles") or props.get("program_tiles") or [])
         if isinstance(programs, list) and programs:
             return programs
+        # Also search for any list of dicts that look like programs
+        for key, val in props.items():
+            if isinstance(val, list) and val and isinstance(val[0], dict):
+                return val
     except Exception:
         pass
     return None
@@ -510,25 +515,52 @@ def find_program_links(html_body: str) -> list[str]:
     links = []
     seen = set()
 
-    # Match all mlb26-program-tile-text hrefs (the tile links on /programs)
+    # Strategy 0: Parse embedded Inertia data-page JSON (site is a SPA — links are in JSON not HTML)
+    m_data = re.search(r'data-page=["\']({.*?})["\']', html_body, re.DOTALL)
+    if m_data:
+        try:
+            page_data = json.loads(html_module.unescape(m_data.group(1)))
+            props = page_data.get("props", page_data)
+
+            def _harvest_urls(obj, depth=0):
+                if depth > 8 or not obj:
+                    return
+                if isinstance(obj, dict):
+                    for key in ("url", "href", "path", "link", "route"):
+                        val = obj.get(key)
+                        if isinstance(val, str) and "/programs" in val and val not in ("/programs",):
+                            full = (BASE + val) if val.startswith("/") else val
+                            if full not in seen:
+                                seen.add(full)
+                                links.append(full)
+                    for v in obj.values():
+                        _harvest_urls(v, depth + 1)
+                elif isinstance(obj, list):
+                    for item in obj[:300]:
+                        _harvest_urls(item, depth + 1)
+
+            _harvest_urls(props)
+        except Exception:
+            pass
+
+    # Strategy 1: Primary HTML regex (server-side rendered or hybrid pages)
     for m in re.finditer(r'href=["\']([^"\']*(?:program_view|team_affinity|other_programs)[^"\']*)["\']', html_body):
         raw = html_module.unescape(m.group(1))
         url = BASE + raw if raw.startswith("/") else raw
         if url not in seen:
             seen.add(url); links.append(url)
 
-    # Fallback: any /programs/... link
-    if not links:
-        for m in re.finditer(r'href=["\']([^"\']*(?:/programs/[^"\']+))["\']', html_body):
-            raw = html_module.unescape(m.group(1))
-            if raw.startswith("/"):
-                url = BASE + raw
-            elif "mlb26.theshow.com" in raw:
-                url = raw
-            else:
-                continue
-            if url not in seen:
-                seen.add(url); links.append(url)
+    # Strategy 2: Any /programs/... link in hrefs
+    for m in re.finditer(r'href=["\']([^"\']*(?:/programs/[^"\']+))["\']', html_body):
+        raw = html_module.unescape(m.group(1))
+        if raw.startswith("/"):
+            url = BASE + raw
+        elif "mlb26.theshow.com" in raw:
+            url = raw
+        else:
+            continue
+        if url not in seen:
+            seen.add(url); links.append(url)
 
     return links
 
@@ -539,10 +571,10 @@ def expand_program_links(links: list[str], headers: dict) -> list[str]:
 
     Hierarchy:
       team_affinity (AL/NL)
-        → team_affinity_by_team (one per team)
-          → program_view (My Journey, Color Storm)
+        -> team_affinity_by_team (one per team)
+          -> program_view (My Journey, Color Storm)
       other_programs
-        → program_view
+        -> program_view
       program_view  (already direct)
     """
     expanded = []
@@ -847,10 +879,50 @@ def main():
         dbg_path = os.path.join(SCRIPT_DIR, "debug_programs_page.html")
         with open(dbg_path, "w", encoding="utf-8") as f:
             f.write(prog_body)
-        print(f"  [debug] Saved programs listing page → {dbg_path}")
+        print(f"  [debug] Saved programs listing page -> {dbg_path}")
 
     # Find top-level program links (includes team_affinity + other_programs tiles)
     links = find_program_links(prog_body)
+
+    # Fallback: try Inertia JSON API if HTML/data-page scraping found nothing
+    if not links:
+        print("  HTML scraping found no links — trying Inertia JSON API...")
+        inertia_body, inertia_status = get(f"{BASE}/programs", make_headers(cookies, inertia=True))
+        if inertia_status == 200 and inertia_body:
+            try:
+                inertia_data = json.loads(inertia_body)
+                props = inertia_data.get("props", inertia_data)
+                def _harvest_inertia(obj, depth=0):
+                    if depth > 8 or not obj:
+                        return
+                    if isinstance(obj, dict):
+                        for key in ("url", "href", "path", "link", "route"):
+                            val = obj.get(key)
+                            if isinstance(val, str) and "/programs" in val and val not in ("/programs",):
+                                full = (BASE + val) if val.startswith("/") else val
+                                if full not in links:
+                                    links.append(full)
+                        for v in obj.values():
+                            _harvest_inertia(v, depth + 1)
+                    elif isinstance(obj, list):
+                        for item in obj[:300]:
+                            _harvest_inertia(item, depth + 1)
+                _harvest_inertia(props)
+            except Exception:
+                pass
+        if debug and inertia_body:
+            dbg_inertia = os.path.join(SCRIPT_DIR, "debug_programs_inertia.json")
+            with open(dbg_inertia, "w", encoding="utf-8") as f:
+                f.write(inertia_body)
+            print(f"  [debug] Saved Inertia JSON -> {dbg_inertia}")
+
+    # Auto-save debug HTML when 0 links found (helps diagnose page structure changes)
+    if not links:
+        dbg_path = os.path.join(SCRIPT_DIR, "debug_programs_page.html")
+        with open(dbg_path, "w", encoding="utf-8") as f:
+            f.write(prog_body)
+        print(f"  WARNING: Found 0 program links. Saved page HTML -> {dbg_path}")
+        print(f"  The site structure may have changed. Please share debug_programs_page.html for diagnosis.")
 
     # Expand team_affinity and other_programs pages into individual program_view links
     print(f"  Found {len(links)} top-level program tiles — expanding...")
@@ -865,7 +937,7 @@ def main():
 
     # 4. Fetch and parse each program
     team_missions:  dict[str, dict[str, list]] = {}
-    other_prog_raw: dict[str, dict]            = {}   # name → {group, missions}
+    other_prog_raw: dict[str, dict]            = {}   # name -> {group, missions}
     total = len(links)
 
     for i, url in enumerate(links, 1):
@@ -882,7 +954,7 @@ def main():
             dbg2 = os.path.join(SCRIPT_DIR, "debug_program_page.html")
             with open(dbg2, "w", encoding="utf-8") as f:
                 f.write(p_body)
-            print(f"  [debug] Saved first program page → {dbg2}")
+            print(f"  [debug] Saved first program page -> {dbg2}")
             print(f"  [debug] Page length: {len(p_body)} bytes")
             # Print first 3000 chars of response (no scripts) for quick inspection
             stripped = re.sub(r'<script[^>]*>.*?</script>', '[SCRIPT]', p_body[:5000], flags=re.DOTALL)
