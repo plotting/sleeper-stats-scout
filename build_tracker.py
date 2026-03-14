@@ -247,6 +247,8 @@ body { font-family: "Segoe UI", Arial, sans-serif; background: var(--bg); color:
 .inv-remove:hover { color: #ef4444; }
 .inv-empty { font-size: 12px; color: var(--muted); text-align: center; padding: 20px 0; }
 .inv-hint { font-size: 10px; color: var(--muted); margin-top: 10px; font-style: italic; }
+.inv-section-hdr { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; padding: 2px 0 4px; }
+.auto-player { border-color: rgba(59,158,221,0.2); gap: 10px; }
 
 /* Other program sidebar buttons */
 .prog-icon {
@@ -378,6 +380,50 @@ function missionHasOwnedPlayer(title) {
 function getMatchedPlayer(title) {
   const t = title.toLowerCase();
   return inventory.find(p => t.includes(p.toLowerCase())) || null;
+}
+
+// ── Auto-inventory (detect owned players from mission progress) ────────────
+const autoInventory = new Map(); // name -> [{team?, prog, m}]
+
+function extractOwnerFromMission(m) {
+  // 1. "Firstname Lastname - Country" WBC-style title → player is the name part
+  const cp = m.t.match(/^([A-Z][A-Za-z\u00C0-\u024F'-]+(?: [A-Z][A-Za-z\u00C0-\u024F'-]+)+)\s*-\s*[A-Z][a-z]/);
+  if (cp) return cp[1];
+  // 2. "with Name" in description (e.g. "Record 10 Ks with Seth Lugo")
+  const dp = (m.d || '').match(/\bwith\s+([A-Z][A-Za-z'-]+(?: [A-Z][A-Za-z'-]+){1,3})/);
+  if (dp) return dp[1];
+  // 3. "w/ Name" at end of title (e.g. "10 Ks w/ Lugo")
+  const tp = m.t.match(/\bw\/\s*([A-Z][A-Za-z'-]+(?: [A-Z][A-Za-z'-]+)*)\s*$/i);
+  if (tp) return tp[1];
+  return null;
+}
+
+function buildAutoInventory() {
+  autoInventory.clear();
+  for (const [team, progs] of Object.entries(D.missions)) {
+    for (const [prog, arr] of Object.entries(progs)) {
+      for (const m of arr) {
+        if (m.pct > 0) {
+          const name = extractOwnerFromMission(m);
+          if (name) {
+            if (!autoInventory.has(name)) autoInventory.set(name, []);
+            autoInventory.get(name).push({team, prog, m});
+          }
+        }
+      }
+    }
+  }
+  for (const [prog, pd] of Object.entries(D.other_programs || {})) {
+    for (const m of (pd.missions || [])) {
+      if (m.pct > 0) {
+        const name = extractOwnerFromMission(m);
+        if (name) {
+          if (!autoInventory.has(name)) autoInventory.set(name, []);
+          autoInventory.get(name).push({prog, m});
+        }
+      }
+    }
+  }
 }
 
 // ── Global stats ───────────────────────────────────────────────────────────
@@ -641,10 +687,12 @@ function buildCard(m) {
   const owned    = missionHasOwnedPlayer(m.t);
   const matched  = getMatchedPlayer(m.t);
   const color    = progColor(m.pct);
-  // Moment: description says "moment", OR progress is purely "X/1" (no stat unit)
+  // Moment: description says "moment", OR progress is "X/1", OR "Name - Country" WBC-style title
+  const isCountryMoment = /^[A-Z][A-Za-z\u00C0-\u024F'-]+(?: [A-Z][A-Za-z\u00C0-\u024F'-]+)+ - [A-Z][a-z]/.test(m.t);
   const isMoment = !isDone && (
     (m.d && m.d.toLowerCase().includes('moment')) ||
-    /^\\d+\\/1\\s*$/.test(m.p)
+    /^\\d+\\/1\\s*$/.test(m.p) ||
+    isCountryMoment
   );
   let cls = 'mcard';
   if (isDone)          cls += ' done';
@@ -767,26 +815,85 @@ function removePlayer(name) {
 }
 function renderInvList() {
   const el = document.getElementById('inv-list');
-  if (!inventory.length) {
-    el.innerHTML = '<div class="inv-empty">No players added yet</div>';
-    return;
-  }
-  // Count how many missions match each player across all teams
   let html = '';
-  for (const p of inventory) {
-    let hits = 0;
-    for (const tm of Object.keys(D.missions)) {
-      for (const arr of Object.values(D.missions[tm])) {
-        for (const m of arr) {
-          if (m.t.toLowerCase().includes(p.toLowerCase())) hits++;
-        }
+
+  // ── Auto-detected section ──────────────────────────────────────────────
+  if (autoInventory.size > 0) {
+    // Split into: "use in lineup" (has incomplete missions) vs "safe to remove" (all done)
+    const useInLineup  = [];
+    const safeToRemove = [];
+    for (const [name, entries] of autoInventory) {
+      const allDone = entries.every(function(e) { return e.m.pct >= 100; });
+      if (allDone) {
+        safeToRemove.push(name);
+      } else {
+        // Find the nearest-to-complete incomplete mission
+        const incomplete = entries.filter(function(e) { return e.m.pct < 100; });
+        incomplete.sort(function(a, b) { return b.m.pct - a.m.pct; });
+        useInLineup.push({name, best: incomplete[0]});
       }
     }
-    html += '<div class="inv-player">'
-      + '<span class="inv-player-name">&#9733; ' + p + '</span>'
-      + '<span class="inv-player-hits">' + hits + ' mission' + (hits !== 1 ? 's' : '') + '</span>'
-      + '<button class="inv-remove" onclick="removePlayer(' + JSON.stringify(p) + ')">&#x2715;</button>'
-      + '</div>';
+    // Sort "use in lineup" by highest % first (closest to done)
+    useInLineup.sort(function(a, b) { return b.best.m.pct - a.best.m.pct; });
+
+    if (useInLineup.length) {
+      html += '<div class="inv-section-hdr" style="color:#22c55e">&#9654; Use in Lineup</div>';
+      for (const {name, best} of useInLineup) {
+        const pct   = best.m.pct;
+        const color = pct >= 75 ? '#3b9edd' : pct >= 50 ? '#f59e0b' : '#ef4444';
+        html += '<div class="inv-player auto-player">'
+          + '<span class="inv-player-name" style="color:#e2e8f0">&#9733; ' + name + '</span>'
+          + '<div style="flex:1;min-width:0;overflow:hidden">'
+          +   '<div style="font-size:11px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'
+          +     best.m.t
+          +   '</div>'
+          +   '<div style="display:flex;align-items:center;gap:6px;margin-top:2px">'
+          +     '<div style="flex:1;height:4px;background:#1e3554;border-radius:2px">'
+          +       '<div style="width:' + pct + '%;height:100%;background:' + color + ';border-radius:2px"></div>'
+          +     '</div>'
+          +     '<span style="font-size:11px;color:' + color + ';white-space:nowrap">' + pct + '%</span>'
+          +   '</div>'
+          + '</div>'
+          + '</div>';
+      }
+    }
+
+    if (safeToRemove.length) {
+      html += '<div class="inv-section-hdr" style="color:#64748b;margin-top:10px">&#10003; Safe to Remove</div>';
+      for (const name of safeToRemove) {
+        html += '<div class="inv-player auto-player">'
+          + '<span class="inv-player-name" style="color:#64748b">&#10003; ' + name + '</span>'
+          + '<span class="inv-player-hits" style="color:#22c55e">All missions done</span>'
+          + '</div>';
+      }
+    }
+  }
+
+  // ── Manually added section ─────────────────────────────────────────────
+  if (inventory.length) {
+    if (autoInventory.size > 0) {
+      html += '<div class="inv-section-hdr" style="color:#64748b;margin-top:10px">Manually Added</div>';
+    }
+    for (const p of inventory) {
+      let hits = 0;
+      for (const tm of Object.keys(D.missions)) {
+        for (const arr of Object.values(D.missions[tm])) {
+          for (const m of arr) {
+            if (m.t.toLowerCase().includes(p.toLowerCase())) hits++;
+          }
+        }
+      }
+      html += '<div class="inv-player">'
+        + '<span class="inv-player-name">&#9733; ' + p + '</span>'
+        + '<span class="inv-player-hits">' + hits + ' mission' + (hits !== 1 ? 's' : '') + '</span>'
+        + '<button class="inv-remove" onclick="removePlayer(' + JSON.stringify(p) + ')">&#x2715;</button>'
+        + '</div>';
+    }
+  }
+
+  if (!html) {
+    el.innerHTML = '<div class="inv-empty">No players detected yet — run a fetch to auto-detect from mission progress, or add names manually above.</div>';
+    return;
   }
   el.innerHTML = html;
 }
@@ -801,6 +908,7 @@ document.getElementById('fstatus').addEventListener('change', rerender);
 document.getElementById('fsort').addEventListener('change', rerender);
 
 // ── Init ───────────────────────────────────────────────────────────────────
+buildAutoInventory();
 renderInvList();
 selectTeam('Yankees');
 </script>

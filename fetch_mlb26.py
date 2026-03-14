@@ -8,11 +8,14 @@ The script automatically reads your Chrome session from the browser
 Fetches all program missions and rebuilds the HTML tracker.
 """
 
-import json, sys, os, re, time, shutil, sqlite3, tempfile, html as html_module
+import json, sys, os, re, time, shutil, sqlite3, tempfile, html as html_module, datetime
 import urllib.request, urllib.error, urllib.parse, ctypes, ctypes.wintypes, base64, subprocess
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-BASE       = "https://mlb26.theshow.com"
+SCRIPT_DIR    = os.path.dirname(os.path.abspath(__file__))
+BASE          = "https://mlb26.theshow.com"
+COOKIE_CACHE  = os.path.join(SCRIPT_DIR, ".mlb26_cookies.json")
+CACHE_TTL_HRS = 12
+NON_INTERACTIVE = not sys.stdin.isatty()
 OUT_JSON   = os.path.join(SCRIPT_DIR, "mlb_data_live.json")
 
 DIVISIONS = {
@@ -303,6 +306,47 @@ def _manual_paste_flow(cookies: dict) -> dict:
     return cookies
 
 
+# ── Cookie cache ──────────────────────────────────────────────────────────────
+
+def _load_cookie_cache() -> dict | None:
+    if not os.path.exists(COOKIE_CACHE):
+        return None
+    try:
+        with open(COOKIE_CACHE, encoding="utf-8") as f:
+            data = json.load(f)
+        saved = data.get("saved_at", "")
+        if saved:
+            age = (datetime.datetime.now() - datetime.datetime.fromisoformat(saved)).total_seconds()
+            if age < CACHE_TTL_HRS * 3600:
+                cookies = {k: data[k] for k in ("_tsn_session", "tsn_token") if data.get(k)}
+                if cookies:
+                    return cookies
+    except Exception:
+        pass
+    return None
+
+def _load_cookie_cache_any() -> dict | None:
+    """Load cached cookies regardless of age (stale fallback for non-interactive mode)."""
+    if not os.path.exists(COOKIE_CACHE):
+        return None
+    try:
+        with open(COOKIE_CACHE, encoding="utf-8") as f:
+            data = json.load(f)
+        cookies = {k: data[k] for k in ("_tsn_session", "tsn_token") if data.get(k)}
+        return cookies or None
+    except Exception:
+        return None
+
+def _save_cookie_cache(cookies: dict) -> None:
+    try:
+        data = {k: cookies[k] for k in ("_tsn_session", "tsn_token") if cookies.get(k)}
+        data["saved_at"] = datetime.datetime.now().isoformat()
+        with open(COOKIE_CACHE, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+    except Exception:
+        pass
+
+
 # ── Auth ──────────────────────────────────────────────────────────────────────
 
 def get_auth() -> dict[str, str]:
@@ -310,11 +354,13 @@ def get_auth() -> dict[str, str]:
     Returns cookie dict with _tsn_session (and tsn_token if found).
     Priority:
       1. --cookie flag on command line
-      2. Auto-read from Chrome/Edge cookie DB
-      3. Ask user to close browser + retry
-      4. Manual paste
+      2. Valid cookie cache (< 12 hours old)
+      3. Auto-read from Chrome/Edge cookie DB
+      4. Ask user to close browser + retry  (interactive only)
+      5. Stale cache fallback              (non-interactive only)
+      6. Manual paste                      (interactive only)
     """
-    # Check for --cookie "name=value; name2=value2" on command line
+    # 1. --cookie flag
     if "--cookie" in sys.argv:
         idx = sys.argv.index("--cookie")
         if idx + 1 < len(sys.argv):
@@ -326,9 +372,16 @@ def get_auth() -> dict[str, str]:
                     k, v = part.split("=", 1)
                     cookies[k.strip()] = v.strip()
             if cookies.get("_tsn_session") or cookies.get("tsn_token"):
-                print(f"  Using cookies from --cookie flag.")
+                print("  Using cookies from --cookie flag.")
                 return cookies
 
+    # 2. Fresh cookie cache
+    cached = _load_cookie_cache()
+    if cached:
+        print("  Using cached cookies (fresh).")
+        return cached
+
+    # 3. Read from Chrome/Edge
     print("Checking Chrome/Edge for mlb26.theshow.com cookies...")
     cookies = read_chrome_cookies("mlb26.theshow.com")
     session = cookies.get("_tsn_session", "")
@@ -336,12 +389,21 @@ def get_auth() -> dict[str, str]:
 
     if session or token:
         print(f"  Found: {', '.join(k for k in cookies if k in ('_tsn_session','tsn_token'))}")
+        _save_cookie_cache(cookies)
         return cookies
 
-    # Cookie read failed — could be browser running with exclusive lock
+    # 4/5. Cookie read failed
     if _is_browser_running():
         print()
         print("  Chrome/Edge is running and has locked the cookie database.")
+        if NON_INTERACTIVE:
+            # Non-interactive: try stale cache before giving up
+            stale = _load_cookie_cache_any()
+            if stale:
+                print("  Using stale cached cookies (Chrome locked, non-interactive).")
+                return stale
+            sys.exit("ERROR: Cannot read cookies — Chrome is running and no cache available. "
+                     "Close Chrome and re-run, or launch the tracker manually once to cache cookies.")
         print()
         print("  Choose an option:")
         print("  [1] Close Chrome/Edge now, then press Enter to retry (recommended)")
@@ -353,18 +415,28 @@ def get_auth() -> dict[str, str]:
             session = cookies.get("_tsn_session", "")
             token   = cookies.get("tsn_token", "")
             if session or token:
-                print(f"  Found cookies!")
+                print("  Found cookies!")
+                _save_cookie_cache(cookies)
                 return cookies
             print("  Still not found. Falling back to manual entry.")
     else:
         print("  Not found in Chrome/Edge.")
+        if NON_INTERACTIVE:
+            stale = _load_cookie_cache_any()
+            if stale:
+                print("  Using stale cached cookies (non-interactive fallback).")
+                return stale
+            sys.exit("ERROR: No cookies found and no cache available. "
+                     "Launch the tracker manually once to authenticate.")
 
-    # Open browser and manual paste
+    # 6. Manual paste (interactive only)
     print()
     print("  Opening https://mlb26.theshow.com ...")
     import webbrowser
     webbrowser.open(BASE)
-    return _manual_paste_flow({})
+    cookies = _manual_paste_flow({})
+    _save_cookie_cache(cookies)
+    return cookies
 
 
 def _show_usage():
@@ -918,9 +990,12 @@ def main():
 
     print()
     html_out = os.path.join(SCRIPT_DIR, "MLB Team Affinity Tracker.html")
-    print(f"\nAll done!  Opening tracker...")
-    import webbrowser
-    webbrowser.open("file:///" + html_out.replace("\\", "/"))
+    if "--no-browser" not in sys.argv:
+        print(f"\nAll done!  Opening tracker...")
+        import webbrowser
+        webbrowser.open("file:///" + html_out.replace("\\", "/"))
+    else:
+        print(f"\nAll done!  Tracker saved to: {html_out}")
 
 
 if __name__ == "__main__":
