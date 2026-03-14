@@ -15,7 +15,7 @@ SCRIPT_DIR    = os.path.dirname(os.path.abspath(__file__))
 BASE          = "https://mlb26.theshow.com"
 COOKIE_CACHE  = os.path.join(SCRIPT_DIR, ".mlb26_cookies.json")
 CACHE_TTL_HRS = 12
-NON_INTERACTIVE = not sys.stdin.isatty()
+NON_INTERACTIVE = not sys.stdin.isatty() or "--no-browser" in sys.argv
 OUT_JSON   = os.path.join(SCRIPT_DIR, "mlb_data_live.json")
 
 DIVISIONS = {
