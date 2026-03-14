@@ -417,19 +417,19 @@ const donePlayerMap   = new Map();  // all known done missions, keyed by full na
 
 function extractOwnerFromMission(m) {
   // 1. "Firstname Lastname - Country" WBC-style title → name before the dash
-  const cp = m.t.match(/^([A-Z][A-Za-z\u00C0-\u024F'-]+(?: [A-Z][A-Za-z\u00C0-\u024F'-]+)+)\s*-\s*[A-Z][a-z]/);
+  const cp = m.t.match(/^([A-Z][A-Za-z\\u00C0-\\u024F'-]+(?: [A-Z][A-Za-z\\u00C0-\\u024F'-]+)+)\\s*-\\s*[A-Z][a-z]/);
   if (cp) return cp[1];
   // 2. "with Name" in description (e.g. "Record 10 Ks with Seth Lugo")
-  const dp = (m.d || '').match(/\bwith\s+([A-Z][A-Za-z\u00C0-\u024F'-]+(?: [A-Z][A-Za-z\u00C0-\u024F'-]+){1,3})/);
+  const dp = (m.d || '').match(/\\bwith\\s+([A-Z][A-Za-z\\u00C0-\\u024F'-]+(?: [A-Z][A-Za-z\\u00C0-\\u024F'-]+){1,3})/);
   if (dp) return dp[1];
   // 3. "w/ Name" at end of title, allowing optional trailing "Jr." / "Sr."
-  const tp = m.t.match(/\bw\/\s*([A-Z][A-Za-z\u00C0-\u024F'-]+(?: [A-Z][A-Za-z\u00C0-\u024F'-]+)*(?:\s+[JS]r\.?)?)\s*\.?\s*$/i);
-  if (tp) return tp[1].replace(/\.\s*$/, '').trim();
+  const tp = m.t.match(/\\bw\\/\\s*([A-Z][A-Za-z\\u00C0-\\u024F'-]+(?: [A-Z][A-Za-z\\u00C0-\\u024F'-]+)*(?:\\s+[JS]r\\.?)?)\\s*\\.?\\s*$/i);
+  if (tp) return tp[1].replace(/\\.\\s*$/, '').trim();
   return null;
 }
 
 function _isExcluded(name) {
-  const last = name.split(' ').pop().toLowerCase().replace(/\.$/, '');
+  const last = name.split(' ').pop().toLowerCase().replace(/\\.$/, '');
   return LINEUP_EXCL.has(last) || LINEUP_EXCL.has(name.toLowerCase());
 }
 
