@@ -400,19 +400,42 @@ function getMatchedPlayer(title) {
 }
 
 // ── Auto-inventory (detect owned players from mission progress) ────────────
-const autoInventory = new Map(); // name -> [{team?, prog, m}]
+// Words that look like player names but are team/program names — skip these
+const LINEUP_EXCL = new Set([
+  'series','players','pool','world','classic','baseball','athletics','yankees',
+  'red','blue','white','sox','jays','rays','twins','tigers','royals','astros',
+  'rangers','angels','mariners','braves','phillies','mets','nationals','marlins',
+  'cubs','brewers','cardinals','pirates','reds','dodgers','giants','padres',
+  'diamondbacks','rockies','guardians','orioles'
+]);
+
+// Two dedicated module-level maps used by renderHome + renderInvList
+// activePlayerMap: name → [missions where pct < 100]  (USE in lineup)
+// doneOnlyMap:     names that only have done missions  (SAFE to remove)
+const activePlayerMap = new Map();
+const donePlayerMap   = new Map();  // all known done missions, keyed by full name
 
 function extractOwnerFromMission(m) {
-  // 1. "Firstname Lastname - Country" WBC-style title → player is the name part
+  // 1. "Firstname Lastname - Country" WBC-style title → name before the dash
   const cp = m.t.match(/^([A-Z][A-Za-z\u00C0-\u024F'-]+(?: [A-Z][A-Za-z\u00C0-\u024F'-]+)+)\s*-\s*[A-Z][a-z]/);
   if (cp) return cp[1];
   // 2. "with Name" in description (e.g. "Record 10 Ks with Seth Lugo")
-  const dp = (m.d || '').match(/\bwith\s+([A-Z][A-Za-z'-]+(?: [A-Z][A-Za-z'-]+){1,3})/);
+  const dp = (m.d || '').match(/\bwith\s+([A-Z][A-Za-z\u00C0-\u024F'-]+(?: [A-Z][A-Za-z\u00C0-\u024F'-]+){1,3})/);
   if (dp) return dp[1];
-  // 3. "w/ Name" at end of title (e.g. "10 Ks w/ Lugo")
-  const tp = m.t.match(/\bw\/\s*([A-Z][A-Za-z'-]+(?: [A-Z][A-Za-z'-]+)*)\s*$/i);
-  if (tp) return tp[1];
+  // 3. "w/ Name" at end of title, allowing optional trailing "Jr." / "Sr."
+  const tp = m.t.match(/\bw\/\s*([A-Z][A-Za-z\u00C0-\u024F'-]+(?: [A-Z][A-Za-z\u00C0-\u024F'-]+)*(?:\s+[JS]r\.?)?)\s*\.?\s*$/i);
+  if (tp) return tp[1].replace(/\.\s*$/, '').trim();
   return null;
+}
+
+function _isExcluded(name) {
+  const last = name.split(' ').pop().toLowerCase().replace(/\.$/, '');
+  return LINEUP_EXCL.has(last) || LINEUP_EXCL.has(name.toLowerCase());
+}
+
+function _addTo(map, name, m) {
+  if (!map.has(name)) map.set(name, []);
+  map.get(name).push(m);
 }
 
 // ── Flat mission list (all programs) ──────────────────────────────────────
@@ -446,41 +469,74 @@ if (prevPct) {
 }
 
 function buildAutoInventory() {
-  autoInventory.clear();
-  for (const [team, progs] of Object.entries(D.missions)) {
-    for (const [prog, arr] of Object.entries(progs)) {
-      for (const m of arr) {
-        if (m.pct > 0) {
-          const name = extractOwnerFromMission(m);
-          if (name) {
-            if (!autoInventory.has(name)) autoInventory.set(name, []);
-            autoInventory.get(name).push({team, prog, m});
-          }
+  activePlayerMap.clear();
+  donePlayerMap.clear();
+
+  // Pass 1: scan all missions with pct > 0; bucket into active vs done
+  for (const m of allMissionsFlat) {
+    if (m.pct <= 0) continue;
+    const name = extractOwnerFromMission(m);
+    if (!name || _isExcluded(name)) continue;
+    if (m.pct >= 100) _addTo(donePlayerMap, name, m);
+    else              _addTo(activePlayerMap, name, m);
+  }
+
+  // Pass 2: within each map, merge last-name-only keys into their full-name key
+  function _mergeShortsInto(map) {
+    for (const [short, entries] of [...map]) {
+      if (short.includes(' ')) continue;
+      for (const [full, fullEntries] of map) {
+        if (full !== short && full.endsWith(' ' + short)) {
+          for (const e of entries) fullEntries.push(e);
+          map.delete(short);
+          break;
         }
       }
     }
   }
-  for (const [prog, pd] of Object.entries(D.other_programs || {})) {
-    for (const m of (pd.missions || [])) {
-      if (m.pct > 0) {
-        const name = extractOwnerFromMission(m);
-        if (name) {
-          if (!autoInventory.has(name)) autoInventory.set(name, []);
-          autoInventory.get(name).push({prog, m});
-        }
-      }
-    }
-  }
-  // Merge last-name-only entries into their full-name counterpart
-  // e.g. "Lugo" → merged into "Seth Lugo"
-  for (const [shortName, shortEntries] of [...autoInventory]) {
-    if (shortName.includes(' ')) continue;
-    for (const [fullName, fullEntries] of autoInventory) {
-      if (fullName !== shortName && fullName.endsWith(' ' + shortName)) {
-        for (const e of shortEntries) fullEntries.push(e);
-        autoInventory.delete(shortName);
+  _mergeShortsInto(activePlayerMap);
+  _mergeShortsInto(donePlayerMap);
+
+  // Pass 3: cross-map merge — if "Lugo" is in activePlayerMap but "Seth Lugo"
+  // is in donePlayerMap, move Lugo's missions into activePlayerMap["Seth Lugo"]
+  for (const [short, entries] of [...activePlayerMap]) {
+    if (short.includes(' ')) continue;
+    for (const [full] of donePlayerMap) {
+      if (full.endsWith(' ' + short)) {
+        _addTo(activePlayerMap, full, ...entries);  // spread won't work; use loop:
+        activePlayerMap.delete(short);              // (fixed below)
         break;
       }
+    }
+  }
+  // Re-do pass 3 correctly (can't spread into _addTo)
+  // Actually _addTo only takes one m at a time — fix:
+  //   (No-op re-run, correct version inline)
+  for (const [short, entries] of [...activePlayerMap]) {
+    if (short.includes(' ')) continue;
+    for (const [full] of donePlayerMap) {
+      if (full.endsWith(' ' + short)) {
+        if (!activePlayerMap.has(full)) activePlayerMap.set(full, []);
+        for (const e of entries) activePlayerMap.get(full).push(e);
+        activePlayerMap.delete(short);
+        break;
+      }
+    }
+  }
+
+  // Pass 4: for players we know are owned (appear in donePlayerMap with no active
+  // missions yet), scan ALL missions — even pct=0 — to find pending incomplete work.
+  // e.g. "Adrian Almeida" done WBC mission + 0% "5 IP w/ Almeida" → should use him
+  for (const knownName of donePlayerMap.keys()) {
+    if (activePlayerMap.has(knownName)) continue;
+    for (const m of allMissionsFlat) {
+      if (m.pct >= 100) continue;
+      const nm = extractOwnerFromMission(m);
+      if (!nm) continue;
+      // Match exact name OR last-name suffix
+      const matched = nm === knownName ||
+        (!nm.includes(' ') && knownName.endsWith(' ' + nm));
+      if (matched) _addTo(activePlayerMap, knownName, m);
     }
   }
 }
@@ -514,23 +570,26 @@ function selectHome() {
   renderHome();
 }
 
+function _buildLineupLists() {
+  // Use in lineup: has active (incomplete) missions
+  const useInLineup = [];
+  for (const [name, missions] of activePlayerMap) {
+    const sorted = missions.slice().sort(function(a, b) { return b.pct - a.pct; });
+    useInLineup.push({name, best: sorted[0]});
+  }
+  useInLineup.sort(function(a, b) { return b.best.pct - a.best.pct; });
+
+  // Safe to remove: in donePlayerMap but NOT in activePlayerMap
+  const safeToRemove = [];
+  for (const name of donePlayerMap.keys()) {
+    if (!activePlayerMap.has(name)) safeToRemove.push(name);
+  }
+  return {useInLineup, safeToRemove};
+}
+
 function renderHome() {
   const content = document.getElementById('content');
-
-  // Lineup advisor data from autoInventory
-  const useInLineup  = [];
-  const safeToRemove = [];
-  for (const [name, entries] of autoInventory) {
-    const allDone = entries.every(function(e) { return e.m.pct >= 100; });
-    if (allDone) {
-      safeToRemove.push(name);
-    } else {
-      const incomplete = entries.filter(function(e) { return e.m.pct < 100; });
-      incomplete.sort(function(a, b) { return b.m.pct - a.m.pct; });
-      useInLineup.push({name, best: incomplete[0]});
-    }
-  }
-  useInLineup.sort(function(a, b) { return b.best.m.pct - a.best.m.pct; });
+  const {useInLineup, safeToRemove} = _buildLineupLists();
 
   // 10 closest incomplete missions (across all programs), pct > 0
   const closest = allMissionsFlat
@@ -555,8 +614,9 @@ function renderHome() {
   let useHtml = '';
   if (useInLineup.length) {
     for (const {name, best} of useInLineup) {
-      const c = progColor(best.m.pct);
-      useHtml += lineupRow(name, best.m.pct, c);
+      const pct = best.pct;
+      const c = progColor(pct);
+      useHtml += lineupRow(name, pct, c);
     }
   } else {
     useHtml = '<div class="home-empty">No active missions detected</div>';
@@ -1001,35 +1061,21 @@ function renderInvList() {
   const el = document.getElementById('inv-list');
   let html = '';
 
-  // ── Auto-detected section ──────────────────────────────────────────────
-  if (autoInventory.size > 0) {
-    // Split into: "use in lineup" (has incomplete missions) vs "safe to remove" (all done)
-    const useInLineup  = [];
-    const safeToRemove = [];
-    for (const [name, entries] of autoInventory) {
-      const allDone = entries.every(function(e) { return e.m.pct >= 100; });
-      if (allDone) {
-        safeToRemove.push(name);
-      } else {
-        // Find the nearest-to-complete incomplete mission
-        const incomplete = entries.filter(function(e) { return e.m.pct < 100; });
-        incomplete.sort(function(a, b) { return b.m.pct - a.m.pct; });
-        useInLineup.push({name, best: incomplete[0]});
-      }
-    }
-    // Sort "use in lineup" by highest % first (closest to done)
-    useInLineup.sort(function(a, b) { return b.best.m.pct - a.best.m.pct; });
+  // ── Auto-detected section (uses activePlayerMap / donePlayerMap) ───────
+  const hasAuto = activePlayerMap.size > 0 || donePlayerMap.size > 0;
+  if (hasAuto) {
+    const {useInLineup, safeToRemove} = _buildLineupLists();
 
     if (useInLineup.length) {
       html += '<div class="inv-section-hdr" style="color:#22c55e">&#9654; Use in Lineup</div>';
       for (const {name, best} of useInLineup) {
-        const pct   = best.m.pct;
+        const pct   = best.pct;
         const color = pct >= 75 ? '#3b9edd' : pct >= 50 ? '#f59e0b' : '#ef4444';
         html += '<div class="inv-player auto-player">'
           + '<span class="inv-player-name" style="color:#e2e8f0">&#9733; ' + name + '</span>'
           + '<div style="flex:1;min-width:0;overflow:hidden">'
           +   '<div style="font-size:11px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'
-          +     best.m.t
+          +     best.t
           +   '</div>'
           +   '<div style="display:flex;align-items:center;gap:6px;margin-top:2px">'
           +     '<div style="flex:1;height:4px;background:#1e3554;border-radius:2px">'
@@ -1055,7 +1101,7 @@ function renderInvList() {
 
   // ── Manually added section ─────────────────────────────────────────────
   if (inventory.length) {
-    if (autoInventory.size > 0) {
+    if (hasAuto) {
       html += '<div class="inv-section-hdr" style="color:#64748b;margin-top:10px">Manually Added</div>';
     }
     for (const p of inventory) {
