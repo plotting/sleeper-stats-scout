@@ -3,7 +3,7 @@ MLB The Show 26 Tracker — GUI launcher
 Double-click to run. No console window.
 """
 import tkinter as tk
-from tkinter import font as tkfont
+from tkinter import font as tkfont, messagebox
 import subprocess, sys, os, threading, webbrowser
 
 SCRIPT_DIR   = os.path.dirname(os.path.abspath(__file__))
@@ -158,6 +158,7 @@ class App:
         t.start()
 
     def _fetch_thread(self):
+        chrome_locked = False
         try:
             proc = subprocess.Popen(
                 [sys.executable, FETCH_SCRIPT, "--no-browser"],
@@ -171,13 +172,34 @@ class App:
             for line in proc.stdout:
                 line = line.rstrip("\n\r")
                 self.root.after(0, self._log_line, line)
+                if "cannot read cookies" in line.lower() or "chrome is running and no cache" in line.lower():
+                    chrome_locked = True
             proc.wait()
             success = proc.returncode == 0
         except Exception as e:
             self.root.after(0, self._log, f"Launch error: {e}\n", "err")
             success = False
 
-        self.root.after(0, self._fetch_done, success)
+        if chrome_locked and not success:
+            self.root.after(0, self._prompt_close_chrome)
+        else:
+            self.root.after(0, self._fetch_done, success)
+
+    def _prompt_close_chrome(self):
+        self.running = False
+        self.btn.configure(state="normal", text="  Refresh Live Data  ", bg=BLUE)
+        self._set_status("Waiting — Chrome needs to be closed", AMBER)
+        retry = messagebox.askokcancel(
+            "Close Chrome to Continue",
+            "Chrome is running and its cookie database is locked.\n\n"
+            "Please close Chrome (or Edge/Brave), then click OK to retry.\n\n"
+            "You only need to do this once — your session will be cached for future runs.",
+            icon="warning",
+        )
+        if retry:
+            self._start_fetch()
+        else:
+            self._set_status("Cancelled — close Chrome and try again", AMBER)
 
     def _fetch_done(self, success: bool):
         self.running = False
