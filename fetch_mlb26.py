@@ -123,11 +123,59 @@ def _decrypt_cookie_value(value: bytes, aes_key: bytes) -> str:
         pass
     return ""
 
+def _copy_locked_file(src: str, dst: str) -> bool:
+    """Copy a file that may be locked by another process using Windows share flags."""
+    GENERIC_READ          = 0x80000000
+    FILE_SHARE_READ       = 0x00000001
+    FILE_SHARE_WRITE      = 0x00000002
+    FILE_SHARE_DELETE     = 0x00000004
+    OPEN_EXISTING         = 3
+    FILE_ATTRIBUTE_NORMAL = 0x80
+
+    kernel32 = ctypes.windll.kernel32
+    # Set return type for CreateFileW to handle HANDLE correctly
+    kernel32.CreateFileW.restype = ctypes.c_void_p
+    handle = kernel32.CreateFileW(
+        src,
+        GENERIC_READ,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        None,
+        OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL,
+        None
+    )
+    if handle is None or handle == ctypes.c_void_p(-1).value:
+        return False
+    try:
+        # Use GetFileSizeEx for accurate 64-bit size
+        size_high = ctypes.wintypes.DWORD(0)
+        kernel32.GetFileSize.restype = ctypes.wintypes.DWORD
+        size_low = kernel32.GetFileSize(ctypes.c_void_p(handle), ctypes.byref(size_high))
+        if size_low == 0xFFFFFFFF and ctypes.GetLastError() != 0:
+            return False
+        size = (size_high.value << 32) | size_low
+        if size == 0 or size > 200 * 1024 * 1024:  # sanity check: max 200MB
+            return False
+        buf  = (ctypes.c_char * size)()
+        read = ctypes.wintypes.DWORD(0)
+        kernel32.ReadFile.restype = ctypes.wintypes.BOOL
+        ok = kernel32.ReadFile(ctypes.c_void_p(handle), buf, size, ctypes.byref(read), None)
+        if not ok:
+            return False
+        with open(dst, "wb") as f:
+            f.write(bytes(buf)[:read.value])
+        return True
+    finally:
+        kernel32.CloseHandle(ctypes.c_void_p(handle))
+
+
 def read_chrome_cookies(domain: str) -> dict[str, str]:
     """
     Read cookies for `domain` from Chrome's SQLite database.
     Returns {name: value} dict. Handles both AES-GCM (v10) and legacy DPAPI.
+    Works even when Chrome is running (uses Windows shared file access).
     """
+    import glob
     local_appdata = os.environ.get("LOCALAPPDATA", "")
     profiles = [
         os.path.join(local_appdata, "Google", "Chrome", "User Data"),
@@ -138,64 +186,116 @@ def read_chrome_cookies(domain: str) -> dict[str, str]:
     results: dict[str, str] = {}
 
     for user_data in profiles:
+        if not os.path.exists(user_data):
+            continue
         local_state_path = os.path.join(user_data, "Local State")
         aes_key = _get_chrome_aes_key(local_state_path) if os.path.exists(local_state_path) else None
 
-        # Find all profile cookie files
-        for root, dirs, files in os.walk(user_data):
-            for fname in ("Cookies", "Network/Cookies"):
-                cookie_db = os.path.join(root, fname) if fname == "Cookies" else os.path.join(root, "Network", "Cookies")
-                if not os.path.exists(cookie_db):
-                    continue
-                # Copy to temp (Chrome locks the file)
+        # Find all cookie files across Default and Profile* directories
+        cookie_paths = (
+            glob.glob(os.path.join(user_data, "Default", "Cookies")) +
+            glob.glob(os.path.join(user_data, "Default", "Network", "Cookies")) +
+            glob.glob(os.path.join(user_data, "Profile*", "Cookies")) +
+            glob.glob(os.path.join(user_data, "Profile*", "Network", "Cookies"))
+        )
+
+        for cookie_db in cookie_paths:
+            rows = []
+
+            # Strategy 1: Open directly with immutable=1 (bypasses SQLite locking)
+            try:
+                uri = "file:{}?mode=ro&immutable=1".format(
+                    cookie_db.replace("\\", "/").replace(" ", "%20")
+                )
+                con = sqlite3.connect(uri, uri=True, check_same_thread=False)
+                con.row_factory = sqlite3.Row
+                rows = con.execute(
+                    "SELECT name, value, encrypted_value FROM cookies "
+                    "WHERE host_key LIKE ? OR host_key LIKE ?",
+                    (f"%{domain}%", f"%.{domain}%")
+                ).fetchall()
+                con.close()
+            except Exception:
+                rows = []
+
+            # Strategy 2: Windows share-aware file copy + normal SQLite open
+            if not rows:
                 tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
                 tmp.close()
                 try:
-                    shutil.copy2(cookie_db, tmp.name)
+                    copied = _copy_locked_file(cookie_db, tmp.name)
+                    if not copied:
+                        shutil.copy2(cookie_db, tmp.name)
                     con = sqlite3.connect(tmp.name)
                     con.row_factory = sqlite3.Row
-                    # Query - column layout varies by Chrome version
-                    try:
-                        rows = con.execute(
-                            "SELECT name, value, encrypted_value FROM cookies "
-                            "WHERE host_key LIKE ? OR host_key LIKE ?",
-                            (f"%{domain}%", f"%.{domain}%")
-                        ).fetchall()
-                    except Exception:
-                        rows = []
-                    for row in rows:
-                        name  = row["name"]
-                        val   = row["value"]
-                        enc   = row["encrypted_value"]
-                        if not val and enc:
-                            if aes_key and enc[:3] == b"v10":
-                                val = _decrypt_cookie_value(enc, aes_key)
-                            else:
-                                try:
-                                    val = _dpapi_decrypt(enc).decode("utf-8", errors="replace")
-                                except Exception:
-                                    val = ""
-                        if val:
-                            results[name] = val
+                    rows = con.execute(
+                        "SELECT name, value, encrypted_value FROM cookies "
+                        "WHERE host_key LIKE ? OR host_key LIKE ?",
+                        (f"%{domain}%", f"%.{domain}%")
+                    ).fetchall()
                     con.close()
                 except Exception:
-                    pass
+                    rows = []
                 finally:
                     try:
                         os.unlink(tmp.name)
                     except Exception:
                         pass
+
+            for row in rows:
+                name  = row["name"]
+                val   = row["value"] or ""
+                enc   = row["encrypted_value"] or b""
+                if not val and enc:
+                    if aes_key and enc[:3] == b"v10":
+                        val = _decrypt_cookie_value(enc, aes_key)
+                    else:
+                        try:
+                            val = _dpapi_decrypt(enc).decode("utf-8", errors="replace")
+                        except Exception:
+                            val = ""
+                if val:
+                    results[name] = val
     return results
 
-def _open_browser_and_wait() -> dict[str, str]:
-    """Open mlb26.theshow.com in the default browser and wait for login."""
+def _is_browser_running() -> bool:
+    """Check if Chrome or Edge is running."""
+    try:
+        out = subprocess.run(
+            ["tasklist", "/FI", "IMAGENAME eq chrome.exe", "/NH"],
+            capture_output=True, text=True, timeout=5
+        ).stdout
+        if "chrome.exe" in out.lower():
+            return True
+        out2 = subprocess.run(
+            ["tasklist", "/FI", "IMAGENAME eq msedge.exe", "/NH"],
+            capture_output=True, text=True, timeout=5
+        ).stdout
+        return "msedge.exe" in out2.lower()
+    except Exception:
+        return False
+
+
+def _manual_paste_flow(cookies: dict) -> dict:
+    """Ask user to paste their _tsn_session cookie value."""
     print()
-    print("  Opening https://mlb26.theshow.com in your browser...")
-    import webbrowser
-    webbrowser.open(BASE)
-    print("  Please log in, then press ENTER here to continue.")
-    input("  [Press ENTER after logging in] ")
-    return read_chrome_cookies("mlb26.theshow.com")
+    print("  ─────────────────────────────────────────────────────────")
+    print("  Manual cookie entry:")
+    print("  1. Open Chrome/Edge and go to https://mlb26.theshow.com")
+    print("  2. Log in if needed")
+    print("  3. Press F12 → Application tab → Cookies → mlb26.theshow.com")
+    print("  4. Click the '_tsn_session' row and copy its VALUE")
+    print("  ─────────────────────────────────────────────────────────")
+    val = input("  Paste _tsn_session value here: ").strip()
+    if val:
+        cookies["_tsn_session"] = val
+        # Check for tsn_token too
+        tok = input("  Paste tsn_token value (optional, press Enter to skip): ").strip()
+        if tok:
+            cookies["tsn_token"] = tok
+    else:
+        sys.exit("No credentials provided. Exiting.")
+    return cookies
 
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
@@ -203,11 +303,29 @@ def _open_browser_and_wait() -> dict[str, str]:
 def get_auth() -> dict[str, str]:
     """
     Returns cookie dict with _tsn_session (and tsn_token if found).
-    Priority: Chrome auto-read → open browser → manual paste.
+    Priority:
+      1. --cookie flag on command line
+      2. Auto-read from Chrome/Edge cookie DB
+      3. Ask user to close browser + retry
+      4. Manual paste
     """
-    print("Checking Chrome for mlb26.theshow.com cookies...")
-    cookies = read_chrome_cookies("mlb26.theshow.com")
+    # Check for --cookie "name=value; name2=value2" on command line
+    if "--cookie" in sys.argv:
+        idx = sys.argv.index("--cookie")
+        if idx + 1 < len(sys.argv):
+            raw = sys.argv[idx + 1]
+            cookies: dict[str, str] = {}
+            for part in raw.split(";"):
+                part = part.strip()
+                if "=" in part:
+                    k, v = part.split("=", 1)
+                    cookies[k.strip()] = v.strip()
+            if cookies.get("_tsn_session") or cookies.get("tsn_token"):
+                print(f"  Using cookies from --cookie flag.")
+                return cookies
 
+    print("Checking Chrome/Edge for mlb26.theshow.com cookies...")
+    cookies = read_chrome_cookies("mlb26.theshow.com")
     session = cookies.get("_tsn_session", "")
     token   = cookies.get("tsn_token", "")
 
@@ -215,22 +333,44 @@ def get_auth() -> dict[str, str]:
         print(f"  Found: {', '.join(k for k in cookies if k in ('_tsn_session','tsn_token'))}")
         return cookies
 
-    print("  Not found in Chrome – opening browser for login.")
-    cookies = _open_browser_and_wait()
-    session = cookies.get("_tsn_session", "")
-    token   = cookies.get("tsn_token", "")
-
-    if not session and not token:
+    # Cookie read failed — could be browser running with exclusive lock
+    if _is_browser_running():
         print()
-        print("  Auto-read failed. Paste cookie manually.")
-        print("  F12 → Application → Cookies → mlb26.theshow.com → copy _tsn_session value:")
-        val = input("  _tsn_session value: ").strip()
-        if val:
-            cookies["_tsn_session"] = val
-        else:
-            sys.exit("No credentials found. Exiting.")
+        print("  Chrome/Edge is running and has locked the cookie database.")
+        print()
+        print("  Choose an option:")
+        print("  [1] Close Chrome/Edge now, then press Enter to retry (recommended)")
+        print("  [2] Paste the cookie value manually")
+        choice = input("  Your choice [1/2]: ").strip()
+        if choice != "2":
+            input("  Close Chrome/Edge, then press Enter here... ")
+            cookies = read_chrome_cookies("mlb26.theshow.com")
+            session = cookies.get("_tsn_session", "")
+            token   = cookies.get("tsn_token", "")
+            if session or token:
+                print(f"  Found cookies!")
+                return cookies
+            print("  Still not found. Falling back to manual entry.")
+    else:
+        print("  Not found in Chrome/Edge.")
 
-    return cookies
+    # Open browser and manual paste
+    print()
+    print("  Opening https://mlb26.theshow.com ...")
+    import webbrowser
+    webbrowser.open(BASE)
+    return _manual_paste_flow({})
+
+
+def _show_usage():
+    print("Usage: py -3 fetch_mlb26.py [options]")
+    print()
+    print("Options:")
+    print("  --cookie 'name=value; name2=value2'  Use specific cookies (skip auto-read)")
+    print("  --debug                              Save raw HTML for parser diagnostics")
+    print()
+    print("The script auto-reads Chrome/Edge cookies. If Chrome is running and locking")
+    print("the cookie DB, you'll be prompted to close it briefly or paste manually.")
 
 
 def make_headers(cookies: dict, inertia: bool = False) -> dict:
@@ -413,6 +553,10 @@ def normalize_team(text: str) -> str | None:
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
+    if "--help" in sys.argv or "-h" in sys.argv:
+        _show_usage()
+        return
+
     debug = "--debug" in sys.argv
 
     print("=" * 62)
