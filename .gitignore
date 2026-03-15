@@ -22,3 +22,8 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Generated data / personal account files — regenerated on every fetch
+mlb_data_live.json
+MLB Team Affinity Tracker.html
+.mlb26_cookies.json
