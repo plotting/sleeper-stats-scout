@@ -1404,9 +1404,17 @@ def main():
             # xp_milestones feature (key absent entirely), re-fetch once so
             # the milestone data gets stored for the fill bar.
             _h1c = cached.get("h1", "")
+            _xp_e = cached.get("xp_earned")
+            _xp_t = cached.get("xp_total")
+            _xp_incomplete = (
+                _xp_e is not None and _xp_t is not None and _xp_e < _xp_t
+            )
             _needs_xp_refresh = (
                 normalize_team(_h1c) is None          # not a team program
-                and "xp_milestones" not in cached     # cache predates feature
+                and (
+                    "xp_milestones" not in cached     # cache predates feature
+                    or _xp_incomplete                 # missions done but XP still earning
+                )
             )
             if not _needs_xp_refresh:
                 with _prog_print_lock:
