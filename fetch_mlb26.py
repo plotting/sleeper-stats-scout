@@ -8,15 +8,19 @@ The script automatically reads your Chrome session from the browser
 Fetches all program missions and rebuilds the HTML tracker.
 """
 
+from __future__ import annotations
 import json, sys, os, re, time, shutil, sqlite3, tempfile, html as html_module, datetime
 import urllib.request, urllib.error, urllib.parse, ctypes, ctypes.wintypes, base64, subprocess
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 
 SCRIPT_DIR    = os.path.dirname(os.path.abspath(__file__))
 BASE          = "https://mlb26.theshow.com"
 COOKIE_CACHE  = os.path.join(SCRIPT_DIR, ".mlb26_cookies.json")
 CACHE_TTL_HRS = 12
 NON_INTERACTIVE = not sys.stdin.isatty() or "--no-browser" in sys.argv
-OUT_JSON   = os.path.join(SCRIPT_DIR, "mlb_data_live.json")
+OUT_JSON          = os.path.join(SCRIPT_DIR, "mlb_data_live.json")
+MAX_FETCH_WORKERS = 5   # max concurrent HTTP requests (team pages + program pages)
 
 DIVISIONS = {
     "AL East":    ["Yankees","Red Sox","Blue Jays","Orioles","Rays"],
@@ -584,12 +588,46 @@ def expand_program_links(links: list[str], headers: dict) -> list[str]:
         if url not in seen:
             seen.add(url); expanded.append(url)
 
-    def _scrape_program_views(body):
-        views = []
-        for m in re.finditer(r'href=["\']([^"\']*program_view[^"\']*)["\']', body):
+    def _extract_links_from_body(body: str, keyword: str) -> list[str]:
+        """Find links containing keyword from both HTML hrefs and embedded Inertia JSON."""
+        found = []
+        seen_f: set[str] = set()
+
+        # HTML href scan
+        for m in re.finditer(r'href=["\']([^"\']*' + keyword + r'[^"\']*)["\']', body):
             raw = html_module.unescape(m.group(1))
-            views.append(BASE + raw if raw.startswith("/") else raw)
-        return views
+            url = BASE + raw if raw.startswith("/") else raw
+            if url not in seen_f:
+                seen_f.add(url); found.append(url)
+
+        # Inertia data-page JSON scan (site is an SPA — real links live in JSON, not hrefs)
+        dp = re.search(r'data-page=["\']({.*?})["\']', body, re.DOTALL)
+        if dp:
+            try:
+                page_data = json.loads(html_module.unescape(dp.group(1)))
+                def _harvest(obj, depth=0):
+                    if depth > 8 or not obj:
+                        return
+                    if isinstance(obj, dict):
+                        for key in ("url", "href", "path", "link", "route"):
+                            val = obj.get(key)
+                            if isinstance(val, str) and keyword in val:
+                                full = BASE + val if val.startswith("/") else val
+                                if full not in seen_f:
+                                    seen_f.add(full); found.append(full)
+                        for v in obj.values():
+                            _harvest(v, depth + 1)
+                    elif isinstance(obj, list):
+                        for item in obj[:300]:
+                            _harvest(item, depth + 1)
+                _harvest(page_data.get("props", page_data))
+            except Exception:
+                pass
+
+        return found
+
+    def _scrape_program_views(body: str) -> list[str]:
+        return _extract_links_from_body(body, "program_view")
 
     for url in links:
         path = urllib.parse.urlparse(url).path
@@ -603,40 +641,113 @@ def expand_program_links(links: list[str], headers: dict) -> list[str]:
             time.sleep(0.3)
 
         elif "team_affinity" in path and "team_affinity_by_team" not in path:
-            # League listing (AL or NL) — find both AL + NL pages then all team links
-            league_pages = [url]
-            body, status = get(url, headers)
-            if status == 200 and body:
-                # Find the other league link on this page
-                for m in re.finditer(r'href=["\']([^"\']*team_affinity\?[^"\']*league=[^"\']*)["\']', body):
-                    raw = html_module.unescape(m.group(1))
-                    other = BASE + raw if raw.startswith("/") else raw
-                    if other not in league_pages:
-                        league_pages.append(other)
-            # Fetch each league page and collect team links
-            team_links_all = []
-            for league_url in league_pages:
+            # League tile — must fetch BOTH AL and NL explicitly.
+            # The site is an Inertia SPA: the "other league" tab is rendered client-side
+            # so we can never find it via HTML href scanning.  Instead we derive both
+            # league URLs from the known URL pattern and try each one.
+            parsed    = urllib.parse.urlparse(url)
+            base_path = parsed.scheme + "://" + parsed.netloc + parsed.path
+
+            # Build explicit AL and NL URLs preserving any existing query params
+            # (e.g. group_id=10015 must be kept — without it the server returns
+            #  an empty page with no team links).
+            existing_qs = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+            league_urls: list[str] = []
+            for league in ("al", "nl"):  # server uses lowercase league values
+                qs = {k: v[0] for k, v in existing_qs.items()}
+                qs["league"] = league
+                lurl = base_path + "?" + urllib.parse.urlencode(qs)
+                if lurl not in league_urls:
+                    league_urls.append(lurl)
+            # Also keep the bare URL (with original params) as a fallback
+            bare = base_path + ("?" + parsed.query if parsed.query else "")
+            if bare not in league_urls:
+                league_urls.insert(0, bare)
+
+            # Collect all team links across both leagues
+            team_links_all: list[str] = []
+            print(f"  Fetching team affinity pages (AL + NL)...")
+            for league_url in league_urls:
                 lbody, lstatus = get(league_url, headers)
                 if lstatus == 200 and lbody:
-                    for m in re.finditer(r'href=["\']([^"\']*team_affinity_by_team[^"\']*)["\']', lbody):
-                        raw = html_module.unescape(m.group(1))
-                        turl = BASE + raw if raw.startswith("/") else raw
+                    for turl in _extract_links_from_body(lbody, "team_affinity_by_team"):
                         if turl not in team_links_all:
                             team_links_all.append(turl)
+                # If HTML yielded nothing (SPA shell with no hrefs), retry with
+                # Inertia JSON headers — the server returns JSON containing team URLs.
+                if not team_links_all and lstatus == 200:
+                    inertia_hdrs = dict(headers)
+                    inertia_hdrs.update({
+                        "X-Inertia": "true",
+                        "X-Requested-With": "XMLHttpRequest",
+                        "Accept": "application/json",
+                    })
+                    ibody, istatus = get(league_url, inertia_hdrs)
+                    if istatus == 200 and ibody:
+                        try:
+                            idata = json.loads(ibody)
+                            def _hi_teams(obj: object, depth: int = 0) -> None:
+                                if depth > 8 or not obj:
+                                    return
+                                if isinstance(obj, dict):
+                                    for key in ("url", "href", "path", "link", "route"):
+                                        val = obj.get(key) or ""
+                                        if isinstance(val, str) and "team_affinity_by_team" in val:
+                                            full = (BASE + val) if val.startswith("/") else val
+                                            if full not in team_links_all:
+                                                team_links_all.append(full)
+                                    for v in obj.values():
+                                        _hi_teams(v, depth + 1)
+                                elif isinstance(obj, list):
+                                    for item in obj[:300]:
+                                        _hi_teams(item, depth + 1)
+                            _hi_teams(idata.get("props", idata))
+                        except Exception:
+                            pass
                 time.sleep(0.3)
-            for turl in team_links_all:
+
+            _n_teams     = len(team_links_all)
+            _team_lock   = threading.Lock()
+            print(f"  Found {_n_teams} teams — fetching program links (parallel)...")
+
+            def _fetch_one_team(idx_turl: tuple) -> list[str]:
+                idx, turl = idx_turl
                 tbody, tstatus = get(turl, headers)
+                pvs: list[str] = []
                 if tstatus == 200 and tbody:
-                    for pv in _scrape_program_views(tbody):
-                        _add(pv)
-                time.sleep(0.3)
+                    pvs = _scrape_program_views(tbody)
+                    if not pvs:
+                        _ih = dict(headers)
+                        _ih.update({"X-Inertia": "true",
+                                    "X-Requested-With": "XMLHttpRequest",
+                                    "Accept": "application/json"})
+                        tibody, tistatus = get(turl, _ih)
+                        if tistatus == 200 and tibody:
+                            pvs = _extract_links_from_body(tibody, "program_view")
+                team_slug  = urllib.parse.parse_qs(
+                    urllib.parse.urlparse(turl).query
+                ).get("team_id", [turl[-20:]])[0]
+                status_str = f"{len(pvs)} program(s)" if tstatus == 200 else f"SKIP ({tstatus})"
+                with _team_lock:
+                    print(f"    [{idx:2}/{_n_teams}] {team_slug} -> {status_str}")
+                return pvs
+
+            all_team_pvs: list[str] = []
+            with ThreadPoolExecutor(max_workers=MAX_FETCH_WORKERS) as _tex:
+                for _pvs in _tex.map(_fetch_one_team, enumerate(team_links_all, 1)):
+                    all_team_pvs.extend(_pvs)
+            for pv in all_team_pvs:
+                _add(pv)
 
         elif "other_programs" in path:
             # Other programs listing
+            print(f"  Fetching other programs listing...")
             body, status = get(url, headers)
             if status == 200 and body:
-                for pv in _scrape_program_views(body):
+                pvs = _scrape_program_views(body)
+                for pv in pvs:
                     _add(pv)
+                print(f"  Found {len(pvs)} other program link(s)")
             time.sleep(0.3)
 
         else:
@@ -681,7 +792,8 @@ def extract_missions_from_html(html_body: str) -> list[dict]:
             r'class=["\'][^"\']*accordion-toggle-label[^"\']*["\'][^>]*>\s*(.*?)\s*</span>',
             blk, re.DOTALL | re.IGNORECASE
         )
-        title = html_module.unescape(re.sub(r'<[^>]+>', '', m_title.group(1))).strip() if m_title else ""
+        title = re.sub(r'\s{2,}', ' ',
+                       html_module.unescape(re.sub(r'<[^>]+>', '', m_title.group(1)))).strip() if m_title else ""
         if not title:
             continue
 
@@ -739,7 +851,8 @@ def extract_missions_from_html(html_body: str) -> list[dict]:
         m_meter = re.search(r'<meter[^>]+max=["\'](\d+)["\'][^>]+value=["\'](\d+)["\']', blk)
         if not m_title or not m_meter:
             continue
-        title = html_module.unescape(re.sub(r'<[^>]+>', '', m_title.group(1))).strip()
+        title = re.sub(r'\s{2,}', ' ',
+                       html_module.unescape(re.sub(r'<[^>]+>', '', m_title.group(1)))).strip()
         max_v, cur_v = m_meter.group(1), m_meter.group(2)
         try:
             pct = min(100.0, round(int(cur_v) / int(max_v) * 100, 1)) if int(max_v) > 0 else 0.0
@@ -753,60 +866,319 @@ def extract_missions_from_html(html_body: str) -> list[dict]:
     return missions
 
 
-def fetch_inventory(cookies: dict) -> list[str]:
+def extract_program_xp(html_body: str) -> tuple:
     """
-    Fetch the user's MLB player card names from their inventory.
-    Tries the Inertia JSON API, then HTML scraping.
-    Returns a sorted list of unique player name strings.
+    Try to extract (xp_earned, xp_total) from a program page.
+    Looks in the Inertia data-page JSON first, then falls back to HTML text.
+    Returns (None, None) if not found.
     """
-    player_names: set[str] = set()
-
-    # Strategy 1: Inertia JSON API
-    hdrs = make_headers(cookies, inertia=True)
-    body, status = get(f"{BASE}/inventory", hdrs)
-    if status == 200 and body:
+    # Strategy 1: Inertia JSON — recursively find xp-like numeric fields
+    m_data = re.search(r'data-page=["\']({.*?})["\']', html_body, re.DOTALL)
+    if m_data:
         try:
-            data  = json.loads(body)
-            props = data.get("props", data)
-            # Different possible keys the API might use
-            items = (props.get("items") or props.get("inventory") or
-                     props.get("cards") or props.get("collection_items") or [])
-            if isinstance(items, list):
-                for item in items:
-                    if not isinstance(item, dict):
-                        continue
-                    itype = str(item.get("type") or item.get("item_type") or "").lower()
-                    # Skip non-player items (equipment, stadiums, etc.)
-                    if itype and "mlb_card" not in itype and "player" not in itype:
-                        continue
-                    name = (item.get("name") or item.get("player_name") or
-                            item.get("display_name") or "")
-                    if isinstance(name, str) and 2 < len(name.strip()) < 60:
-                        player_names.add(name.strip())
+            page_data = json.loads(html_module.unescape(m_data.group(1)))
+            props = page_data.get("props", page_data)
+            earned = total = None
+
+            def _scan(obj, depth=0):
+                nonlocal earned, total
+                if depth > 8 or not obj:
+                    return
+                if isinstance(obj, dict):
+                    for k, v in obj.items():
+                        kl = k.lower()
+                        if isinstance(v, (int, float)) and v >= 0:
+                            # Exact known field names
+                            if kl in ("xp_earned", "earned_xp", "user_xp",
+                                      "current_xp", "xp_progress", "xp",
+                                      "progress", "user_progress", "points",
+                                      "earned_points", "current_points"):
+                                if earned is None:
+                                    earned = int(v)
+                            elif kl in ("total_xp", "max_xp", "xp_total",
+                                        "xp_max", "total_earned", "goal_xp",
+                                        "required_xp", "target_xp", "max_points",
+                                        "total_points", "goal", "goal_points"):
+                                if total is None:
+                                    total = int(v)
+                            # Fuzzy: any key containing both "xp"/"point" and "earn"/"current"/"progress"
+                            elif "xp" in kl or "point" in kl:
+                                if any(w in kl for w in ("earn", "current", "progress", "user")):
+                                    if earned is None:
+                                        earned = int(v)
+                                elif any(w in kl for w in ("total", "max", "goal", "required", "target")):
+                                    if total is None:
+                                        total = int(v)
+                        _scan(v, depth + 1)
+                elif isinstance(obj, list):
+                    for item in obj[:50]:
+                        _scan(item, depth + 1)
+
+            _scan(props)
+            if earned is not None:
+                return (earned, total, [])
         except Exception:
             pass
 
-    # Strategy 2: HTML scraping of /inventory
-    if not player_names:
-        hdrs_html = make_headers(cookies)
-        body, status = get(f"{BASE}/inventory", hdrs_html)
-        if status == 200 and body:
-            # Look for JSON data embedded in the page (Inertia page data)
-            m_data = re.search(r'data-page=["\']({.*?})["\']', body, re.DOTALL)
-            if m_data:
-                try:
-                    page_data = json.loads(html_module.unescape(m_data.group(1)))
-                    props = page_data.get("props", {})
-                    items = (props.get("items") or props.get("inventory") or [])
-                    for item in (items if isinstance(items, list) else []):
-                        name = item.get("name") or item.get("player_name") or ""
-                        if isinstance(name, str) and 2 < len(name.strip()) < 60:
-                            player_names.add(name.strip())
-                except Exception:
-                    pass
+    # Strategy 1b: Timeline <li> structure (WBC / XP-path style program pages).
+    # A <li class="partial [active]"> marks the current earned position; its label div
+    # contains "95 <img...> Earned".  Every <li class="counting"> is a milestone.
+    # The server may use single OR double quotes for class attributes, so all
+    # sub-patterns use ["'] to handle both styles.
+    _QP = r"""["'][^"']*%s[^"']*["']"""   # quote-agnostic class pattern helper
+    m_partial_li = re.search(r'<li[^>]+class=' + _QP % 'partial',
+                              html_body, re.IGNORECASE)
+    if m_partial_li:
+        snip = html_body[m_partial_li.start(): m_partial_li.start() + 400]
+        m_en = re.search(r'class=' + _QP % 'label' + r'[^>]*>\s*(\d[\d,]*)',
+                         snip, re.IGNORECASE)
+        if m_en:
+            earned_tl = int(m_en.group(1).replace(',', ''))
+            milestone_vals = sorted(set(
+                int(x.replace(',', ''))
+                for x in re.findall(
+                    r'<li[^>]+class=' + _QP % 'counting' + r'[^>]*>\s*'
+                    r'<div[^>]+class=' + _QP % 'label'   + r'[^>]*>\s*(\d[\d,]*)',
+                    html_body, re.IGNORECASE)
+            ))
+            return (earned_tl, max(milestone_vals) if milestone_vals else None, milestone_vals)
 
-    # Strategy 3: Try the squad/roster endpoint for active team players
-    if not player_names:
+    # Strategy 1c: Fully-complete programs (earned == max) have no <li class="partial">
+    # because there is no in-between position to mark.  Detect by collecting all
+    # counting <li>s with their class attrs + label values; if every one has "active"
+    # in its class string, all milestones are earned → earned = max(milestones).
+    # Secondary: explicit "N <img alt='xp'> Earned" header also accepted.
+    _counting_data = re.findall(
+        r"""<li([^>]+class=["'][^"']*counting[^"']*["'][^>]*)>\s*"""
+        r"""<div[^>]+class=["'][^"']*label[^"']*["'][^>]*>\s*(\d[\d,]*)""",
+        html_body, re.IGNORECASE)
+    if _counting_data:
+        _ms_1c = sorted(set(int(v.replace(',', '')) for _, v in _counting_data))
+        if _ms_1c:
+            # Approach (a): explicit XP-icon earned header (alt="xp", not stubs)
+            _m_xp = re.search(
+                r'\b(\d[\d,]*)\s*<img[^>]+alt=["\']xp["\'][^>]*/?\s*>\s*Earned\b',
+                html_body, re.IGNORECASE)
+            if _m_xp:
+                return (int(_m_xp.group(1).replace(',', '')), max(_ms_1c), _ms_1c)
+            # Approach (b): structural — every counting li has "active" class
+            if all('active' in attrs for attrs, _ in _counting_data):
+                return (max(_ms_1c), max(_ms_1c), _ms_1c)
+
+    # Strategy 2: "75 / 100 XP" or "75 of 100 XP" — the format visible on the XP path page
+    m_slash = re.search(
+        r'\b(\d{1,6})\s*(?:/|of)\s*(\d{1,6})\s*XP\b',
+        html_body, re.IGNORECASE)
+    if m_slash:
+        return (int(m_slash.group(1)), int(m_slash.group(2)), [])
+
+    # Strategy 3: "XP: 75 / 100" variant
+    m_xp_colon = re.search(
+        r'\bXP[:\s]+(\d{1,6})\s*(?:/|of)\s*(\d{1,6})\b',
+        html_body, re.IGNORECASE)
+    if m_xp_colon:
+        return (int(m_xp_colon.group(1)), int(m_xp_colon.group(2)), [])
+
+    # Strategy 4: meter tag near an "XP" label — <meter value="75" max="100">
+    for m_meter in re.finditer(
+            r'<meter[^>]+>', html_body, re.IGNORECASE):
+        tag = m_meter.group(0)
+        mv = re.search(r'\bvalue=["\']?(\d+)', tag)
+        mm = re.search(r'\bmax=["\']?(\d+)', tag)
+        if mv and mm:
+            val, mx = int(mv.group(1)), int(mm.group(1))
+            if 0 <= val <= mx <= 100000 and mx > 10:
+                start = max(0, m_meter.start() - 150)
+                end   = min(len(html_body), m_meter.end() + 150)
+                nearby = html_body[start:end]
+                if re.search(r'\bXP\b', nearby, re.IGNORECASE):
+                    return (val, mx, [])
+
+    # Strategy 5: "50,000 Earned" / "54 Earned" XP reward-path pattern.
+    m_earned = re.search(r'\b(\d[\d,]*)\s+(?:XP\s+)?Earned\b', html_body, re.IGNORECASE)
+    if m_earned:
+        earned = int(m_earned.group(1).replace(',', ''))
+        after_section = html_body[m_earned.end(): m_earned.end() + 4000]
+        milestones = [int(x.replace(',', ''))
+                      for x in re.findall(r'\b(\d[\d,]*)\s*XP\b', after_section)]
+        if milestones:
+            total = max(milestones)
+            if total > 0 and total >= earned:
+                return (earned, total, sorted(set(milestones)))
+        return (earned, None, [])
+
+    return (None, None, [])
+
+
+def _parse_positions(item: dict) -> tuple[str, list[str]]:
+    """Extract (primary_pos, all_positions) from an inventory item dict."""
+    raw_pos = str(item.get("position") or item.get("primary_position") or
+                  item.get("display_position") or item.get("pos") or "").strip().upper()
+    # Handle slash-separated positions like "1B/DH" or "OF/DH/1B"
+    slash_parts = [p.strip() for p in raw_pos.split("/") if p.strip()]
+    pos = slash_parts[0] if slash_parts else raw_pos
+
+    # secondary / all positions list from API fields
+    # Note: official inventory API uses "display_secondary_positions" (may be comma/slash string)
+    sec_raw = (item.get("display_secondary_positions") or
+               item.get("secondary_positions") or item.get("positions") or
+               item.get("eligible_positions") or [])
+    if isinstance(sec_raw, str):
+        sec_raw = [s.strip() for s in sec_raw.replace("/", ",").split(",") if s.strip()]
+    positions = []
+    # start with slash-decoded primary parts, then add explicit secondary fields
+    for p in slash_parts + list(sec_raw):
+        p = str(p).strip().upper()
+        if p and p not in positions:
+            positions.append(p)
+    if not positions and pos:
+        positions = [pos]
+    return pos, positions
+
+
+def fetch_inventory(cookies: dict) -> list[dict]:
+    """
+    Fetch the user's MLB player card names (and positions) from their inventory.
+    Returns a sorted list of dicts: [{name, pos, positions, series}, ...]
+
+    A player can appear multiple times with different series (e.g. "Adam Jones" with
+    series "Jolt" AND series "Live Series").  We key on (name, series) so every
+    distinct owned card is preserved — this lets the JS invMap build compound keys
+    like "Jolt Adam Jones" that series-specific missions can match against exactly.
+    """
+    player_cards: dict[tuple[str, str], dict] = {}   # (name, series) -> card dict
+
+    def _add_card(item: dict) -> None:
+        name = str(item.get("name") or item.get("player_name") or
+                   item.get("display_name") or item.get("full_name") or "").strip()
+        if not name or not (2 < len(name) < 60):
+            return
+        parts = name.split()
+        if len(parts) < 2 or not parts[0][0].isupper():
+            return
+        pos, positions = _parse_positions(item)
+        series = str(item.get("series") or item.get("card_series") or
+                     item.get("series_name") or "").strip()
+        key = (name, series)
+        if key not in player_cards:
+            player_cards[key] = {"name": name, "pos": pos, "positions": positions,
+                                 "series": series}
+        else:
+            # Already have this exact (name, series) combo — update pos if missing
+            existing = player_cards[key]
+            if not existing.get("pos") and pos:
+                existing.update({"pos": pos, "positions": positions})
+
+    def _parse_inv_table(html_body: str) -> None:
+        """Parse the HTML inventory table and add owned player cards."""
+        # Table columns: Qty(0) | img(1) | Player(2) | Overall(3) | Pos(4) | Team(5) | Series(6) | ...
+        for row in re.finditer(r'<tr[^>]*>(.*?)</tr>', html_body, re.DOTALL | re.IGNORECASE):
+            cells = re.findall(r'<td[^>]*>(.*?)</td>', row.group(1), re.DOTALL | re.IGNORECASE)
+            if len(cells) < 5:
+                continue
+            # Qty cell — skip cards the user doesn't own (0x)
+            qty_text = re.sub(r'<[^>]+>', '', cells[0]).strip()
+            m_qty = re.search(r'(\d+)', qty_text)
+            if not m_qty or int(m_qty.group(1)) == 0:
+                continue
+            # Player name is in cells[2] (cells[1] is the thumbnail image cell)
+            name = html_module.unescape(re.sub(r'<[^>]+>', ' ', cells[2])).strip()
+            name = re.sub(r'\s+', ' ', name).strip()
+            # Overall rating cell (cells[3])
+            overall = re.sub(r'<[^>]+>', '', cells[3]).strip()
+            # Position cell (cells[4], not cells[3] which is Overall rating)
+            pos = re.sub(r'<[^>]+>', '', cells[4]).strip().upper()
+            # Team cell (cells[5])
+            team = re.sub(r'<[^>]+>', '', cells[5]).strip() if len(cells) > 5 else ''
+            # Series column (cells[6], not cells[5] which is Team)
+            series_raw = re.sub(r'<[^>]+>', '', cells[6]).strip() if len(cells) > 6 else ''
+            # Allow standard positions including 1B/2B/3B (start with digit)
+            if name and pos and re.match(r'^[A-Z1-9]', pos):
+                _add_card({"name": name, "pos": pos, "positions": [pos],
+                           "series": series_raw})
+
+    # ── Strategy 1: Official /apis/inventory.json?type=mlb_card ──────────────
+    # Paginated JSON API — the canonical source for owned cards.
+    # Fetch page 1 first to learn total_pages, then fetch remaining pages in parallel.
+    inv_total_pages   = 1
+    inv_hdrs          = make_headers(cookies)
+
+    def _fetch_inv_api_page(page: int) -> tuple:
+        """Returns (items_list, total_pages). total_pages only reliable from page 1."""
+        url = f"{BASE}/apis/inventory.json?type=mlb_card&page={page}"
+        body, status = get(url, inv_hdrs)
+        if status != 200 or not body:
+            return [], 1
+        try:
+            data = json.loads(body)
+            return data.get("inventory") or [], int(data.get("total_pages", 1))
+        except Exception:
+            return [], 1
+
+    # Page 1: learn total_pages + seed the card dict (single fetch — no double-call)
+    _p1_items, inv_total_pages = _fetch_inv_api_page(1)
+    for item in _p1_items:
+        if isinstance(item, dict) and str(item.get("quantity", "0")) != "0":
+            _add_card(item)
+
+    # Pages 2..N in parallel
+    if inv_total_pages > 1:
+        with ThreadPoolExecutor(max_workers=MAX_FETCH_WORKERS) as _iex:
+            for _items, _ in _iex.map(_fetch_inv_api_page, range(2, inv_total_pages + 1)):
+                for item in _items:
+                    if isinstance(item, dict) and str(item.get("quantity", "0")) != "0":
+                        _add_card(item)
+
+    if player_cards:
+        print(f"  [inventory] API: {len(player_cards)} owned cards "
+              f"({inv_total_pages} pages)")
+
+    # ── Strategy 2: HTML table — run for position enrichment (parallel fetch) ──
+    # The /inventory page renders a table with Pos column.  Fetch up to 10 pages
+    # in parallel, then process them in order (with early-stop when no new data).
+    hdrs_html = make_headers(cookies)
+
+    def _fetch_inv_html(page: int) -> str | None:
+        url = f"{BASE}/inventory?type=mlb_card&ownership=my_cards&page={page}"
+        body, status = get(url, hdrs_html)
+        return body if status == 200 and body else None
+
+    with ThreadPoolExecutor(max_workers=MAX_FETCH_WORKERS) as _hex:
+        _html_bodies = list(_hex.map(_fetch_inv_html, range(1, 11)))
+
+    for page, body in enumerate(_html_bodies, 1):
+        if not body:
+            break
+        if page == 1:
+            _raw_path = os.path.join(SCRIPT_DIR, "debug_inventory_raw.html")
+            with open(_raw_path, "w", encoding="utf-8", errors="replace") as _f:
+                _f.write(body[:100000])
+        before_len = len(player_cards)
+        before_pos = sum(1 for c in player_cards.values() if c.get("pos"))
+        _parse_inv_table(body)
+        new_names = len(player_cards) - before_len
+        new_pos   = sum(1 for c in player_cards.values() if c.get("pos")) - before_pos
+        if new_names == 0 and new_pos == 0 and page > 1:
+            break
+
+    # ── Strategy 3: Inertia JSON fallback ─────────────────────────────────────
+    if not player_cards:
+        body, status = get(f"{BASE}/inventory", make_headers(cookies, inertia=True))
+        if status == 200 and body:
+            try:
+                data  = json.loads(body)
+                props = data.get("props", data)
+                items = (props.get("items") or props.get("inventory") or
+                         props.get("cards") or props.get("collection_items") or [])
+                if isinstance(items, list):
+                    for item in items:
+                        if isinstance(item, dict):
+                            _add_card(item)
+            except Exception:
+                pass
+
+    # Strategy 4: Squad/roster endpoint as final fallback
+    if not player_cards:
         body, status = get(f"{BASE}/squads", make_headers(cookies, inertia=True))
         if status == 200 and body:
             try:
@@ -816,16 +1188,14 @@ def fetch_inventory(cookies: dict) -> list[str]:
                     items = props.get(key) or []
                     if isinstance(items, list) and items:
                         for item in items:
-                            if not isinstance(item, dict):
-                                continue
-                            name = item.get("name") or item.get("player_name") or ""
-                            if isinstance(name, str) and 2 < len(name.strip()) < 60:
-                                player_names.add(name.strip())
-                        break
+                            if isinstance(item, dict):
+                                _add_card(item)
+                        if player_cards:
+                            break
             except Exception:
                 pass
 
-    return sorted(player_names)
+    return sorted(player_cards.values(), key=lambda c: c["name"])
 
 
 def normalize_team(text: str) -> str | None:
@@ -940,134 +1310,243 @@ def main():
     other_prog_raw: dict[str, dict]            = {}   # name -> {group, missions}
     total = len(links)
 
-    for i, url in enumerate(links, 1):
-        params   = parse_url_params(url)
-        prog_id  = params.get("program_id", "?")
-        time.sleep(0.35)
+    # ── Helpers ───────────────────────────────────────────────────────────────
+
+    def dedup_sort(lst: list) -> list:
+        """Deduplicate by (title, desc[:60]) and sort by pct descending."""
+        seen, out = set(), []
+        for m in sorted(lst, key=lambda x: -x["pct"]):
+            key = (m["t"], (m.get("d") or "")[:60])
+            if m["t"] and key not in seen:
+                seen.add(key); out.append(m)
+        return out
+
+    build_script = os.path.join(SCRIPT_DIR, "build_tracker.py")
+    html_out     = os.path.join(SCRIPT_DIR, "MLB Team Affinity Tracker.html")
+
+    def _flush_tracker(inventory_snap: list | None = None, label: str = "") -> None:
+        """Write mlb_data_live.json and rebuild the tracker HTML in-place."""
+        # Build deduped snapshots for output (don't mutate live dicts)
+        team_out = {t: {pt: dedup_sort(list(ms)) for pt, ms in progs.items()}
+                    for t, progs in team_missions.items()}
+        other_dedup = {k: {**v, "missions": dedup_sort(list(v["missions"]))}
+                       for k, v in other_prog_raw.items()}
+        op_html: dict = {}
+        for pn, pd in other_dedup.items():
+            g = pd["group"]
+            e: dict = {"color": PROG_GROUP_COLORS.get(g, "#8b5cf6"),
+                       "icon": make_prog_icon(pn), "group": g,
+                       "missions": pd["missions"]}
+            if "xp_earned"     in pd: e["xp_earned"]     = pd["xp_earned"]
+            if "xp_total"      in pd: e["xp_total"]      = pd["xp_total"]
+            if "xp_milestones" in pd: e["xp_milestones"] = pd["xp_milestones"]
+            op_html[pn] = e
+
+        data = {
+            "divisions":       DIVISIONS,
+            "colors":          TEAM_COLORS,
+            "missions":        team_out,
+            "other_programs":  op_html,
+            "inventory":       inventory_snap or [],
+            "data_source":     "live",
+            "data_date":       time.strftime("%Y-%m-%d %H:%M"),
+            "_prog_url_cache": {**prog_cache, **new_prog_cache},
+        }
+        try:
+            with open(OUT_JSON, "w", encoding="utf-8") as _f:
+                json.dump(data, _f, indent=2, ensure_ascii=True)
+        except Exception:
+            return
+
+        if os.path.exists(build_script):
+            subprocess.run([sys.executable, build_script, "--source", OUT_JSON],
+                           capture_output=True, cwd=SCRIPT_DIR)
+        if label:
+            print(f"  [update] {label}")
+
+    # ── Load program URL cache ─────────────────────────────────────────────────
+    prog_cache: dict = {}
+    if os.path.exists(OUT_JSON):
+        try:
+            with open(OUT_JSON, encoding="utf-8") as _cf:
+                _old_data = json.load(_cf)
+            prog_cache = _old_data.get("_prog_url_cache", {})
+            if prog_cache:
+                n_done = sum(1 for v in prog_cache.values() if v.get("complete"))
+                print(f"  [cache] {len(prog_cache)} cached programs, "
+                      f"{n_done} fully complete (will skip HTTP fetch)")
+        except Exception:
+            pass
+
+    # ── Start inventory fetch in background ───────────────────────────────────
+    # Runs concurrently while programs are fetched so there's no wait at the end.
+    _inv_result:  list = [None]
+    _inv_done     = threading.Event()
+
+    def _bg_inventory() -> None:
+        _inv_result[0] = fetch_inventory(cookies)
+        _inv_done.set()
+        print(f"\n  [inventory] {len(_inv_result[0])} player cards loaded")
+
+    print("\nFetching player inventory (background)...")
+    threading.Thread(target=_bg_inventory, daemon=True).start()
+
+    # ── Parallel program fetch with incremental tracker rebuilds ──────────────
+    _prog_print_lock = threading.Lock()
+    _xp_dbg_written  = threading.Event()
+    new_prog_cache:  dict = {}
+
+    def _fetch_one_program(i_url: tuple) -> tuple:
+        i, url = i_url
+        cached = prog_cache.get(url)
+        if cached and cached.get("complete"):
+            # If this is a non-team program and the cache entry predates the
+            # xp_milestones feature (key absent entirely), re-fetch once so
+            # the milestone data gets stored for the fill bar.
+            _h1c = cached.get("h1", "")
+            _needs_xp_refresh = (
+                normalize_team(_h1c) is None          # not a team program
+                and "xp_milestones" not in cached     # cache predates feature
+            )
+            if not _needs_xp_refresh:
+                with _prog_print_lock:
+                    print(f"  [{i:3}/{total}] {len(cached['missions']):3} missions  "
+                          f"{_h1c[:40]}  [cached]")
+                return (i, url, cached)
+            # Fall through to re-fetch
 
         p_body, p_status = get(url, headers)
         if p_status != 200 or not p_body:
-            print(f"  [{i:3}/{total}] SKIP ({p_status}) {url[-50:]}")
-            continue
+            with _prog_print_lock:
+                print(f"  [{i:3}/{total}] SKIP ({p_status}) {url[-50:]}")
+            return (i, url, None)
 
-        if debug and i == 1:
-            dbg2 = os.path.join(SCRIPT_DIR, "debug_program_page.html")
-            with open(dbg2, "w", encoding="utf-8") as f:
-                f.write(p_body)
-            print(f"  [debug] Saved first program page -> {dbg2}")
-            print(f"  [debug] Page length: {len(p_body)} bytes")
-            # Print first 3000 chars of response (no scripts) for quick inspection
-            stripped = re.sub(r'<script[^>]*>.*?</script>', '[SCRIPT]', p_body[:5000], flags=re.DOTALL)
-            print("  [debug] Page preview (first 3000 chars stripped):")
-            print(stripped[:3000])
-            print()
-
-        missions = extract_missions_from_html(p_body)
-        if debug and i == 1:
-            print(f"  [debug] Missions found from first page: {len(missions)}")
-
-        # Identify program name / team from page <h1>
+        missions                        = extract_missions_from_html(p_body)
+        xp_earned, xp_total, xp_milestones = extract_program_xp(p_body)
         h1 = ""
         m_h1 = re.search(r'<h1[^>]*>(.*?)</h1>', p_body, re.DOTALL | re.IGNORECASE)
         if m_h1:
             h1 = re.sub(r'<[^>]+>', '', m_h1.group(1)).strip()
+        _non_rep = [m for m in missions if not m.get("t", "").upper().startswith("REPEATABLE")]
+        complete = (
+            bool(_non_rep) and all(m.get("pct", 0) >= 1.0 for m in _non_rep)
+        ) or (
+            xp_earned is not None and xp_total is not None and xp_earned >= xp_total
+        )
 
-        team           = normalize_team(h1)
-        h1_lower       = h1.lower()
-        is_color_storm = bool(re.search(r'color\s*storm|#1 fan', h1_lower, re.I))
-        prog_type      = "Color Storm" if is_color_storm else "My Journey"
-        is_xp_path     = bool(re.search(r'xp.*(path|reward)|1st inning', h1_lower, re.I))
-        is_multi       = bool(re.search(r'multiplayer|ranked.*season', h1_lower, re.I))
+        if xp_earned is None and not normalize_team(h1) and not _xp_dbg_written.is_set():
+            _xp_dbg_written.set()
+            try:
+                with open(os.path.join(SCRIPT_DIR, "debug_prog_xp.html"),
+                          "w", encoding="utf-8", errors="replace") as _f:
+                    _f.write(p_body[:150000])
+                with _prog_print_lock:
+                    print(f"  [info] XP not found for '{h1[:40]}' — saved debug_prog_xp.html")
+            except Exception:
+                pass
 
-        label = h1[:45] or f"prog {prog_id}"
-        print(f"  [{i:3}/{total}] {len(missions):3} missions  {label}")
+        if debug and i == 1:
+            try:
+                dbg2 = os.path.join(SCRIPT_DIR, "debug_program_page.html")
+                with open(dbg2, "w", encoding="utf-8") as f:
+                    f.write(p_body)
+                with _prog_print_lock:
+                    print(f"  [debug] {dbg2} ({len(p_body)}b, {len(missions)} missions, "
+                          f"XP {xp_earned}/{xp_total})")
+            except Exception:
+                pass
 
+        label  = (h1[:40] or f"prog {parse_url_params(url).get('program_id','?')}")
+        suffix = "  [DONE]" if complete else ""
+        with _prog_print_lock:
+            print(f"  [{i:3}/{total}] {len(missions):3} missions  {label}{suffix}")
+
+        return (i, url, {"h1": h1, "missions": missions,
+                         "xp_earned": xp_earned, "xp_total": xp_total,
+                         "xp_milestones": xp_milestones or [],
+                         "complete": complete})
+
+    def _absorb(result: dict) -> None:
+        """Merge one program result into team_missions / other_prog_raw."""
+        h1        = result.get("h1", "")
+        missions  = result.get("missions", [])
+        xp_earned = result.get("xp_earned")
+        xp_total  = result.get("xp_total")
+        team      = normalize_team(h1)
+        h1l       = h1.lower()
+        is_cs     = bool(re.search(r'color\s*storm|#1 fan', h1l, re.I))
+        prog_type = "Color Storm" if is_cs else "My Journey"
         if team:
             team_missions.setdefault(team, {}).setdefault(prog_type, []).extend(missions)
         else:
-            if is_xp_path:
+            if   re.search(r'xp.*(path|reward)|1st inning', h1l, re.I):
                 group, prog_key = "xp_path",    h1 or "1st Inning XP Path"
-            elif is_multi:
+            elif re.search(r'multiplayer|ranked.*season',   h1l, re.I):
                 group, prog_key = "multiplayer", h1 or "Multiplayer Program"
             else:
                 group, prog_key = "assorted",    h1 or "Assorted Programs"
             if prog_key not in other_prog_raw:
                 other_prog_raw[prog_key] = {"group": group, "missions": []}
             other_prog_raw[prog_key]["missions"].extend(missions)
+            xp_milestones = result.get("xp_milestones", [])
+            if xp_earned is not None and "xp_earned" not in other_prog_raw[prog_key]:
+                other_prog_raw[prog_key]["xp_earned"] = xp_earned
+            if xp_total  is not None and "xp_total"  not in other_prog_raw[prog_key]:
+                other_prog_raw[prog_key]["xp_total"]  = xp_total
+            if xp_milestones and "xp_milestones" not in other_prog_raw[prog_key]:
+                other_prog_raw[prog_key]["xp_milestones"] = xp_milestones
 
-    # 5. Deduplicate and sort
-    def dedup_sort(lst):
-        seen, out = set(), []
-        for m in sorted(lst, key=lambda x: -x["pct"]):
-            if m["t"] and m["t"] not in seen:
-                seen.add(m["t"]); out.append(m)
-        return out
+    # Submit all programs, process + flush incrementally as results arrive
+    FLUSH_SECS     = 8     # rebuild tracker at most this often during the run
+    completed      = 0
+    last_flush_t   = time.time()
+    print(f"\nFetching {total} programs...")
 
-    for team in team_missions:
-        for pt in team_missions[team]:
-            team_missions[team][pt] = dedup_sort(team_missions[team][pt])
-    for k in other_prog_raw:
-        other_prog_raw[k]["missions"] = dedup_sort(other_prog_raw[k]["missions"])
+    with ThreadPoolExecutor(max_workers=MAX_FETCH_WORKERS) as _pex:
+        _futs = {_pex.submit(_fetch_one_program, (i, url)): i
+                 for i, url in enumerate(links, 1)}
+        for _fut in as_completed(_futs):
+            i, url, result = _fut.result()
+            if result:
+                new_prog_cache[url] = result
+                _absorb(result)
+            completed += 1
+
+            # Incremental rebuild: first time after 5 completions, then every FLUSH_SECS
+            elapsed = time.time() - last_flush_t
+            if completed == 5 or (completed > 5 and elapsed >= FLUSH_SECS):
+                pct = int(completed / total * 100)
+                # Use current inventory if background thread already finished
+                snap = _inv_result[0] if _inv_done.is_set() else None
+                _flush_tracker(snap,
+                               f"Tracker refreshed ({completed}/{total} programs — {pct}%)")
+                last_flush_t = time.time()
+
+    # ── Wait for inventory, then final flush ──────────────────────────────────
+    if not _inv_done.is_set():
+        print("  Waiting for inventory to finish...")
+        _inv_done.wait()
+    inventory = _inv_result[0] or []
 
     print()
     team_total  = sum(sum(len(v) for v in t.values()) for t in team_missions.values())
     other_total = sum(len(v["missions"]) for v in other_prog_raw.values())
-    print(f"Team missions:   {team_total:4d} across {len(team_missions)} teams")
-    print(f"Other missions:  {other_total:4d} across {len(other_prog_raw)} programs")
+    print(f"Team missions:  {team_total:4d} across {len(team_missions)} teams")
+    print(f"Other missions: {other_total:4d} across {len(other_prog_raw)} programs")
+    print(f"Inventory:      {len(inventory):4d} player cards")
 
-    # 6. Build other_programs structure (one entry per individual program)
-    op_for_html = {}
-    for prog_name, pdata in other_prog_raw.items():
-        group = pdata["group"]
-        op_for_html[prog_name] = {
-            "color":    PROG_GROUP_COLORS.get(group, "#8b5cf6"),
-            "icon":     make_prog_icon(prog_name),
-            "group":    group,
-            "missions": pdata["missions"],
-        }
+    print("\nFinal rebuild...")
+    _flush_tracker(inventory)
+    print(f"Saved: {OUT_JSON}")
 
-    # 7. Fetch player inventory
-    print("\nFetching player inventory...")
-    inventory = fetch_inventory(cookies)
-    print(f"  Found {len(inventory)} player cards")
-
-    live_data = {
-        "divisions":      DIVISIONS,
-        "colors":         TEAM_COLORS,
-        "missions":       team_missions,
-        "other_programs": op_for_html,
-        "inventory":      inventory,
-        "data_source":    "live",
-        "data_date":      time.strftime("%Y-%m-%d %H:%M"),
-    }
-
-    with open(OUT_JSON, "w", encoding="utf-8") as f:
-        json.dump(live_data, f, indent=2, ensure_ascii=True)
-    print(f"\nSaved: {OUT_JSON}")
-
-    # 7. Rebuild HTML
-    print("Rebuilding tracker HTML...")
-    build_script = os.path.join(SCRIPT_DIR, "build_tracker.py")
-    if os.path.exists(build_script):
-        result = subprocess.run(
-            [sys.executable, build_script, "--source", OUT_JSON],
-            capture_output=True, text=True, cwd=SCRIPT_DIR
-        )
-        if result.returncode == 0:
-            print("  Done!", result.stdout.strip())
-        else:
-            print("  build_tracker error:", result.stderr[:300])
-    else:
-        print("  build_tracker.py not found – run it manually.")
-
-    print()
-    html_out = os.path.join(SCRIPT_DIR, "MLB Team Affinity Tracker.html")
+    # Open browser once — use new=0 so Chrome reuses the existing tab if possible
+    import webbrowser
+    url_str = "file:///" + html_out.replace("\\", "/")
     if "--no-browser" not in sys.argv:
         print(f"\nAll done!  Opening tracker...")
-        import webbrowser
-        webbrowser.open("file:///" + html_out.replace("\\", "/"))
+        webbrowser.open(url_str, new=0)
     else:
-        print(f"\nAll done!  Tracker saved to: {html_out}")
+        print(f"\nAll done!  Tracker: {html_out}")
 
 
 if __name__ == "__main__":

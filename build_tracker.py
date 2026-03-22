@@ -140,7 +140,7 @@ body { font-family: "Segoe UI", Arial, sans-serif; background: var(--bg); color:
 
 /* TEAM BANNER */
 .team-banner {
-  border-radius: 10px; padding: 16px 20px; margin-bottom: 16px;
+  border-radius: 10px; padding: 16px 20px 24px; margin-bottom: 16px;
   display: flex; align-items: center; gap: 16px;
   background: linear-gradient(135deg, var(--c1) 0%, var(--c2) 100%);
   position: relative; overflow: hidden;
@@ -149,6 +149,28 @@ body { font-family: "Segoe UI", Arial, sans-serif; background: var(--bg); color:
   content: ""; position: absolute; right: -20px; top: -20px;
   width: 140px; height: 140px; border-radius: 50%;
   background: rgba(255,255,255,0.05);
+}
+.xp-fill-wrap {
+  position: absolute; bottom: 0; left: 0; right: 0; height: 20px;
+}
+.xp-fill-track {
+  position: absolute; bottom: 0; left: 0; right: 0; height: 7px;
+  background: rgba(0,0,0,0.30);
+}
+.xp-fill {
+  position: absolute; bottom: 0; left: 0; height: 7px;
+  background: linear-gradient(90deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0.95) 100%);
+  min-width: 3px; border-radius: 0 4px 4px 0;
+  transition: width 0.5s ease;
+}
+.xp-tick {
+  position: absolute; bottom: 0; height: 10px; width: 1px;
+  background: rgba(0,0,0,0.45); transform: translateX(-50%);
+}
+.xp-tick-lbl {
+  position: absolute; bottom: 11px; left: 50%; transform: translateX(-50%);
+  font-size: 8px; color: rgba(255,255,255,0.6); white-space: nowrap; line-height: 1;
+  pointer-events: none;
 }
 .banner-info { flex: 1; }
 .banner-info h1 { font-size: 24px; font-weight: 800; text-transform: uppercase; letter-spacing: 2px; color: #fff; text-shadow: 0 1px 6px rgba(0,0,0,0.4); }
@@ -254,7 +276,7 @@ body { font-family: "Segoe UI", Arial, sans-serif; background: var(--bg); color:
 .home-banner { padding: 18px 22px; margin-bottom: 18px; border-radius: 10px; background: linear-gradient(135deg, #0d1d35 0%, #080d18 100%); border: 1px solid var(--border); display: flex; align-items: flex-end; gap: 20px; }
 .home-banner h1 { font-size: 22px; font-weight: 800; text-transform: uppercase; letter-spacing: 2px; color: #fff; }
 .home-banner p  { font-size: 11px; color: var(--muted); margin-top: 2px; }
-.home-lineup-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 22px; }
+.home-lineup-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; margin-bottom: 22px; }
 .home-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
 .home-card-title { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 10px; }
 .home-player-row { display: flex; align-items: center; gap: 8px; padding: 5px 0; border-bottom: 1px solid rgba(30,53,84,0.6); }
@@ -410,20 +432,26 @@ const LINEUP_EXCL = new Set([
 ]);
 
 // Two dedicated module-level maps used by renderHome + renderInvList
-// activePlayerMap: name → [missions where pct < 100]  (USE in lineup)
-// doneOnlyMap:     names that only have done missions  (SAFE to remove)
+// activePlayerMap:  name → [non-Moment missions where 0 < pct < 100]  (USE in lineup)
+// donePlayerMap:    name → [missions where pct >= 100]                 (owned player)
+// repeatableMap:    name → [active REPEATABLE missions they're eligible for]
 const activePlayerMap = new Map();
-const donePlayerMap   = new Map();  // all known done missions, keyed by full name
+const donePlayerMap   = new Map();
+const repeatableMap   = new Map();
 
 function extractOwnerFromMission(m) {
+  const title = m.t || '';
   // 1. "Firstname Lastname - Country" WBC-style title → name before the dash
-  const cp = m.t.match(/^([A-Z][A-Za-z\\u00C0-\\u024F'-]+(?: [A-Z][A-Za-z\\u00C0-\\u024F'-]+)+)\\s*-\\s*[A-Z][a-z]/);
+  const cp = title.match(/^([A-Z][A-Za-z\\u00C0-\\u024F'-]+(?: [A-Z][A-Za-z\\u00C0-\\u024F'-]+)+)\\.?\\s*-\\s*[A-Z][a-z]/);
   if (cp) return cp[1];
   // 2. "with Name" in description (e.g. "Record 10 Ks with Seth Lugo")
   const dp = (m.d || '').match(/\\bwith\\s+([A-Z][A-Za-z\\u00C0-\\u024F'-]+(?: [A-Z][A-Za-z\\u00C0-\\u024F'-]+){1,3})/);
   if (dp) return dp[1];
+  // 2b. digit-prefix series ("with 2nd Half Heroes Manny Ramirez" -> "Manny Ramirez")
+  const dpDigit = (m.d || '').match(/\\bwith\\s+\\d\\S*\\s+(?:\\S+\\s+)*([A-Z][A-Za-z\\u00C0-\\u024F'-]+\\s+[A-Z][A-Za-z\\u00C0-\\u024F'-]+)(?:\\s*\\.| |$)/);
+  if (dpDigit) return dpDigit[1];
   // 3. "w/ Name" at end of title, allowing optional trailing "Jr." / "Sr."
-  const tp = m.t.match(/\\bw\\/\\s*([A-Z][A-Za-z\\u00C0-\\u024F'-]+(?: [A-Z][A-Za-z\\u00C0-\\u024F'-]+)*(?:\\s+[JS]r\\.?)?)\\s*\\.?\\s*$/i);
+  const tp = title.match(/\\bw\\/\\s*([A-Z][A-Za-z\\u00C0-\\u024F'-]+(?: [A-Z][A-Za-z\\u00C0-\\u024F'-]+)*(?:\\s+[JS]r\\.?)?)\\s*\\.?\\s*$/i);
   if (tp) return tp[1].replace(/\\.\\s*$/, '').trim();
   return null;
 }
@@ -431,6 +459,22 @@ function extractOwnerFromMission(m) {
 function _isExcluded(name) {
   const last = name.split(' ').pop().toLowerCase().replace(/\\.$/, '');
   return LINEUP_EXCL.has(last) || LINEUP_EXCL.has(name.toLowerCase());
+}
+
+// Returns true for "Firstname Lastname - Country" WBC/Classic Moment titles.
+// These are played in Moments mode — they identify ownership but don't need lineup use.
+function _isCountryMoment(m) {
+  // Allow optional trailing "." (handles "Dante Bichette Jr. - Brazil")
+  return /^[A-Z][A-Za-z\\u00C0-\\u024F'-]+(?: [A-Z][A-Za-z\\u00C0-\\u024F'-]+)+\\.?\\s*-\\s*[A-Z][a-z]/.test(m.t || '');
+}
+
+// Parse "Eligible players include X, Y, and Z" from REPEATABLE descriptions
+function _repeatablePlayers(m) {
+  const src = m.d || '';
+  const hit = src.match(/eligible players include\\s+(.+?)(?:\\.\\s*Where|\\s*$)/i);
+  if (!hit) return [];
+  return hit[1].split(/,\\s*(?:and\\s+)?|\\s+and\\s+/).map(function(s){ return s.trim(); })
+    .filter(function(s){ return /^[A-Z]/.test(s) && !_isExcluded(s); });
 }
 
 function _addTo(map, name, m) {
@@ -471,14 +515,31 @@ if (prevPct) {
 function buildAutoInventory() {
   activePlayerMap.clear();
   donePlayerMap.clear();
+  repeatableMap.clear();
 
-  // Pass 1: scan all missions with pct > 0; bucket into active vs done
+  // Pass 1: scan all missions with pct > 0; bucket into active vs done.
+  // Country Moments ("Name - Country") are played in Moments mode — they prove
+  // ownership but must NOT drive "Use in Lineup" recommendations.
   for (const m of allMissionsFlat) {
     if (m.pct <= 0) continue;
+    // Country Moments ("Name - Country") are mini-games played with a provided card —
+    // completing one does NOT mean you own that player card. Ignore entirely.
+    if (_isCountryMoment(m)) continue;
     const name = extractOwnerFromMission(m);
     if (!name || _isExcluded(name)) continue;
     if (m.pct >= 100) _addTo(donePlayerMap, name, m);
     else              _addTo(activePlayerMap, name, m);
+  }
+
+  // Pass 1b: REPEATABLE missions — parse eligible player names from descriptions.
+  // If a REPEATABLE has any progress, those players contribute XP to it.
+  for (const m of allMissionsFlat) {
+    const isRep = m.t.startsWith('REPEATABLE') || (m.d || '').startsWith('REPEATABLE');
+    if (!isRep || m.pct <= 0 || m.pct >= 100) continue;
+    for (const pname of _repeatablePlayers(m)) {
+      if (!repeatableMap.has(pname)) repeatableMap.set(pname, []);
+      repeatableMap.get(pname).push(m);
+    }
   }
 
   // Pass 2: within each map, merge last-name-only keys into their full-name key
@@ -526,17 +587,53 @@ function buildAutoInventory() {
 
   // Pass 4: for players we know are owned (appear in donePlayerMap with no active
   // missions yet), scan ALL missions — even pct=0 — to find pending incomplete work.
-  // e.g. "Adrian Almeida" done WBC mission + 0% "5 IP w/ Almeida" → should use him
+  // e.g. "Adrian Almeida" done WBC mission + 0% "5 IP w/ Almeida" → should use him.
+  // Skip Country Moments — those never require a lineup slot.
   for (const knownName of donePlayerMap.keys()) {
     if (activePlayerMap.has(knownName)) continue;
     for (const m of allMissionsFlat) {
       if (m.pct >= 100) continue;
+      if (_isCountryMoment(m)) continue;        // Moments don't need lineup
       const nm = extractOwnerFromMission(m);
       if (!nm) continue;
-      // Match exact name OR last-name suffix
-      const matched = nm === knownName ||
-        (!nm.includes(' ') && knownName.endsWith(' ' + nm));
-      if (matched) _addTo(activePlayerMap, knownName, m);
+      if (nm === knownName || (!nm.includes(' ') && knownName.endsWith(' ' + nm))) {
+        // Plain match or last-name match — use the known (owned) name as key
+        _addTo(activePlayerMap, knownName, m);
+      } else if (nm.endsWith(' ' + knownName)) {
+        // Series-prefix match: mission says "Jolt Adam Jones", known card is "Adam Jones"
+        // Key on nm so _cardInfo checks for the specific series card in invMap
+        _addTo(activePlayerMap, nm, m);
+      }
+    }
+  }
+
+  // Pass 5: inventory-driven — for each card in the fetched inventory,
+  // if not already tracked, scan ALL missions (including pct=0) for their name.
+  // D.inventory entries can be either plain strings or {name,pos,positions} dicts.
+  const inventory = D.inventory || [];
+  for (const invEntry of inventory) {
+    // Normalise: handle both string and {name,...} object formats
+    const fullName = (typeof invEntry === 'string'
+      ? invEntry
+      : (invEntry && invEntry.name) || '').trim();
+    if (!fullName || _isExcluded(fullName)) continue;
+    const parts = fullName.split(/\s+/);
+    if (parts.length < 2) continue;              // skip single-word entries
+    const lastName = parts[parts.length - 1];
+    if (activePlayerMap.has(fullName)) continue; // already tracked
+    for (const m of allMissionsFlat) {
+      if (m.pct >= 100) continue;
+      if (_isCountryMoment(m)) continue;
+      const nm = extractOwnerFromMission(m);
+      if (!nm) continue;
+      if (nm === fullName || nm === lastName || fullName.endsWith(' ' + nm)) {
+        // Plain / last-name match — card name is sufficient, use fullName as key
+        _addTo(activePlayerMap, fullName, m); break;
+      } else if (nm.endsWith(' ' + fullName)) {
+        // Series-prefix match: mission says "Jolt Adam Jones", card is "Adam Jones"
+        // Key on nm so _cardInfo checks invMap for the specific "Jolt Adam Jones" entry
+        _addTo(activePlayerMap, nm, m); break;
+      }
     }
   }
 }
@@ -568,28 +665,95 @@ function selectHome() {
   const hb = document.getElementById('home-btn');
   if (hb) hb.classList.add('active');
   renderHome();
+  window.scrollTo(0, 0);
+}
+
+// Build a name→card lookup from inventory (supports both old string[] and new {name,pos}[])
+// Indexed by: exact name, "Series Name" compound key, and last name (for 2-word names only).
+const invMap = new Map();
+for (const entry of (D.inventory || [])) {
+  if (typeof entry === 'string') {
+    invMap.set(entry, {pos: '', positions: [], series: ''});
+  } else if (entry && entry.name) {
+    invMap.set(entry.name, entry);
+    // Index by "Series Name" so missions like "Jolt Adam Jones" resolve to the correct card
+    if (entry.series) {
+      const skey = entry.series + ' ' + entry.name;
+      if (!invMap.has(skey)) invMap.set(skey, entry);
+    }
+    // Also index by last name for simple "First Last" lookups only
+    const last = entry.name.split(' ').pop();
+    if (last && !invMap.has(last)) invMap.set(last, entry);
+  }
+}
+function _cardInfo(name) {
+  if (invMap.has(name)) return invMap.get(name);
+  // Last-name fallback only for simple two-word names ("First Last").
+  // Series-prefixed names like "Jolt Adam Jones" must match exactly via the
+  // "Series Name" key above — last-name would be too greedy and match any card.
+  const parts = name.split(' ');
+  if (parts.length <= 2) {
+    const last = parts[parts.length - 1];
+    if (last && invMap.has(last)) return invMap.get(last);
+  }
+  return null;
+}
+function _posBadge(name) {
+  const card = _cardInfo(name);
+  if (!card || !card.positions || !card.positions.length) return '';
+  const primary = card.positions[0];
+  const secondary = card.positions.slice(1);
+  let html = '<span style="font-size:9px;background:#1e3a5f;color:#7dd3fc;'
+    + 'padding:1px 5px;border-radius:3px;font-weight:700;margin-left:4px">'
+    + primary + '</span>';
+  if (secondary.length) {
+    html += '<span style="font-size:9px;color:#475569;margin-left:3px">'
+      + secondary.join('/') + '</span>';
+  }
+  return html;
 }
 
 function _buildLineupLists() {
-  // Use in lineup: has active (incomplete) missions
+  const hasInventory = invMap.size > 0;
+
+  // All players with active stat missions go into useInLineup.
+  // isRepeat=true means they're also eligible for an active REPEATABLE (double value).
+  // When inventory is loaded, gate on ownership.
   const useInLineup = [];
   for (const [name, missions] of activePlayerMap) {
+    if (hasInventory && !_cardInfo(name)) continue;  // not owned — skip
     const sorted = missions.slice().sort(function(a, b) { return b.pct - a.pct; });
-    useInLineup.push({name, best: sorted[0]});
+    useInLineup.push({name, best: sorted[0], isRepeat: repeatableMap.has(name)});
   }
-  useInLineup.sort(function(a, b) { return b.best.pct - a.best.pct; });
+  // Sort: double-dippers first (highest combined value), then by mission progress
+  useInLineup.sort(function(a, b) {
+    if (a.isRepeat !== b.isRepeat) return a.isRepeat ? -1 : 1;
+    return b.best.pct - a.best.pct;
+  });
 
-  // Safe to remove: in donePlayerMap but NOT in activePlayerMap
+  // Safe to remove: all missions done, no active work, no repeatable remaining
   const safeToRemove = [];
   for (const name of donePlayerMap.keys()) {
-    if (!activePlayerMap.has(name)) safeToRemove.push(name);
+    if (!activePlayerMap.has(name) && !repeatableMap.has(name)) safeToRemove.push(name);
   }
-  return {useInLineup, safeToRemove};
+
+  // Repeatable-only: eligible for REPEATABLE but no active stat mission.
+  // Gate on ownership when inventory is loaded.
+  const repeatableOnly = [];
+  for (const [name, missions] of repeatableMap) {
+    if (activePlayerMap.has(name)) continue;  // already in useInLineup
+    if (hasInventory && !_cardInfo(name)) continue;
+    const best = missions.slice().sort(function(a, b) { return b.pct - a.pct; })[0];
+    repeatableOnly.push({name, best});
+  }
+  repeatableOnly.sort(function(a, b) { return b.best.pct - a.best.pct; });
+
+  return {useInLineup, safeToRemove, repeatableOnly};
 }
 
 function renderHome() {
   const content = document.getElementById('content');
-  const {useInLineup, safeToRemove} = _buildLineupLists();
+  const {useInLineup, safeToRemove, repeatableOnly} = _buildLineupLists();
 
   // 10 closest incomplete missions (across all programs), pct > 0
   const closest = allMissionsFlat
@@ -601,22 +765,44 @@ function renderHome() {
   const showRecent = recentlyCompleted.length > 0;
   const recentShow = recentlyCompleted.slice(-10).reverse();
 
-  // Helper: render a lineup player row
-  function lineupRow(name, pct, color) {
+  // Render a lineup player row — shows name, position badge, optional REP badge,
+  // mission goal title, and progress bar.
+  function lineupRow(name, pct, color, goalTitle, isRepeatAlso) {
+    const repBadge = isRepeatAlso
+      ? '<span style="font-size:8px;background:#5b21b6;color:#ddd6fe;padding:1px 5px;'
+        + 'border-radius:2px;font-weight:700;margin-left:4px;vertical-align:middle">REP</span>'
+      : '';
     return '<div class="home-player-row">'
-      + '<span class="home-player-name" style="color:#e2e8f0">&#9733; ' + name + '</span>'
-      + '<div class="home-player-bar"><div style="width:' + pct + '%;height:100%;background:' + color + ';border-radius:2px"></div></div>'
-      + '<span class="home-player-pct" style="color:' + color + '">' + pct + '%</span>'
+      + '<span class="home-player-name" style="color:#e2e8f0;display:flex;align-items:center;flex-wrap:wrap;gap:2px">'
+      +   '&#9733; ' + name + _posBadge(name) + repBadge
+      + '</span>'
+      + '<div style="flex:1;min-width:60px">'
+      +   (goalTitle
+            ? '<div style="font-size:10px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:2px">'
+              + goalTitle + '</div>'
+            : '')
+      +   '<div style="display:flex;align-items:center;gap:4px">'
+      +     '<div class="home-player-bar"><div style="width:' + pct + '%;height:100%;background:' + color + ';border-radius:2px"></div></div>'
+      +     '<span class="home-player-pct" style="color:' + color + '">' + pct + '%</span>'
+      +   '</div>'
+      + '</div>'
       + '</div>';
   }
 
-  // Lineup card HTML
+  // Lineup card HTML — all owned players with active stat missions
   let useHtml = '';
   if (useInLineup.length) {
-    for (const {name, best} of useInLineup) {
+    for (const {name, best, isRepeat} of useInLineup) {
       const pct = best.pct;
-      const c = progColor(pct);
-      useHtml += lineupRow(name, pct, c);
+      const c   = progColor(pct);
+      // If the mission title is just "w/ Name" (no stat prefix), enrich it from
+      // the description: "Tally 500 Parallel XP with All-Star Keith Foulke" → "500 XP w/ Foulke"
+      let goalTitle = best.t || '';
+      if (/^\s*w\/\s/i.test(goalTitle)) {
+        const xpM = (best.d || '').match(/(\d[\d,]*)\s*(?:Parallel\s+)?XP/i);
+        if (xpM) goalTitle = xpM[1].replace(/,/g,'') + ' XP ' + goalTitle.trim();
+      }
+      useHtml += lineupRow(name, pct, c, goalTitle, isRepeat);
     }
   } else {
     useHtml = '<div class="home-empty">No active missions detected</div>';
@@ -632,6 +818,33 @@ function renderHome() {
     }
   } else {
     removeHtml = '<div class="home-empty">None yet</div>';
+  }
+
+  // Helper: render one repeatable-contrib row
+  function repRow(name, best) {
+    const pct = best.pct;
+    const c   = progColor(pct);
+    return '<div class="home-player-row">'
+      + '<span class="home-player-name" style="color:#e2e8f0;display:flex;align-items:center;flex-wrap:wrap;gap:2px">&#9654; ' + name + _posBadge(name) + '</span>'
+      + '<div style="flex:1;min-width:60px">'
+      +   '<div style="font-size:10px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:2px">'
+      +     best.t.replace(/^REPEATABLE:\s*/i, '')
+      +   '</div>'
+      +   '<div style="display:flex;align-items:center;gap:4px">'
+      +     '<div class="home-player-bar"><div style="width:' + pct + '%;height:100%;background:' + c + ';border-radius:2px"></div></div>'
+      +     '<span class="home-player-pct" style="color:' + c + '">' + pct + '%</span>'
+      +   '</div>'
+      + '</div>'
+      + '</div>';
+  }
+
+  let repeatHtml = '';
+  if (repeatableOnly.length) {
+    for (const {name, best} of repeatableOnly) {
+      repeatHtml += repRow(name, best);
+    }
+  } else {
+    repeatHtml = '<div class="home-empty">None detected</div>';
   }
 
   // Mission section HTML
@@ -666,6 +879,10 @@ function renderHome() {
     +   '<div class="home-card">'
     +     '<div class="home-card-title" style="color:#22c55e">&#9654; Use in Lineup</div>'
     +     useHtml
+    +   '</div>'
+    +   '<div class="home-card">'
+    +     '<div class="home-card-title" style="color:#a78bfa">&#9733; Repeatable XP</div>'
+    +     repeatHtml
     +   '</div>'
     +   '<div class="home-card">'
     +     '<div class="home-card-title" style="color:#64748b">&#10003; Safe to Remove</div>'
@@ -710,9 +927,13 @@ for (const grp of OP_GROUP_ORDER) {
   h.textContent = OP_GROUP_LABELS[grp] || grp;
   sidebar.appendChild(h);
   for (const [progName, meta] of progs) {
-    const mlist = meta.missions || [];
-    const pdone = mlist.filter(function(m) { return m.pct >= 100; }).length;
-    const ppct  = mlist.length ? Math.round(pdone / mlist.length * 100) : 0;
+    const mlist   = meta.missions || [];
+    const mNonRep = mlist.filter(function(m) { return !m.t.toUpperCase().startsWith('REPEATABLE'); });
+    const pdone   = mNonRep.filter(function(m) { return m.pct >= 100; }).length;
+    // Prefer real XP progress over mission-count ratio when available
+    const ppct    = (meta.xp_earned != null && meta.xp_total)
+      ? Math.round(meta.xp_earned / meta.xp_total * 100)
+      : (mNonRep.length ? Math.round(pdone / mNonRep.length * 100) : 0);
     const btn   = document.createElement('button');
     btn.className = 'team-btn other-prog-btn';
     btn.dataset.prog = progName;
@@ -765,6 +986,26 @@ function clearActive() {
   document.querySelectorAll('.team-btn, .other-prog-btn').forEach(b => b.classList.remove('active'));
 }
 
+// Returns the bottom fill-bar HTML for a team-banner.
+// milestones: array of numeric XP values [5,10,15,...100]; total: max milestone value.
+function xpBar(pct, milestones, total) {
+  const w = Math.min(Math.max(pct, 0), 100);
+  let ticks = '';
+  if (Array.isArray(milestones) && milestones.length && total > 0) {
+    for (const ms of milestones) {
+      const pos = Math.min(ms / total * 100, 100).toFixed(2);
+      ticks += '<div class="xp-tick" style="left:' + pos + '%">'
+             + '<div class="xp-tick-lbl">' + ms + '</div>'
+             + '</div>';
+    }
+  }
+  return '<div class="xp-fill-wrap">'
+       + '<div class="xp-fill-track"></div>'
+       + '<div class="xp-fill" style="width:' + w + '%"></div>'
+       + ticks
+       + '</div>';
+}
+
 function selectOtherProg(progName) {
   clearActive();
   const btn = document.querySelector('.other-prog-btn[data-prog="' + progName + '"]');
@@ -780,6 +1021,7 @@ function selectOtherProg(progName) {
       '<div class="team-banner" style="--c1:' + (meta.color || '#1e3a5f') + ';--c2:#0d1b2e">' +
         '<div class="banner-info"><h1>' + progName + '</h1>' +
         '<p>' + (meta.desc || '') + '</p></div>' +
+        xpBar(0, [], 0) +
       '</div>' +
       '<div class="live-data-needed">' +
         '<div class="ldn-icon">&#9432;</div>' +
@@ -792,24 +1034,38 @@ function selectOtherProg(progName) {
     return;
   }
 
-  const done    = missions.filter(function(m) { return m.pct >= 100; }).length;
-  const pct     = missions.length ? Math.round(done / missions.length * 100) : 0;
+  const nonRepeat = missions.filter(function(m) { return !m.t.toUpperCase().startsWith('REPEATABLE'); });
+  const done    = nonRepeat.filter(function(m) { return m.pct >= 100; }).length;
+  // Prefer scraped XP path data (actual game progress) over mission-count ratio
+  const xpEarned = meta.xp_earned != null ? meta.xp_earned : null;
+  const xpTotal  = meta.xp_total  != null ? meta.xp_total  : null;
+  const pct = xpEarned != null && xpTotal
+    ? Math.round(xpEarned / xpTotal * 100)
+    : (nonRepeat.length ? Math.round(done / nonRepeat.length * 100) : 0);
+  const ringLabel = xpEarned != null
+    ? ('<span class="rn">' + xpEarned + '</span><span class="rl">' + (xpTotal ? 'of ' + xpTotal : 'XP') + '</span>')
+    : ('<span class="rn">' + pct + '%</span><span class="rl">done</span>');
+  const subLabel = xpEarned != null
+    ? (done + ' / ' + nonRepeat.length + ' missions \u2022 ' + xpEarned + (xpTotal ? ' / ' + xpTotal : '') + ' XP')
+    : (done + ' / ' + nonRepeat.length + ' missions complete');
   const R = 30, circ = Math.round(2 * Math.PI * R);
   const offset  = Math.round(circ * (1 - pct / 100));
 
   content.innerHTML =
     '<div class="team-banner" style="--c1:' + (meta.color || '#1e3a5f') + ';--c2:#0d1b2e">' +
       '<div class="banner-info"><h1>' + progName + '</h1>' +
-      '<p>' + done + ' / ' + missions.length + ' missions complete</p></div>' +
+      '<p>' + subLabel + '</p></div>' +
       '<div class="ring-wrap">' +
       '<svg width="70" height="70" viewBox="0 0 70 70">' +
       '<circle cx="35" cy="35" r="' + R + '" fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="5"/>' +
       '<circle cx="35" cy="35" r="' + R + '" fill="none" stroke="rgba(255,255,255,0.9)" stroke-width="5"' +
       ' stroke-dasharray="' + circ + '" stroke-dashoffset="' + offset + '" stroke-linecap="round"/>' +
       '</svg>' +
-      '<div class="ring-label"><span class="rn">' + pct + '%</span><span class="rl">done</span></div>' +
-      '</div></div>' +
-      '<div id="mission-area"></div>';
+      '<div class="ring-label">' + ringLabel + '</div>' +
+      '</div>' +
+      xpBar(pct, meta.xp_milestones || [], xpTotal || 0) +
+    '</div>' +
+    '<div id="mission-area"></div>';
 
   renderOtherMissions(progName);
 }
@@ -841,8 +1097,9 @@ function renderOtherMissions(progName) {
   const area = document.getElementById('mission-area');
   if (!area) return;
 
-  const allMissions = meta.missions || [];
-  const progDone    = allMissions.filter(function(m) { return m.pct >= 100; }).length;
+  const allMissions    = meta.missions || [];
+  const nonRepMissions = allMissions.filter(function(m) { return !m.t.toUpperCase().startsWith('REPEATABLE'); });
+  const progDone       = nonRepMissions.filter(function(m) { return m.pct >= 100; }).length;
   const ownedCount  = allMissions.filter(function(m) { return missionHasOwnedPlayer(m.t); }).length;
 
   if (!list.length) {
@@ -852,7 +1109,7 @@ function renderOtherMissions(progName) {
 
   let summHtml = '<div class="summary-row">'
     + '<div class="sum-pill">Showing <strong>' + list.length + '</strong> missions</div>'
-    + '<div class="sum-pill"><strong>' + progDone + '</strong> / ' + allMissions.length + ' complete</div>';
+    + '<div class="sum-pill"><strong>' + progDone + '</strong> / ' + nonRepMissions.length + ' complete</div>';
   if (ownedCount > 0) {
     summHtml += '<div class="sum-pill" style="border-color:rgba(245,197,24,0.3);color:#f5c518"><strong>' + ownedCount + '</strong> use your players</div>';
   }
@@ -918,7 +1175,9 @@ function renderContent() {
     + ' stroke-dasharray="' + circ + '" stroke-dashoffset="' + offset + '" stroke-linecap="round"/>'
     + '</svg>'
     + '<div class="ring-label"><span class="rn">' + teamPct + '%</span><span class="rl">done</span></div>'
-    + '</div></div>'
+    + '</div>'
+    + xpBar(teamPct, [], 0)
+    + '</div>'
     + '<div class="prog-tabs">' + tabsHtml + '</div>'
     + '<div id="mission-area"></div>';
 
@@ -932,7 +1191,7 @@ function buildCard(m) {
   const matched  = getMatchedPlayer(m.t);
   const color    = progColor(m.pct);
   // WBC/country moment: "Name - Country" title — badge stays even when complete
-  const isCountryMoment = /^[A-Z][A-Za-z\u00C0-\u024F'-]+(?: [A-Z][A-Za-z\u00C0-\u024F'-]+)+ - [A-Z][a-z]/.test(m.t);
+  const isCountryMoment = /^[A-Z][A-Za-z\\u00C0-\\u024F'-]+(?: [A-Z][A-Za-z\\u00C0-\\u024F'-]+)+\\.?\\s*-\\s*[A-Z][a-z]/.test(m.t);
   // Other moment types: only badge when incomplete (description gone once done)
   const isMoment = isCountryMoment || (!isDone && (
     (m.d && m.d.toLowerCase().includes('moment')) ||
@@ -1062,9 +1321,9 @@ function renderInvList() {
   let html = '';
 
   // ── Auto-detected section (uses activePlayerMap / donePlayerMap) ───────
-  const hasAuto = activePlayerMap.size > 0 || donePlayerMap.size > 0;
+  const hasAuto = activePlayerMap.size > 0 || donePlayerMap.size > 0 || repeatableMap.size > 0;
   if (hasAuto) {
-    const {useInLineup, safeToRemove} = _buildLineupLists();
+    const {useInLineup, safeToRemove, repeatableContribs} = _buildLineupLists();
 
     if (useInLineup.length) {
       html += '<div class="inv-section-hdr" style="color:#22c55e">&#9654; Use in Lineup</div>';
@@ -1072,10 +1331,32 @@ function renderInvList() {
         const pct   = best.pct;
         const color = pct >= 75 ? '#3b9edd' : pct >= 50 ? '#f59e0b' : '#ef4444';
         html += '<div class="inv-player auto-player">'
-          + '<span class="inv-player-name" style="color:#e2e8f0">&#9733; ' + name + '</span>'
+          + '<span class="inv-player-name" style="color:#e2e8f0;display:flex;align-items:center;flex-wrap:wrap;gap:2px">&#9733; ' + name + _posBadge(name) + '</span>'
           + '<div style="flex:1;min-width:0;overflow:hidden">'
           +   '<div style="font-size:11px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'
           +     best.t
+          +   '</div>'
+          +   '<div style="display:flex;align-items:center;gap:6px;margin-top:2px">'
+          +     '<div style="flex:1;height:4px;background:#1e3554;border-radius:2px">'
+          +       '<div style="width:' + pct + '%;height:100%;background:' + color + ';border-radius:2px"></div>'
+          +     '</div>'
+          +     '<span style="font-size:11px;color:' + color + ';white-space:nowrap">' + pct + '%</span>'
+          +   '</div>'
+          + '</div>'
+          + '</div>';
+      }
+    }
+
+    if (repeatableContribs.length) {
+      html += '<div class="inv-section-hdr" style="color:#a78bfa;margin-top:10px">&#9733; Repeatable XP Contributors</div>';
+      for (const {name, best} of repeatableContribs) {
+        const pct   = best.pct;
+        const color = progColor(pct);
+        html += '<div class="inv-player auto-player">'
+          + '<span class="inv-player-name" style="color:#e2e8f0;display:flex;align-items:center;flex-wrap:wrap;gap:2px">&#9654; ' + name + _posBadge(name) + '</span>'
+          + '<div style="flex:1;min-width:0;overflow:hidden">'
+          +   '<div style="font-size:11px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'
+          +     best.t.replace(/^REPEATABLE:\\s*/i, '')
           +   '</div>'
           +   '<div style="display:flex;align-items:center;gap:6px;margin-top:2px">'
           +     '<div style="flex:1;height:4px;background:#1e3554;border-radius:2px">'
@@ -1153,5 +1434,4 @@ out_path = os.path.join(SCRIPT_DIR, 'MLB Team Affinity Tracker.html')
 with open(out_path, 'w', encoding='utf-8') as f:
     f.write(html)
 
-import os
-print('Done! Size:', os.path.getsize('C:/Users/jeffr/Claude/MLB Team Affinity Tracker.html'), 'bytes')
+print('Done! Size:', os.path.getsize(out_path), 'bytes')
