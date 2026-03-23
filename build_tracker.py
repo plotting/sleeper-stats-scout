@@ -24,6 +24,7 @@ print(f'Using live data from: {live_source}')
 app_data = {
     'divisions':      live.get('divisions', {}),
     'missions':       missions_data,
+    'team_xp':        live.get('team_xp', {}),
     'colors':         live.get('colors', {}),
     'other_programs': other_programs,
     'inventory':      inventory_data,
@@ -1143,7 +1144,17 @@ function selectTeam(team) {
 function switchProg(btn) {
   curProg = btn.dataset.prog;
   document.querySelectorAll('.ptab').forEach(t => t.classList.toggle('active', t.dataset.prog === curProg));
+  const xpEl = document.getElementById('team-xp-bar');
+  if (xpEl) xpEl.innerHTML = teamXpBar();
   renderMissions();
+}
+
+// Returns the xpBar HTML for the current team + prog tab.
+function teamXpBar() {
+  const txp = (D.team_xp && D.team_xp[curTeam]) ? D.team_xp[curTeam][curProg] : null;
+  if (!txp || txp.xp_total == null) return xpBar(0, [], 0);
+  const pct = Math.round(txp.xp_earned / txp.xp_total * 100);
+  return xpBar(pct, txp.xp_milestones || [], txp.xp_total);
 }
 
 // ── Render content area ────────────────────────────────────────────────────
@@ -1176,7 +1187,7 @@ function renderContent() {
     + '</svg>'
     + '<div class="ring-label"><span class="rn">' + teamPct + '%</span><span class="rl">done</span></div>'
     + '</div>'
-    + xpBar(teamPct, [], 0)
+    + '<div id="team-xp-bar">' + teamXpBar() + '</div>'
     + '</div>'
     + '<div class="prog-tabs">' + tabsHtml + '</div>'
     + '<div id="mission-area"></div>';

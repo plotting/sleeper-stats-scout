@@ -1307,6 +1307,7 @@ def main():
 
     # 4. Fetch and parse each program
     team_missions:  dict[str, dict[str, list]] = {}
+    team_xp:        dict[str, dict[str, dict]] = {}   # team -> prog_type -> {xp_earned,xp_total,xp_milestones}
     other_prog_raw: dict[str, dict]            = {}   # name -> {group, missions}
     total = len(links)
 
@@ -1346,6 +1347,7 @@ def main():
             "divisions":       DIVISIONS,
             "colors":          TEAM_COLORS,
             "missions":        team_out,
+            "team_xp":         team_xp,
             "other_programs":  op_html,
             "inventory":       inventory_snap or [],
             "data_source":     "live",
@@ -1486,6 +1488,11 @@ def main():
         prog_type = "Color Storm" if is_cs else "My Journey"
         if team:
             team_missions.setdefault(team, {}).setdefault(prog_type, []).extend(missions)
+            xp_milestones = result.get("xp_milestones", [])
+            txp = team_xp.setdefault(team, {}).setdefault(prog_type, {})
+            if xp_earned    is not None: txp["xp_earned"]     = xp_earned
+            if xp_total     is not None: txp["xp_total"]      = xp_total
+            if xp_milestones:            txp["xp_milestones"] = xp_milestones
         else:
             if   re.search(r'xp.*(path|reward)|1st inning', h1l, re.I):
                 group, prog_key = "xp_path",    h1 or "1st Inning XP Path"
