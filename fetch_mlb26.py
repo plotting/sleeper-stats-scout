@@ -943,11 +943,12 @@ def extract_program_xp(html_body: str) -> tuple:
             ))
             return (earned_tl, max(milestone_vals) if milestone_vals else None, milestone_vals)
 
-    # Strategy 1c: Fully-complete programs (earned == max) have no <li class="partial">
-    # because there is no in-between position to mark.  Detect by collecting all
-    # counting <li>s with their class attrs + label values; if every one has "active"
-    # in its class string, all milestones are earned → earned = max(milestones).
-    # Secondary: explicit "N <img alt='xp'> Earned" header also accepted.
+    # Strategy 1c: Programs without a partial <li> — either not started, or earned
+    # lands exactly on a milestone boundary (including fully complete).
+    # Collect all counting <li>s with class attrs + label values, then:
+    #   earned = max label among active lis  (0 if none are active yet)
+    #   total  = max of all milestone labels
+    # Approach (a) overrides with an explicit "N <img alt='xp'> Earned" header if present.
     _counting_data = re.findall(
         r"""<li([^>]+class=["'][^"']*counting[^"']*["'][^>]*)>\s*"""
         r"""<div[^>]+class=["'][^"']*label[^"']*["'][^>]*>\s*(\d[\d,]*)""",
@@ -961,9 +962,12 @@ def extract_program_xp(html_body: str) -> tuple:
                 html_body, re.IGNORECASE)
             if _m_xp:
                 return (int(_m_xp.group(1).replace(',', '')), max(_ms_1c), _ms_1c)
-            # Approach (b): structural — every counting li has "active" class
-            if all('active' in attrs for attrs, _ in _counting_data):
-                return (max(_ms_1c), max(_ms_1c), _ms_1c)
+            # Approach (b): infer earned from the highest active milestone boundary.
+            # Covers: 0% (no active lis), mid-path at a boundary, and fully complete.
+            _active_vals = [int(v.replace(',', '')) for attrs, v in _counting_data
+                            if 'active' in attrs]
+            _earned_1c = max(_active_vals) if _active_vals else 0
+            return (_earned_1c, max(_ms_1c), _ms_1c)
 
     # Strategy 2: "75 / 100 XP" or "75 of 100 XP" — the format visible on the XP path page
     m_slash = re.search(
