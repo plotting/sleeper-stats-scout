@@ -1415,11 +1415,17 @@ def main():
             _xp_incomplete = (
                 _xp_e is not None and _xp_t is not None and _xp_e < _xp_t
             )
+            # Milestone data is bad if the key is absent or stored as None.
+            # Treat both the same: one-time re-fetch for any program type.
+            _ms_bad = (
+                "xp_milestones" not in cached
+                or cached.get("xp_milestones") is None
+            )
             _needs_xp_refresh = (
-                normalize_team(_h1c) is None          # not a team program
-                and (
-                    "xp_milestones" not in cached     # cache predates feature
-                    or _xp_incomplete                 # missions done but XP still earning
+                _ms_bad                               # milestones missing/None (any program)
+                or (
+                    normalize_team(_h1c) is None      # non-team: also re-fetch if XP incomplete
+                    and _xp_incomplete
                 )
             )
             if not _needs_xp_refresh:
