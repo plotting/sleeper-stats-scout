@@ -1345,6 +1345,7 @@ def main():
             if "xp_earned"     in pd: e["xp_earned"]     = pd["xp_earned"]
             if "xp_total"      in pd: e["xp_total"]      = pd["xp_total"]
             if "xp_milestones" in pd: e["xp_milestones"] = pd["xp_milestones"]
+            if "complete"      in pd: e["complete"]       = pd["complete"]
             op_html[pn] = e
 
         data = {
@@ -1520,6 +1521,9 @@ def main():
                 other_prog_raw[prog_key]["xp_total"]  = xp_total
             if xp_milestones and "xp_milestones" not in other_prog_raw[prog_key]:
                 other_prog_raw[prog_key]["xp_milestones"] = xp_milestones
+            # Track completion so the dashboard can exclude done programs
+            if result.get("complete"):
+                other_prog_raw[prog_key]["complete"] = True
 
     # Submit all programs, process + flush incrementally as results arrive
     FLUSH_SECS     = 8     # rebuild tracker at most this often during the run

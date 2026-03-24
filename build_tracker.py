@@ -486,11 +486,21 @@ function _addTo(map, name, m) {
 // ── Flat mission list (all programs) ──────────────────────────────────────
 function getAllMissionsFlat() {
   const all = [];
-  for (const progs of Object.values(D.missions)) {
-    for (const arr of Object.values(progs)) { for (const m of arr) all.push(m); }
+  // Team missions — tag with team name, prog type, and whether the program is complete
+  for (const [team, progs] of Object.entries(D.missions)) {
+    for (const [progType, arr] of Object.entries(progs)) {
+      const nonRep = arr.filter(function(m) { return !m.t.toUpperCase().startsWith('REPEATABLE'); });
+      const progDone = nonRep.length > 0 && nonRep.every(function(m) { return m.pct >= 100; });
+      for (const m of arr) {
+        all.push(Object.assign({}, m, {_team: team, _prog: progType, _progDone: progDone}));
+      }
+    }
   }
-  for (const pd of Object.values(D.other_programs || {})) {
-    for (const m of (pd.missions || [])) all.push(m);
+  // Other (themed / XP path) programs
+  for (const [pn, pd] of Object.entries(D.other_programs || {})) {
+    for (const m of (pd.missions || [])) {
+      all.push(Object.assign({}, m, {_prog: pn, _progDone: !!pd.complete}));
+    }
   }
   return all;
 }
@@ -534,9 +544,10 @@ function buildAutoInventory() {
 
   // Pass 1b: REPEATABLE missions — parse eligible player names from descriptions.
   // If a REPEATABLE has any progress, those players contribute XP to it.
+  // Skip REPEATABLEs belonging to programs that are already complete.
   for (const m of allMissionsFlat) {
     const isRep = m.t.startsWith('REPEATABLE') || (m.d || '').startsWith('REPEATABLE');
-    if (!isRep || m.pct <= 0 || m.pct >= 100) continue;
+    if (!isRep || m.pct <= 0 || m.pct >= 100 || m._progDone) continue;
     for (const pname of _repeatablePlayers(m)) {
       if (!repeatableMap.has(pname)) repeatableMap.set(pname, []);
       repeatableMap.get(pname).push(m);
@@ -756,9 +767,13 @@ function renderHome() {
   const content = document.getElementById('content');
   const {useInLineup, safeToRemove, repeatableOnly} = _buildLineupLists();
 
-  // 10 closest incomplete missions (across all programs), pct > 0
+  // 10 closest incomplete missions — skip completed programs and REPEATABLEs
   const closest = allMissionsFlat
-    .filter(function(m) { return m.pct < 100 && m.pct > 0; })
+    .filter(function(m) {
+      return m.pct < 100 && m.pct > 0
+        && !m._progDone
+        && !m.t.toUpperCase().startsWith('REPEATABLE');
+    })
     .sort(function(a, b) { return b.pct - a.pct; })
     .slice(0, 10);
 
@@ -1420,8 +1435,39 @@ function renderInvList() {
   el.innerHTML = html;
 }
 
+// ── Global search ──────────────────────────────────────────────────────────
+function renderSearchResults(q) {
+  const content = document.getElementById('content');
+  const lq = q.toLowerCase();
+  const hits = allMissionsFlat.filter(function(m) {
+    return m.t.toLowerCase().includes(lq) || (m.d || '').toLowerCase().includes(lq);
+  });
+  if (!hits.length) {
+    content.innerHTML = '<div style="padding:32px;color:var(--muted)">No missions match &ldquo;' + q + '&rdquo;</div>';
+    return;
+  }
+  // Group by program/team context
+  const groups = new Map();
+  for (const m of hits) {
+    const label = m._team ? m._team + ' — ' + m._prog : (m._prog || 'Other');
+    if (!groups.has(label)) groups.set(label, []);
+    groups.get(label).push(m);
+  }
+  let html = '<div style="padding:12px 0 4px 2px;font-size:12px;color:var(--muted)">'
+           + hits.length + ' result' + (hits.length !== 1 ? 's' : '') + ' for &ldquo;' + q + '&rdquo;</div>';
+  for (const [label, missions] of groups) {
+    html += '<div style="margin-bottom:6px;padding:6px 10px;background:rgba(255,255,255,0.04);'
+          + 'border-radius:6px;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em">'
+          + label + '</div>';
+    html += '<div class="mission-grid">' + missions.map(buildCard).join('') + '</div>';
+  }
+  content.innerHTML = html;
+}
+
 // ── Wire controls ──────────────────────────────────────────────────────────
 function rerender() {
+  const q = document.getElementById('search').value.trim();
+  if (q) { renderSearchResults(q); return; }
   if (curTeam) renderMissions();
   else if (curProg) renderOtherMissions(curProg);
   else renderHome();
