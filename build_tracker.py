@@ -330,6 +330,23 @@ body { font-family: "Segoe UI", Arial, sans-serif; background: var(--bg); color:
 .complete-divider::before, .complete-divider::after {
   content: ''; flex: 1; height: 1px; background: rgba(34,197,94,0.2);
 }
+/* AFFINITY GRID */
+.ag-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+.ag-table { border-collapse: collapse; width: 100%; font-size: 12px; }
+.ag-th { padding: 9px 12px; background: var(--surface2); color: var(--muted); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; cursor: pointer; user-select: none; white-space: nowrap; border-bottom: 1px solid var(--border); text-align: left; }
+.ag-th:hover { color: var(--text); }
+.ag-team-col { min-width: 140px; }
+.ag-row:hover td { background: rgba(255,255,255,0.03); }
+.ag-row:not(:last-child) td { border-bottom: 1px solid rgba(30,53,84,0.5); }
+.ag-td { padding: 7px 12px; vertical-align: middle; min-width: 90px; }
+.ag-done { background: rgba(34,197,94,0.06); }
+.ag-check { color: #22c55e; font-size: 13px; font-weight: 700; line-height: 1; }
+.ag-prog-txt { font-size: 11px; font-weight: 600; line-height: 1.3; margin-bottom: 3px; }
+.ag-prog-done { color: rgba(34,197,94,0.45); font-size: 10px; }
+.ag-zero .ag-prog-txt { color: var(--muted); }
+.ag-empty { color: var(--muted); text-align: center; }
+.ag-bar-track { height: 4px; background: rgba(255,255,255,0.07); border-radius: 2px; overflow: hidden; margin-top: 2px; }
+.ag-bar-fill { height: 100%; border-radius: 2px; }
 </style>
 </head>
 <body>
@@ -679,6 +696,14 @@ function selectHome() {
   renderHome();
   window.scrollTo(0, 0);
 }
+function selectAffinityGrid() {
+  clearActive();
+  curTeam = null; curProg = null;
+  const gb = document.getElementById('grid-btn');
+  if (gb) gb.classList.add('active');
+  renderAffinityGrid();
+  window.scrollTo(0, 0);
+}
 
 // Build a name→card lookup from inventory (supports both old string[] and new {name,pos}[])
 // Indexed by: exact name, "Series Name" compound key, and last name (for 2-word names only).
@@ -922,6 +947,12 @@ homeBtn.className = 'team-btn';
 homeBtn.innerHTML = '<span style="font-size:13px;margin-right:2px">&#8962;</span><span style="flex:1">Dashboard</span>';
 homeBtn.addEventListener('click', selectHome);
 sidebar.appendChild(homeBtn);
+const gridBtn = document.createElement('button');
+gridBtn.id = 'grid-btn';
+gridBtn.className = 'team-btn';
+gridBtn.innerHTML = '<span style="font-size:13px;margin-right:6px">&#9776;</span><span style="flex:1">Affinity Grid</span>';
+gridBtn.addEventListener('click', selectAffinityGrid);
+sidebar.appendChild(gridBtn);
 const homeDivSep = document.createElement('div');
 homeDivSep.style.cssText = 'height:1px;background:var(--border);margin:6px 14px 4px;';
 sidebar.appendChild(homeDivSep);
@@ -997,6 +1028,7 @@ for (const [div, teams] of Object.entries(D.divisions)) {
 // ── State ──────────────────────────────────────────────────────────────────
 let curTeam = null;
 let curProg = null;
+let affinitySort = { col: '__overall', dir: 'asc' };
 
 function clearActive() {
   document.querySelectorAll('.team-btn, .other-prog-btn').forEach(b => b.classList.remove('active'));
@@ -1251,6 +1283,77 @@ function progColor(pct) {
   return '#ef4444';
 }
 
+// ── Affinity Grid ───────────────────────────────────────────────────────────
+const STAT_KEYS = ['Hits','HR','Runs','TB','Win','Ks','IP'];
+const STAT_TITLE_MAP = {'hits':'Hits','hr':'HR','runs':'Runs','tb':'TB','win':'Win','ks':'Ks','ip':'IP'};
+function statKeyFromTitle(t) {
+  const prefix = t.split(' w/ ')[0].trim().toLowerCase();
+  return STAT_TITLE_MAP[prefix] || null;
+}
+function buildAffinityData() {
+  const result = {};
+  for (const [team, progs] of Object.entries(D.missions)) {
+    result[team] = {};
+    for (const key of STAT_KEYS) result[team][key] = null;
+    for (const m of (progs['My Journey'] || [])) {
+      const key = statKeyFromTitle(m.t);
+      if (!key) continue;
+      const parts = m.p.split('/');
+      const cur = parseInt(parts[0], 10);
+      const tot = parseInt((parts[1] || '').split(' ')[0], 10);
+      result[team][key] = { cur: isNaN(cur) ? 0 : cur, total: isNaN(tot) ? 0 : tot, pct: m.pct };
+    }
+    const cells = STAT_KEYS.map(function(k) { return result[team][k]; }).filter(Boolean);
+    result[team].__overall = cells.length ? cells.reduce(function(s,c){ return s+c.pct; }, 0) / cells.length : 0;
+  }
+  return result;
+}
+function affinityCell(cell) {
+  if (!cell) return '<td class="ag-td ag-empty"><span class="ag-na">\u2014</span></td>';
+  if (cell.pct >= 100) {
+    return '<td class="ag-td ag-done">'
+      + '<div class="ag-check">&#10003;</div>'
+      + '<div class="ag-prog-txt ag-prog-done">' + cell.cur + '/' + cell.total + '</div>'
+      + '</td>';
+  }
+  const color = progColor(cell.pct);
+  const isZero = cell.pct === 0;
+  return '<td class="ag-td' + (isZero ? ' ag-zero' : '') + '">'
+    + '<div class="ag-prog-txt" style="color:' + (isZero ? 'var(--muted)' : color) + '">' + cell.cur + '/' + cell.total + '</div>'
+    + '<div class="ag-bar-track"><div class="ag-bar-fill" style="width:' + Math.min(cell.pct,100) + '%;background:' + (isZero ? 'rgba(255,255,255,0.06)' : color) + '"></div></div>'
+    + '</td>';
+}
+function affinityHeaderClick(col) {
+  if (affinitySort.col === col) { affinitySort.dir = affinitySort.dir === 'asc' ? 'desc' : 'asc'; }
+  else { affinitySort.col = col; affinitySort.dir = 'asc'; }
+  renderAffinityGrid();
+}
+function renderAffinityGrid() {
+  const content = document.getElementById('content');
+  const data = buildAffinityData();
+  let teams = Object.keys(data);
+  const col = affinitySort.col, dir = affinitySort.dir;
+  teams.sort(function(a, b) {
+    const va = col === '__overall' ? data[a].__overall : (data[a][col] ? data[a][col].pct : -1);
+    const vb = col === '__overall' ? data[b].__overall : (data[b][col] ? data[b][col].pct : -1);
+    return va !== vb ? (dir === 'asc' ? va - vb : vb - va) : a.localeCompare(b);
+  });
+  function sortInd(c) { return affinitySort.col === c ? (affinitySort.dir === 'asc' ? ' &#9650;' : ' &#9660;') : ''; }
+  let thead = '<tr><th class="ag-th ag-team-col" onclick="affinityHeaderClick(\'__overall\')">Team' + sortInd('__overall') + '</th>';
+  for (const key of STAT_KEYS) thead += '<th class="ag-th" onclick="affinityHeaderClick(\'' + key + '\')">' + key + sortInd(key) + '</th>';
+  thead += '</tr>';
+  let tbody = '';
+  for (const team of teams) {
+    const c1 = D.colors[team] ? D.colors[team][0] : '#3b9edd';
+    tbody += '<tr class="ag-row"><td class="ag-td ag-team-col"><span class="team-dot" style="background:' + c1 + ';display:inline-block;vertical-align:middle;margin-right:6px"></span>' + team + '</td>';
+    for (const key of STAT_KEYS) tbody += affinityCell(data[team][key]);
+    tbody += '</tr>';
+  }
+  content.innerHTML = '<div class="home-banner" style="margin-bottom:14px">'
+    + '<div><h1>Affinity Grid</h1><p>My Journey stats across all 30 teams &bull; click a column header to sort</p></div></div>'
+    + '<div class="ag-wrap"><table class="ag-table"><thead>' + thead + '</thead><tbody>' + tbody + '</tbody></table></div>';
+}
+
 function renderMissions() {
   if (!curTeam || !curProg) return;
   let list = (D.missions[curTeam][curProg] || []).slice();
@@ -1470,6 +1573,7 @@ function rerender() {
   if (q) { renderSearchResults(q); return; }
   if (curTeam) renderMissions();
   else if (curProg) renderOtherMissions(curProg);
+  else if (document.getElementById('grid-btn') && document.getElementById('grid-btn').classList.contains('active')) renderAffinityGrid();
   else renderHome();
 }
 document.getElementById('search').addEventListener('input', rerender);
