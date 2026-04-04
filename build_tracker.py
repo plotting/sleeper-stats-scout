@@ -1339,8 +1339,8 @@ function renderAffinityGrid() {
     return va !== vb ? (dir === 'asc' ? va - vb : vb - va) : a.localeCompare(b);
   });
   function sortInd(c) { return affinitySort.col === c ? (affinitySort.dir === 'asc' ? ' &#9650;' : ' &#9660;') : ''; }
-  let thead = '<tr><th class="ag-th ag-team-col" onclick="affinityHeaderClick(\'__overall\')">Team' + sortInd('__overall') + '</th>';
-  for (const key of STAT_KEYS) thead += '<th class="ag-th" onclick="affinityHeaderClick(\'' + key + '\')">' + key + sortInd(key) + '</th>';
+  let thead = '<tr><th class="ag-th ag-team-col" onclick="affinityHeaderClick(&apos;__overall&apos;)">Team' + sortInd('__overall') + '</th>';
+  for (const key of STAT_KEYS) thead += '<th class="ag-th" onclick="affinityHeaderClick(&apos;' + key + '&apos;)">' + key + sortInd(key) + '</th>';
   thead += '</tr>';
   let tbody = '';
   for (const team of teams) {
