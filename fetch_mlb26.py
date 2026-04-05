@@ -1423,11 +1423,8 @@ def main():
                 or cached.get("xp_milestones") is None
             )
             _needs_xp_refresh = (
-                _ms_bad                               # milestones missing/None (any program)
-                or (
-                    normalize_team(_h1c) is None      # non-team: also re-fetch if XP incomplete
-                    and _xp_incomplete
-                )
+                _ms_bad          # milestones missing/None (any program)
+                or _xp_incomplete  # XP still earning — re-fetch regardless of team/non-team
             )
             if not _needs_xp_refresh:
                 with _prog_print_lock:
