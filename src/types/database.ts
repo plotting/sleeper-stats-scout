@@ -1,5 +1,5 @@
 
-import type { Database } from './supabase';
+import type { Database } from '@/integrations/supabase/types';
 
 // Re-export types for table rows
 export type Team = Database['public']['Tables']['teams']['Row'];
