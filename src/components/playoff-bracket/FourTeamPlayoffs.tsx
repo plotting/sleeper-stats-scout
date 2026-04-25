@@ -167,6 +167,8 @@ const FourTeamPlayoffs: React.FC<FourTeamPlayoffsProps> = ({
     } : null,
   ].filter(Boolean);
 
+  const hasConsolation = consolationSemiFinalsData.length > 0 || placementGames.length > 0;
+
   return (
     <div className="overflow-auto">
       <div className="flex flex-col min-w-[800px]">
@@ -184,29 +186,6 @@ const FourTeamPlayoffs: React.FC<FourTeamPlayoffsProps> = ({
               onScoreUpdate={onScoreUpdate}
               teams={teams}
             />
-
-            {/* Consolation Semifinals */}
-            {consolationSemiFinalsData.length > 0 && (
-              <div className="mt-10">
-                {/* Full width divider with text */}
-                <div className="w-full mb-6">
-                  <div className="flex items-center justify-center">
-                    <div className="h-px bg-border flex-grow"></div>
-                    <span className="px-4 text-sm text-muted-foreground font-medium">Consolation Bracket</span>
-                    <div className="h-px bg-border flex-grow"></div>
-                  </div>
-                </div>
-                
-                <BracketSection
-                  title="Consolation Matchups"
-                  matchups={consolationSemiFinalsData}
-                  editMode={editMode}
-                  onTeamSelect={onTeamSelect}
-                  onScoreUpdate={onScoreUpdate}
-                  teams={teams}
-                />
-              </div>
-            )}
           </div>
 
           {/* Right Column */}
@@ -232,27 +211,50 @@ const FourTeamPlayoffs: React.FC<FourTeamPlayoffsProps> = ({
                 teams={teams}
               />
             )}
-
-            {/* Consolation Placement Games */}
-            {placementGames.length > 0 && (
-              <div>
-                <div className="space-y-12 mt-10">
-                  {placementGames.map((game, index) => (
-                    <BracketSection
-                      key={`placement-${index}`}
-                      title={game.title}
-                      matchups={game.data}
-                      editMode={editMode}
-                      onTeamSelect={onTeamSelect}
-                      onScoreUpdate={onScoreUpdate}
-                      teams={teams}
-                    />
-                  ))}
-                </div>
-              </div>
-            )}
           </div>
         </div>
+
+        {/* Full width Consolation Bracket divider */}
+        {hasConsolation && (
+          <div className="w-full mt-10 mb-6">
+            <div className="flex items-center justify-center">
+              <div className="h-px bg-border flex-grow"></div>
+              <span className="px-4 text-sm text-muted-foreground font-medium">Consolation Bracket</span>
+              <div className="h-px bg-border flex-grow"></div>
+            </div>
+          </div>
+        )}
+
+        {/* Consolation Bracket content */}
+        {hasConsolation && (
+          <div className="grid grid-cols-2 gap-8">
+            <div className="space-y-12">
+              {consolationSemiFinalsData.length > 0 && (
+                <BracketSection
+                  title="Consolation Matchups"
+                  matchups={consolationSemiFinalsData}
+                  editMode={editMode}
+                  onTeamSelect={onTeamSelect}
+                  onScoreUpdate={onScoreUpdate}
+                  teams={teams}
+                />
+              )}
+            </div>
+            <div className="space-y-12">
+              {placementGames.map((game, index) => (
+                <BracketSection
+                  key={`placement-${index}`}
+                  title={game.title}
+                  matchups={game.data}
+                  editMode={editMode}
+                  onTeamSelect={onTeamSelect}
+                  onScoreUpdate={onScoreUpdate}
+                  teams={teams}
+                />
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
