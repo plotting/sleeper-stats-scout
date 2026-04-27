@@ -11,20 +11,33 @@ export const getPlayoffMatchups = (matchups: MatchupScoresView[]): MatchupScores
 };
 
 /**
- * Get wildcard matchups (week 15) - for 5-team format
+ * Get wildcard matchups (week 15) - excludes the 1-seed's game
  */
-export const getWildcardGames = (playoffMatchups: MatchupScoresView[]): MatchupScoresView[] => {
+export const getWildcardGames = (
+  playoffMatchups: MatchupScoresView[],
+  teamSeeds: Map<number, number>,
+): MatchupScoresView[] => {
+  const seedOneId = [...teamSeeds.entries()].find(([, s]) => s === 1)?.[0];
   return playoffMatchups.filter(
-    (matchup) => matchup.week_number === 15 && matchup.home_team_id !== 1
+    (m) =>
+      m.week_number === 15 &&
+      m.home_team_id !== seedOneId &&
+      m.away_team_id !== seedOneId,
   );
 };
 
 /**
  * Get semifinal matchup with the 1 seed (week 15)
  */
-export const getSeedOneSemifinal = (playoffMatchups: MatchupScoresView[]): MatchupScoresView | undefined => {
+export const getSeedOneSemifinal = (
+  playoffMatchups: MatchupScoresView[],
+  teamSeeds: Map<number, number>,
+): MatchupScoresView | undefined => {
+  const seedOneId = [...teamSeeds.entries()].find(([, s]) => s === 1)?.[0];
   return playoffMatchups.find(
-    (matchup) => matchup.week_number === 15 && matchup.home_team_id === 1
+    (m) =>
+      m.week_number === 15 &&
+      (m.home_team_id === seedOneId || m.away_team_id === seedOneId),
   );
 };
 

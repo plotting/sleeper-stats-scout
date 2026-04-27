@@ -9,6 +9,7 @@ import Trades from "./pages/Trades";
 import HeadToHead from "./pages/HeadToHead";
 import Records from "./pages/Records";
 import WeeklyRecords from "./pages/WeeklyRecords";
+import Admin from "./pages/Admin";
 import NotFound from "./pages/NotFound";
 import "./App.css";
 
@@ -38,6 +39,7 @@ function App() {
               <Route path="/head-to-head" element={<HeadToHead />} />
               <Route path="/records" element={<Records />} />
               <Route path="/weekly-records" element={<WeeklyRecords />} />
+              <Route path="/admin" element={<Admin />} />
               <Route path="*" element={<NotFound />} />
             </Routes>
           </main>

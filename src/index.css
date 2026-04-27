@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,300..800;1,14..32,300..700&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -8,24 +8,24 @@
   :root {
     --background: 240 10% 3.9%;
     --foreground: 0 0% 98%;
-    --card: 240 10% 3.9%;
+    --card: 240 10% 5%;
     --card-foreground: 0 0% 98%;
-    --popover: 240 10% 3.9%;
+    --popover: 240 12% 8%;
     --popover-foreground: 0 0% 98%;
-    --primary: 263 84% 50%;
+    --primary: 217 91% 60%;
     --primary-foreground: 0 0% 98%;
-    --secondary: 217 91% 60%;
+    --secondary: 160 84% 39%;
     --secondary-foreground: 0 0% 98%;
-    --muted: 240 3.7% 15.9%;
-    --muted-foreground: 240 5% 64.9%;
-    --accent: 240 3.7% 15.9%;
+    --muted: 240 6% 14%;
+    --muted-foreground: 240 5% 56%;
+    --accent: 240 6% 14%;
     --accent-foreground: 0 0% 98%;
-    --destructive: 0 62.8% 30.6%;
+    --destructive: 0 63% 45%;
     --destructive-foreground: 0 0% 98%;
-    --border: 240 3.7% 15.9%;
-    --input: 240 3.7% 15.9%;
-    --ring: 240 4.9% 83.9%;
-    --radius: 0.5rem;
+    --border: 240 6% 14%;
+    --input: 240 6% 14%;
+    --ring: 217 91% 60%;
+    --radius: 0.625rem;
   }
 }
 
@@ -33,19 +33,86 @@
   * {
     @apply border-border;
   }
+
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
   body {
-    @apply bg-[#1E1E2E] text-foreground font-['Inter'];
+    background-color: #0f0f1a;
+    @apply text-foreground font-['Inter'];
+    background-image:
+      radial-gradient(ellipse 80% 50% at 50% -20%, rgba(59, 130, 246, 0.07), transparent),
+      radial-gradient(ellipse 60% 40% at 80% 80%, rgba(16, 185, 129, 0.04), transparent);
+    background-attachment: fixed;
+  }
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
+}
+
+@layer utilities {
+  .gradient-text {
+    background: linear-gradient(135deg, #60a5fa 0%, #34d399 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .gradient-border {
+    position: relative;
+  }
+  .gradient-border::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding: 1px;
+    background: linear-gradient(135deg, rgba(96,165,250,0.3), rgba(52,211,153,0.3));
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    pointer-events: none;
+  }
+
+  .glass {
+    background: rgba(255, 255, 255, 0.04);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
   }
 }
 
+/* Component overrides */
 .stat-card {
-  @apply bg-card p-6 rounded-lg shadow-lg hover:shadow-xl transition-all duration-300;
+  @apply rounded-xl border border-white/10 bg-white/5 p-5 transition-all duration-200 hover:bg-white/10 hover:border-white/20;
 }
 
 .stat-value {
-  @apply text-2xl font-bold text-primary;
+  @apply text-2xl font-bold text-white;
 }
 
 .stat-label {
-  @apply text-sm text-muted-foreground;
+  @apply text-xs text-slate-500 uppercase tracking-wider;
+}
+
+/* Table improvements */
+table thead tr {
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+table tbody tr {
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  transition: background-color 0.15s;
+}
+table tbody tr:hover {
+  background-color: rgba(255,255,255,0.03);
+}
+
+/* Card base */
+.card {
+  background: rgba(255,255,255,0.03);
+  border-color: rgba(255,255,255,0.08);
 }
