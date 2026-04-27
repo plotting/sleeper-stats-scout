@@ -78,10 +78,10 @@ const BracketSection: React.FC<BracketSectionProps> = ({
           <div key={`${title.toLowerCase()}-${index}`} className="mx-auto w-[240px]">
             <Matchup
               matchupId={matchup.matchupId}
-              homeTeam={matchup.homeSeed ? `(${matchup.homeSeed}) ${matchup.homeTeam}` : matchup.homeTeam}
+              homeTeam={matchup.homeTeam}
               homeTeamId={matchup.homeTeamId}
               homeScore={matchup.homeScore}
-              awayTeam={matchup.awaySeed ? `(${matchup.awaySeed}) ${matchup.awayTeam}` : matchup.awayTeam}
+              awayTeam={matchup.awayTeam}
               awayTeamId={matchup.awayTeamId}
               awayScore={matchup.awayScore}
               isConsolation={matchup.isConsolation}

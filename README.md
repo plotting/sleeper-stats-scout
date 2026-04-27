@@ -1,69 +1,50 @@
-# Welcome to your Lovable project
+# Matzie's Dynasty League
 
-## Project info
+A dynasty fantasy football league dashboard tracking 13+ seasons of standings, stats, playoffs, trades, and draft history. Integrated with the Sleeper API for automatic data sync into Supabase.
 
-**URL**: https://lovable.dev/projects/1af7d40c-dc39-4db9-b1d3-3648cc2f0beb
+## Tech Stack
 
-## How can I edit this code?
+- **React 18** + **TypeScript** — frontend framework
+- **Vite** — build tool
+- **Tailwind CSS** + **shadcn/ui** — styling and components
+- **TanStack React Query** — data fetching and caching
+- **Supabase** — PostgreSQL database backend
+- **Sleeper API** — fantasy league data source
+- **Recharts** — data visualization
 
-There are several ways of editing your application.
-
-**Use Lovable**
-
-Simply visit the [Lovable Project](https://lovable.dev/projects/1af7d40c-dc39-4db9-b1d3-3648cc2f0beb) and start prompting.
-
-Changes made via Lovable will be committed automatically to this repo.
-
-**Use your preferred IDE**
-
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
-
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
-
-Follow these steps:
+## Getting Started
 
 ```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
-
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
-
-# Step 3: Install the necessary dependencies.
-npm i
-
-# Step 4: Start the development server with auto-reloading and an instant preview.
+npm install
 npm run dev
 ```
 
-**Edit a file directly in GitHub**
+The app runs on `http://localhost:8080`.
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+## Environment
 
-**Use GitHub Codespaces**
+Create a `.env` file with your Supabase credentials:
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
+```
+VITE_SUPABASE_URL=your_supabase_url
+VITE_SUPABASE_ANON_KEY=your_anon_key
+```
 
-## What technologies are used for this project?
+## Sleeper Sync
 
-This project is built with .
+Navigate to `/admin` in the app to sync data from the Sleeper API. The sync page lets you:
 
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
+- Map Sleeper users to league teams
+- Sync scores and schedules for any season
+- Sync draft picks
+- Sync trades
 
-## How can I deploy this project?
+## Deploying
 
-Simply open [Lovable](https://lovable.dev/projects/1af7d40c-dc39-4db9-b1d3-3648cc2f0beb) and click on Share -> Publish.
+Build for production:
 
-## I want to use a custom domain - is that possible?
+```sh
+npm run build
+```
 
-We don't support custom domains (yet). If you want to deploy your project under your own domain then we recommend using Netlify. Visit our docs for more details: [Custom domains](https://docs.lovable.dev/tips-tricks/custom-domain/)
+The `dist/` folder can be deployed to any static host (Netlify, Vercel, Cloudflare Pages, etc.).

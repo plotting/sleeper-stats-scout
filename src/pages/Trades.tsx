@@ -93,7 +93,7 @@ const Trades = () => {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Date</TableHead>
+                <TableHead className="w-[120px]">Date</TableHead>
                 <TableHead>Team</TableHead>
                 <TableHead>Received</TableHead>
                 <TableHead>Team</TableHead>
@@ -101,67 +101,115 @@ const Trades = () => {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {trades.map((trade) => (
-                <TableRow key={trade.id}>
-                  <TableCell>
-                    {format(new Date(trade.trade_date), "MMM d, yyyy")}
-                  </TableCell>
-                  <TableCell className="font-medium">
-                    {trade.team1 ? (
-                      <Link
-                        to={`/team/${trade.team1_id}?season=${selectedSeason}`}
-                        className="text-primary hover:underline"
-                      >
-                        {trade.team1.name}
-                      </Link>
-                    ) : (
-                      <span className="text-muted-foreground">Unknown Team</span>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    <ul className="list-disc list-inside">
-                      {trade.items
-                        ?.filter((item) => item.to_team_id === trade.team1_id)
-                        .map((item, index) => (
-                          <li 
-                            key={index} 
-                            className="text-sm cursor-pointer hover:text-primary hover:underline"
-                            onClick={() => handleAssetClick(item.item_description)}
-                          >
-                            {item.item_description}
-                          </li>
-                        ))}
-                    </ul>
-                  </TableCell>
-                  <TableCell className="font-medium">
-                    {trade.team2 ? (
-                      <Link
-                        to={`/team/${trade.team2_id}?season=${selectedSeason}`}
-                        className="text-primary hover:underline"
-                      >
-                        {trade.team2.name}
-                      </Link>
-                    ) : (
-                      <span className="text-muted-foreground">Unknown Team</span>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    <ul className="list-disc list-inside">
-                      {trade.items
-                        ?.filter((item) => item.to_team_id === trade.team2_id)
-                        .map((item, index) => (
-                          <li 
-                            key={index} 
-                            className="text-sm cursor-pointer hover:text-primary hover:underline"
-                            onClick={() => handleAssetClick(item.item_description)}
-                          >
-                            {item.item_description}
-                          </li>
-                        ))}
-                    </ul>
-                  </TableCell>
-                </TableRow>
-              ))}
+              {trades.map((trade) => {
+                // Derive participating teams from items (supports 2-team and N-team trades)
+                const participants = new Map<number, string>();
+                trade.items?.forEach((item) => {
+                  if (item.to_team_id != null && item.to_team?.name) {
+                    participants.set(item.to_team_id, item.to_team.name);
+                  }
+                });
+                const entries = [...participants.entries()];
+                const isMultiTeam = entries.length > 2;
+
+                if (isMultiTeam) {
+                  // 3+ team trade: span the four team/received columns into one flex row
+                  return (
+                    <TableRow key={trade.id}>
+                      <TableCell className="align-top text-muted-foreground text-sm pt-4 whitespace-nowrap">
+                        {format(new Date(trade.trade_date), "MMM d, yyyy")}
+                      </TableCell>
+                      <TableCell colSpan={4}>
+                        <div className="flex flex-wrap gap-10 py-1">
+                          {entries.map(([teamId, teamName]) => (
+                            <div key={teamId}>
+                              <Link
+                                to={`/team/${teamId}?season=${selectedSeason}`}
+                                className="text-primary hover:underline font-medium block mb-1"
+                              >
+                                {teamName}
+                              </Link>
+                              <ul className="list-disc list-inside space-y-0.5">
+                                {trade.items
+                                  ?.filter((i) => i.to_team_id === teamId)
+                                  .map((item, idx) => (
+                                    <li
+                                      key={idx}
+                                      className="text-sm cursor-pointer hover:text-primary hover:underline"
+                                      onClick={() => handleAssetClick(item.item_description)}
+                                    >
+                                      {item.item_description}
+                                    </li>
+                                  ))}
+                              </ul>
+                            </div>
+                          ))}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                }
+
+                // Standard 2-team trade — original 5-column layout
+                const [[t1Id, t1Name] = [null, null], [t2Id, t2Name] = [null, null]] = entries;
+                return (
+                  <TableRow key={trade.id}>
+                    <TableCell className="text-muted-foreground text-sm whitespace-nowrap">
+                      {format(new Date(trade.trade_date), "MMM d, yyyy")}
+                    </TableCell>
+                    <TableCell className="font-medium">
+                      {t1Id != null ? (
+                        <Link
+                          to={`/team/${t1Id}?season=${selectedSeason}`}
+                          className="text-primary hover:underline"
+                        >
+                          {t1Name}
+                        </Link>
+                      ) : <span className="text-muted-foreground">—</span>}
+                    </TableCell>
+                    <TableCell>
+                      <ul className="list-disc list-inside space-y-0.5">
+                        {trade.items
+                          ?.filter((i) => i.to_team_id === t1Id)
+                          .map((item, idx) => (
+                            <li
+                              key={idx}
+                              className="text-sm cursor-pointer hover:text-primary hover:underline"
+                              onClick={() => handleAssetClick(item.item_description)}
+                            >
+                              {item.item_description}
+                            </li>
+                          ))}
+                      </ul>
+                    </TableCell>
+                    <TableCell className="font-medium">
+                      {t2Id != null ? (
+                        <Link
+                          to={`/team/${t2Id}?season=${selectedSeason}`}
+                          className="text-primary hover:underline"
+                        >
+                          {t2Name}
+                        </Link>
+                      ) : <span className="text-muted-foreground">—</span>}
+                    </TableCell>
+                    <TableCell>
+                      <ul className="list-disc list-inside space-y-0.5">
+                        {trade.items
+                          ?.filter((i) => i.to_team_id === t2Id)
+                          .map((item, idx) => (
+                            <li
+                              key={idx}
+                              className="text-sm cursor-pointer hover:text-primary hover:underline"
+                              onClick={() => handleAssetClick(item.item_description)}
+                            >
+                              {item.item_description}
+                            </li>
+                          ))}
+                      </ul>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
             </TableBody>
           </Table>
         ) : (
