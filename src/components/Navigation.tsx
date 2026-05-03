@@ -25,6 +25,11 @@ import {
   Star,
   ChevronDown,
   Zap,
+  LineChart,
+  Flame,
+  Newspaper,
+  Baby,
+  GraduationCap,
 } from 'lucide-react';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useQuery } from '@tanstack/react-query';
@@ -33,13 +38,18 @@ import { type Team } from '@/types/database';
 import { cn } from '@/lib/utils';
 
 const links = [
+  { to: '/season14', label: 'S14 \'26', icon: Flame },
   { to: '/', label: 'Seasons', icon: Trophy },
   { to: '/weekly-scores', label: 'Scores', icon: Calendar },
-  { to: '/weekly-records', label: 'Records', icon: BarChart2 },
+  { to: '/weekly-records', label: 'By Week', icon: BarChart2 },
   { to: '/draft', label: 'Draft', icon: BookOpen },
   { to: '/trades', label: 'Trades', icon: ArrowLeftRight },
   { to: '/head-to-head', label: 'H2H', icon: Swords },
-  { to: '/records', label: 'Stats', icon: Star },
+  { to: '/records', label: 'Records', icon: Star },
+  { to: '/analytics', label: 'Analytics', icon: LineChart },
+  { to: '/recaps', label: 'Recaps', icon: Newspaper },
+  { to: '/rookies', label: 'Rookies', icon: Baby },
+  { to: '/draft-grades', label: 'Grades', icon: GraduationCap },
 ];
 
 const Navigation = () => {
