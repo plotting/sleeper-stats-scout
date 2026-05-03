@@ -61,6 +61,7 @@ import {
   AlertCircle,
   Zap,
   Trophy,
+  BarChart2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -176,6 +177,9 @@ const Admin = () => {
   const [selectedLeagueId, setSelectedLeagueId] = useState<string>('');
   const [mappings, setMappings] = useState<TeamMapping[] | null>(null);
   const [mappingEdits, setMappingEdits] = useState<Record<string, number | null>>({});
+  const [statsYear, setStatsYear] = useState<string>('2024');
+  const [statsRunning, setStatsRunning] = useState(false);
+  const [statsLog, setStatsLog] = useState<LogEntry[]>([]);
 
   // ── Fetch current league info ──
   const { data: currentLeague, isLoading: leagueLoading, error: leagueError, refetch: refetchLeague } = useQuery({
@@ -310,6 +314,32 @@ const Admin = () => {
     await run(async () => {
       await syncAll(selectedLeague, log, (_label, p) => setProgress(p));
     });
+  }
+
+  async function handleSyncPlayerStats() {
+    setStatsRunning(true);
+    setStatsLog([]);
+    const addLog = (msg: string, level: LogEntry['level'] = 'info') =>
+      setStatsLog((prev) => [...prev, { msg, level, ts: Date.now() }]);
+    try {
+      addLog(`Syncing player stats for ${statsYear}…`);
+      const { data, error } = await supabase.functions.invoke('sync-player-stats', {
+        body: { year: Number(statsYear), positions: ['qb', 'rb', 'wr', 'te', 'k'], scoring: 'STD' },
+      });
+      if (error) throw error;
+      const results = data?.results as Record<string, number> | undefined;
+      if (results) {
+        for (const [pos, count] of Object.entries(results)) {
+          addLog(`  ${pos.toUpperCase()}: ${count} players`, 'success');
+        }
+        addLog(`Total: ${data.total} players synced`, 'success');
+      }
+      await queryClient.invalidateQueries();
+    } catch (err) {
+      addLog(`Error: ${String(err)}`, 'error');
+    } finally {
+      setStatsRunning(false);
+    }
   }
 
   async function handleSyncAllSeasons() {
@@ -616,6 +646,54 @@ const Admin = () => {
           </Button>
         </div>
         <LogPanel entries={entries} onClear={clear} />
+      </SyncCard>
+
+      {/* Player Stats */}
+      <SyncCard
+        icon={BarChart2}
+        title="Player Stats"
+        description="Pull fantasy point totals from FantasyPros for a given year. Used to calculate VORP and draft grades."
+        accent="emerald"
+      >
+        <div className="flex items-center gap-3 flex-wrap">
+          <Select value={statsYear} onValueChange={setStatsYear} disabled={statsRunning}>
+            <SelectTrigger className="w-28 bg-white/5 border-white/10 text-sm">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {Array.from({ length: 13 }, (_, i) => String(2024 - i)).map((yr) => (
+                <SelectItem key={yr} value={yr}>{yr}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button
+            onClick={handleSyncPlayerStats}
+            disabled={statsRunning}
+            size="sm"
+            className="bg-emerald-700 hover:bg-emerald-600"
+          >
+            <RefreshCw className={cn('h-3 w-3 mr-1', statsRunning && 'animate-spin')} />
+            Sync {statsYear} Stats
+          </Button>
+        </div>
+        {statsLog.length > 0 && (
+          <div className="mt-4 rounded-lg border border-white/10 bg-black/30 p-3 font-mono text-xs max-h-48 overflow-y-auto">
+            <div className="flex justify-between items-center mb-2">
+              <span className="text-slate-500">Stats sync log</span>
+              <button onClick={() => setStatsLog([])} className="text-slate-500 hover:text-slate-300 text-xs">clear</button>
+            </div>
+            {statsLog.map((e, i) => (
+              <div key={i} className={cn('leading-5', {
+                'text-slate-300': e.level === 'info',
+                'text-emerald-400': e.level === 'success',
+                'text-amber-400': e.level === 'warn',
+                'text-red-400': e.level === 'error',
+              })}>
+                <span className="mr-1">{e.level === 'success' ? '✓' : e.level === 'error' ? '✗' : '›'}</span>{e.msg}
+              </div>
+            ))}
+          </div>
+        )}
       </SyncCard>
 
       {/* Sync everything for selected season */}
