@@ -28,7 +28,6 @@ import {
   LineChart,
   Flame,
   Newspaper,
-  Baby,
   GraduationCap,
 } from 'lucide-react';
 import { useIsMobile } from '@/hooks/use-mobile';
@@ -48,7 +47,6 @@ const links = [
   { to: '/records', label: 'Records', icon: Star },
   { to: '/analytics', label: 'Analytics', icon: LineChart },
   { to: '/recaps', label: 'Recaps', icon: Newspaper },
-  { to: '/rookies', label: 'Rookies', icon: Baby },
   { to: '/draft-grades', label: 'Grades', icon: GraduationCap },
 ];
 
