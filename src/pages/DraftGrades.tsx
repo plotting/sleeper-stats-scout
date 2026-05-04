@@ -236,8 +236,8 @@ function VorpBreakdown({
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const DRAFT_YEARS     = [2025, 2024, 2023, 2022, 2021, 2020, 2019, 2018, 2017, 2016, 2015, 2014, 2013];
-const ADP_YEARS       = [2025, 2024, 2023, 2022, 2021, 2020, 2019, 2018, 2017, 2016, 2015, 2014, 2013];
+const DRAFT_YEARS     = [2025, 2024, 2023, 2022, 2021, 2020, 2019, 2018, 2017, 2016, 2015, 2014];
+const ADP_YEARS       = [2025, 2024, 2023, 2022, 2021, 2020, 2019, 2018, 2017, 2016, 2015, 2014];
 const GRADABLE_POS    = ["QB", "RB", "WR", "TE"];
 
 const PAGE_TABS: { key: PageTab; label: string }[] = [
@@ -285,6 +285,7 @@ const DraftGrades = () => {
       const { data, error } = await supabase
         .from("rookie_draft_grades" as never)
         .select("overall_pick, round, pick_number, five_yr_vorp, position, draft_year, player_name")
+        .gte("draft_year", 2014)
         .lte("draft_year", 2021)
         .in("position", GRADABLE_POS);
       if (error) throw error;
