@@ -210,6 +210,10 @@ const DraftGrades = () => {
   const toggleExpand = (pickId: number) =>
     setExpandedPickId((prev) => (prev === pickId ? null : pickId));
 
+  // Coerce to number — Supabase may return numeric view columns as strings at runtime
+  const pickId = (p: DraftGradeRow) => Number(p.pick_id);
+  const isExpanded = (p: DraftGradeRow) => expandedPickId === pickId(p);
+
   const { data: picks = [], isLoading } = useQuery({
     queryKey: ["draft-grades", year],
     queryFn: async () => {
@@ -221,8 +225,6 @@ const DraftGrades = () => {
       if (error) throw error;
       return data as DraftGradeRow[];
     },
-    // reset expanded row when year changes
-    gcTime: 0,
   });
 
   // Reset expansion when year changes
@@ -343,15 +345,15 @@ const DraftGrades = () => {
                 {picks.map((pick, i) => {
                   const noData =
                     !pick.position || !["QB", "RB", "WR", "TE"].includes(pick.position);
-                  const isExpanded = expandedPickId === pick.pick_id;
+                  const expanded = isExpanded(pick);
                   return (
-                    <Fragment key={pick.pick_id}>
+                    <Fragment key={pickId(pick)}>
                       <TableRow
-                        onClick={() => !noData && toggleExpand(pick.pick_id)}
+                        onClick={() => !noData && toggleExpand(pickId(pick))}
                         className={cn(
                           i % 2 === 0 ? "" : "bg-white/[0.015]",
                           noData ? "opacity-40" : "cursor-pointer hover:bg-white/[0.04]",
-                          isExpanded && "bg-white/[0.05]",
+                          expanded && "bg-white/[0.05]",
                         )}
                       >
                         <TableCell className="text-center font-mono text-slate-400 text-sm">
@@ -363,7 +365,7 @@ const DraftGrades = () => {
                         <TableCell className="font-medium text-white text-sm">
                           <span className="flex items-center gap-1.5">
                             {!noData && (
-                              isExpanded
+                              expanded
                                 ? <ChevronDown className="h-3 w-3 text-slate-500 shrink-0" />
                                 : <ChevronRight className="h-3 w-3 text-slate-600 shrink-0" />
                             )}
@@ -392,10 +394,10 @@ const DraftGrades = () => {
                         </TableCell>
                       </TableRow>
 
-                      {isExpanded && !noData && (
+                      {expanded && !noData && (
                         <ExpandedVorpDetail
                           playerName={pick.player_name}
-                          draftYear={pick.draft_year}
+                          draftYear={Number(pick.draft_year)}
                           fiveYrVorp={Number(pick.five_yr_vorp)}
                           colSpan={8}
                         />
@@ -484,15 +486,15 @@ const DraftGrades = () => {
                     {team.picks
                       .sort((a, b) => a.overall_pick - b.overall_pick)
                       .map((pick, i) => {
-                        const isExpanded = expandedPickId === pick.pick_id;
+                        const expanded = isExpanded(pick);
                         return (
-                          <Fragment key={pick.pick_id}>
+                          <Fragment key={pickId(pick)}>
                             <TableRow
-                              onClick={() => toggleExpand(pick.pick_id)}
+                              onClick={() => toggleExpand(pickId(pick))}
                               className={cn(
                                 "cursor-pointer",
                                 i % 2 === 0 ? "" : "bg-white/[0.015]",
-                                isExpanded && "bg-white/[0.05]",
+                                expanded && "bg-white/[0.05]",
                                 "hover:bg-white/[0.04]",
                               )}
                             >
@@ -501,7 +503,7 @@ const DraftGrades = () => {
                               </TableCell>
                               <TableCell className="font-medium text-white text-sm">
                                 <span className="flex items-center gap-1.5">
-                                  {isExpanded
+                                  {expanded
                                     ? <ChevronDown className="h-3 w-3 text-slate-500 shrink-0" />
                                     : <ChevronRight className="h-3 w-3 text-slate-600 shrink-0" />
                                   }
@@ -522,10 +524,10 @@ const DraftGrades = () => {
                               </TableCell>
                             </TableRow>
 
-                            {isExpanded && (
+                            {expanded && (
                               <ExpandedVorpDetail
                                 playerName={pick.player_name}
-                                draftYear={pick.draft_year}
+                                draftYear={Number(pick.draft_year)}
                                 fiveYrVorp={Number(pick.five_yr_vorp)}
                                 colSpan={5}
                               />
@@ -554,7 +556,7 @@ const DraftGrades = () => {
               Summed over the 5 seasons starting from draft year.
             </p>
             <p className="text-slate-500">
-              Replacement levels: QB12 · RB25 · WR30 · TE12
+              Replacement levels: QB10 · RB30 · WR30 · TE10
             </p>
           </div>
 
