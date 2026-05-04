@@ -205,14 +205,13 @@ const DRAFT_YEARS = [2025, 2024, 2023, 2022, 2021, 2020, 2019, 2018, 2017, 2016,
 const DraftGrades = () => {
   const [year, setYear] = useState(2023);
   const [view, setView] = useState<ViewMode>("picks");
-  const [expandedPickId, setExpandedPickId] = useState<number | null>(null);
+  // Use a string key "round-pick" — avoids pick_id type coercion issues (NaN === NaN = false)
+  const [expandedKey, setExpandedKey] = useState<string | null>(null);
 
-  const toggleExpand = (pickId: number) =>
-    setExpandedPickId((prev) => (prev === pickId ? null : pickId));
-
-  // Coerce to number — Supabase may return numeric view columns as strings at runtime
-  const pickId = (p: DraftGradeRow) => Number(p.pick_id);
-  const isExpanded = (p: DraftGradeRow) => expandedPickId === pickId(p);
+  const rowKey = (p: DraftGradeRow) => `${p.round}-${p.pick_number}`;
+  const toggleExpand = (key: string) =>
+    setExpandedKey((prev) => (prev === key ? null : key));
+  const isExpanded = (p: DraftGradeRow) => expandedKey === rowKey(p);
 
   const { data: picks = [], isLoading } = useQuery({
     queryKey: ["draft-grades", year],
@@ -230,7 +229,7 @@ const DraftGrades = () => {
   // Reset expansion when year changes
   const handleYearChange = (v: string) => {
     setYear(parseInt(v));
-    setExpandedPickId(null);
+    setExpandedKey(null);
   };
 
   const gradablePicks = useMemo(
@@ -286,7 +285,7 @@ const DraftGrades = () => {
             {(["picks", "teams"] as ViewMode[]).map((v) => (
               <button
                 key={v}
-                onClick={() => { setView(v); setExpandedPickId(null); }}
+                onClick={() => { setView(v); setExpandedKey(null); }}
                 className={cn(
                   "px-3 py-1 text-xs rounded-md transition-colors capitalize",
                   view === v
@@ -347,7 +346,7 @@ const DraftGrades = () => {
                     !pick.position || !["QB", "RB", "WR", "TE"].includes(pick.position);
                   const expanded = isExpanded(pick);
                   return (
-                    <Fragment key={pickId(pick)}>
+                    <Fragment key={rowKey(pick)}>
                       <TableRow
                         className={cn(
                           i % 2 === 0 ? "" : "bg-white/[0.015]",
@@ -368,7 +367,7 @@ const DraftGrades = () => {
                             </span>
                           ) : (
                             <button
-                              onClick={() => toggleExpand(pickId(pick))}
+                              onClick={() => toggleExpand(rowKey(pick))}
                               className="flex items-center gap-1.5 w-full text-left py-4 pr-4 cursor-pointer"
                             >
                               {expanded
@@ -495,7 +494,7 @@ const DraftGrades = () => {
                       .map((pick, i) => {
                         const expanded = isExpanded(pick);
                         return (
-                          <Fragment key={pickId(pick)}>
+                          <Fragment key={rowKey(pick)}>
                             <TableRow
                               className={cn(
                                 i % 2 === 0 ? "" : "bg-white/[0.015]",
@@ -508,7 +507,7 @@ const DraftGrades = () => {
                               </TableCell>
                               <TableCell className="font-medium text-white text-sm p-0 pl-4">
                                 <button
-                                  onClick={() => toggleExpand(pickId(pick))}
+                                  onClick={() => toggleExpand(rowKey(pick))}
                                   className="flex items-center gap-1.5 w-full text-left py-4 pr-4 cursor-pointer"
                                 >
                                   {expanded
