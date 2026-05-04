@@ -1,5 +1,5 @@
 
-import { useState, useMemo, Fragment } from "react";
+import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -93,16 +93,15 @@ function vorpColor(v: number) {
 
 // ── Expanded year-by-year VORP detail ─────────────────────────────────────────
 
-function ExpandedVorpDetail({
+// Returns a plain div — rendered inside the player name cell, no extra table rows needed
+function VorpBreakdown({
   playerName,
   draftYear,
   fiveYrVorp,
-  colSpan,
 }: {
   playerName: string;
   draftYear: number;
   fiveYrVorp: number;
-  colSpan: number;
 }) {
   const { data: seasons = [], isLoading } = useQuery({
     queryKey: ["player-vorp-detail", playerName, draftYear],
@@ -120,62 +119,58 @@ function ExpandedVorpDetail({
   });
 
   return (
-    <TableRow className="hover:bg-transparent">
-      <TableCell colSpan={colSpan} className="py-0 px-0 border-b border-white/5">
-        <div className="ml-8 mr-4 my-3 max-w-xs">
-          {isLoading ? (
-            <p className="text-slate-500 text-xs animate-pulse py-2">Loading…</p>
-          ) : (
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="border-b border-white/10">
-                  <th className="text-left py-1.5 pr-4 font-medium text-slate-500 w-12">Year</th>
-                  <th className="text-right py-1.5 pr-4 font-medium text-slate-500">Pts</th>
-                  <th className="text-right py-1.5 pr-4 font-medium text-slate-500">Rank</th>
-                  <th className="text-right py-1.5 font-medium text-slate-500">VORP</th>
+    <div className="mt-2 ml-4 mb-1">
+      {isLoading ? (
+        <p className="text-slate-500 text-xs animate-pulse py-1">Loading…</p>
+      ) : (
+        <table className="text-xs">
+          <thead>
+            <tr className="border-b border-white/10">
+              <th className="text-left pb-1 pr-6 font-medium text-slate-500 w-12">Year</th>
+              <th className="text-right pb-1 pr-6 font-medium text-slate-500">Pts</th>
+              <th className="text-right pb-1 pr-6 font-medium text-slate-500">Rank</th>
+              <th className="text-right pb-1 font-medium text-slate-500">VORP</th>
+            </tr>
+          </thead>
+          <tbody>
+            {seasons.length === 0 ? (
+              <tr>
+                <td colSpan={4} className="py-1 text-slate-600">No data yet</td>
+              </tr>
+            ) : (
+              seasons.map((s) => (
+                <tr key={s.year} className="border-b border-white/[0.04]">
+                  <td className="py-1 pr-6 text-slate-400 font-mono">{s.year}</td>
+                  <td className="py-1 pr-6 text-right text-slate-300 font-mono">
+                    {Number(s.total_points).toFixed(1)}
+                  </td>
+                  <td className="py-1 pr-6 text-right text-slate-400 font-mono">
+                    {s.position}{s.season_rank}
+                  </td>
+                  <td className={cn(
+                    "py-1 text-right font-mono font-semibold",
+                    Number(s.vorp) >= 0 ? "text-emerald-400" : "text-red-400",
+                  )}>
+                    {formatVorp(Number(s.vorp))}
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {seasons.length === 0 ? (
-                  <tr>
-                    <td colSpan={4} className="py-2 text-slate-600 text-xs">No data in this window</td>
-                  </tr>
-                ) : (
-                  seasons.map((s) => (
-                    <tr key={s.year} className="border-b border-white/[0.04]">
-                      <td className="py-1.5 pr-4 text-slate-400 font-mono">{s.year}</td>
-                      <td className="py-1.5 pr-4 text-right text-slate-300 font-mono">
-                        {Number(s.total_points).toFixed(1)}
-                      </td>
-                      <td className="py-1.5 pr-4 text-right text-slate-400 font-mono">
-                        {s.position}{s.season_rank}
-                      </td>
-                      <td className={cn(
-                        "py-1.5 text-right font-mono font-semibold",
-                        Number(s.vorp) >= 0 ? "text-emerald-400" : "text-red-400",
-                      )}>
-                        {formatVorp(Number(s.vorp))}
-                      </td>
-                    </tr>
-                  ))
-                )}
-                {seasons.length > 0 && (
-                  <tr>
-                    <td colSpan={3} className="pt-2 pb-1 text-slate-400 font-semibold text-xs">Total</td>
-                    <td className={cn(
-                      "pt-2 pb-1 text-right font-mono font-bold text-sm",
-                      fiveYrVorp >= 0 ? "text-emerald-400" : "text-red-400",
-                    )}>
-                      {formatVorp(fiveYrVorp)}
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          )}
-        </div>
-      </TableCell>
-    </TableRow>
+              ))
+            )}
+            {seasons.length > 0 && (
+              <tr>
+                <td colSpan={3} className="pt-1.5 text-slate-400 font-semibold">Total</td>
+                <td className={cn(
+                  "pt-1.5 text-right font-mono font-bold",
+                  fiveYrVorp >= 0 ? "text-emerald-400" : "text-red-400",
+                )}>
+                  {formatVorp(fiveYrVorp)}
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      )}
+    </div>
   );
 }
 
@@ -346,29 +341,30 @@ const DraftGrades = () => {
                     !pick.position || !["QB", "RB", "WR", "TE"].includes(pick.position);
                   const expanded = isExpanded(pick);
                   return (
-                    <Fragment key={rowKey(pick)}>
-                      <TableRow
-                        className={cn(
-                          i % 2 === 0 ? "" : "bg-white/[0.015]",
-                          noData ? "opacity-40" : "hover:bg-white/[0.04]",
-                          expanded && "bg-white/[0.05]",
-                        )}
-                      >
-                        <TableCell className="text-center font-mono text-slate-400 text-sm">
-                          {pick.round}.{String(pick.pick_number).padStart(2, "0")}
-                        </TableCell>
-                        <TableCell className="text-sm text-slate-300 whitespace-nowrap">
-                          {pick.team_name}
-                        </TableCell>
-                        <TableCell className="font-medium text-white text-sm p-0 pl-4">
-                          {noData ? (
-                            <span className="flex items-center gap-1.5 py-4 pr-4">
-                              {pick.player_name}
-                            </span>
-                          ) : (
+                    <TableRow
+                      key={rowKey(pick)}
+                      className={cn(
+                        i % 2 === 0 ? "" : "bg-white/[0.015]",
+                        noData ? "opacity-40" : "hover:bg-white/[0.04]",
+                        expanded && "bg-white/[0.05]",
+                      )}
+                    >
+                      <TableCell className="text-center font-mono text-slate-400 text-sm align-top pt-4">
+                        {pick.round}.{String(pick.pick_number).padStart(2, "0")}
+                      </TableCell>
+                      <TableCell className="text-sm text-slate-300 whitespace-nowrap align-top pt-4">
+                        {pick.team_name}
+                      </TableCell>
+                      <TableCell className="font-medium text-white text-sm">
+                        {noData ? (
+                          <span className="flex items-center gap-1.5 py-2">
+                            {pick.player_name}
+                          </span>
+                        ) : (
+                          <div>
                             <button
                               onClick={() => toggleExpand(rowKey(pick))}
-                              className="flex items-center gap-1.5 w-full text-left py-4 pr-4 cursor-pointer"
+                              className="flex items-center gap-1.5 w-full text-left py-2 cursor-pointer hover:text-sky-300 transition-colors"
                             >
                               {expanded
                                 ? <ChevronDown className="h-3 w-3 text-slate-500 shrink-0" />
@@ -376,39 +372,37 @@ const DraftGrades = () => {
                               }
                               {pick.player_name}
                             </button>
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          <PosBadge pos={pick.position} />
-                        </TableCell>
-                        <TableCell className="text-right font-mono text-sm text-slate-400">
-                          {Number(pick.adp).toFixed(1)}
-                        </TableCell>
-                        <TableCell className={cn(
-                          "text-right font-mono text-sm font-semibold",
-                          noData ? "text-slate-600" : vorpColor(Number(pick.five_yr_vorp)),
-                        )}>
-                          {noData ? "—" : formatVorp(Number(pick.five_yr_vorp))}
-                        </TableCell>
-                        <TableCell className="text-center text-sm text-slate-500">
-                          {noData ? "—" : pick.seasons_with_data}
-                        </TableCell>
-                        <TableCell className="text-center">
-                          {noData
-                            ? <span className="text-slate-600 text-xs">N/A</span>
-                            : <GradeBadge grade={pick.vorp_grade} />}
-                        </TableCell>
-                      </TableRow>
-
-                      {expanded && !noData && (
-                        <ExpandedVorpDetail
-                          playerName={pick.player_name}
-                          draftYear={Number(pick.draft_year)}
-                          fiveYrVorp={Number(pick.five_yr_vorp)}
-                          colSpan={8}
-                        />
-                      )}
-                    </Fragment>
+                            {expanded && (
+                              <VorpBreakdown
+                                playerName={pick.player_name}
+                                draftYear={Number(pick.draft_year)}
+                                fiveYrVorp={Number(pick.five_yr_vorp)}
+                              />
+                            )}
+                          </div>
+                        )}
+                      </TableCell>
+                      <TableCell className="align-top pt-4">
+                        <PosBadge pos={pick.position} />
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-sm text-slate-400 align-top pt-4">
+                        {Number(pick.adp).toFixed(1)}
+                      </TableCell>
+                      <TableCell className={cn(
+                        "text-right font-mono text-sm font-semibold align-top pt-4",
+                        noData ? "text-slate-600" : vorpColor(Number(pick.five_yr_vorp)),
+                      )}>
+                        {noData ? "—" : formatVorp(Number(pick.five_yr_vorp))}
+                      </TableCell>
+                      <TableCell className="text-center text-sm text-slate-500 align-top pt-4">
+                        {noData ? "—" : pick.seasons_with_data}
+                      </TableCell>
+                      <TableCell className="text-center align-top pt-4">
+                        {noData
+                          ? <span className="text-slate-600 text-xs">N/A</span>
+                          : <GradeBadge grade={pick.vorp_grade} />}
+                      </TableCell>
+                    </TableRow>
                   );
                 })}
               </TableBody>
@@ -494,21 +488,22 @@ const DraftGrades = () => {
                       .map((pick, i) => {
                         const expanded = isExpanded(pick);
                         return (
-                          <Fragment key={rowKey(pick)}>
-                            <TableRow
-                              className={cn(
-                                i % 2 === 0 ? "" : "bg-white/[0.015]",
-                                expanded && "bg-white/[0.05]",
-                                "hover:bg-white/[0.04]",
-                              )}
-                            >
-                              <TableCell className="text-center font-mono text-slate-400 text-xs">
-                                {pick.round}.{String(pick.pick_number).padStart(2, "0")}
-                              </TableCell>
-                              <TableCell className="font-medium text-white text-sm p-0 pl-4">
+                          <TableRow
+                            key={rowKey(pick)}
+                            className={cn(
+                              i % 2 === 0 ? "" : "bg-white/[0.015]",
+                              expanded && "bg-white/[0.05]",
+                              "hover:bg-white/[0.04]",
+                            )}
+                          >
+                            <TableCell className="text-center font-mono text-slate-400 text-xs align-top pt-4">
+                              {pick.round}.{String(pick.pick_number).padStart(2, "0")}
+                            </TableCell>
+                            <TableCell className="font-medium text-white text-sm">
+                              <div>
                                 <button
                                   onClick={() => toggleExpand(rowKey(pick))}
-                                  className="flex items-center gap-1.5 w-full text-left py-4 pr-4 cursor-pointer"
+                                  className="flex items-center gap-1.5 w-full text-left py-2 cursor-pointer hover:text-sky-300 transition-colors"
                                 >
                                   {expanded
                                     ? <ChevronDown className="h-3 w-3 text-slate-500 shrink-0" />
@@ -516,30 +511,28 @@ const DraftGrades = () => {
                                   }
                                   {pick.player_name}
                                 </button>
-                              </TableCell>
-                              <TableCell>
-                                <PosBadge pos={pick.position} />
-                              </TableCell>
-                              <TableCell className={cn(
-                                "text-right font-mono text-sm font-semibold",
-                                vorpColor(Number(pick.five_yr_vorp)),
-                              )}>
-                                {formatVorp(Number(pick.five_yr_vorp))}
-                              </TableCell>
-                              <TableCell className="text-center">
-                                <GradeBadge grade={pick.vorp_grade} />
-                              </TableCell>
-                            </TableRow>
-
-                            {expanded && (
-                              <ExpandedVorpDetail
-                                playerName={pick.player_name}
-                                draftYear={Number(pick.draft_year)}
-                                fiveYrVorp={Number(pick.five_yr_vorp)}
-                                colSpan={5}
-                              />
-                            )}
-                          </Fragment>
+                                {expanded && (
+                                  <VorpBreakdown
+                                    playerName={pick.player_name}
+                                    draftYear={Number(pick.draft_year)}
+                                    fiveYrVorp={Number(pick.five_yr_vorp)}
+                                  />
+                                )}
+                              </div>
+                            </TableCell>
+                            <TableCell className="align-top pt-4">
+                              <PosBadge pos={pick.position} />
+                            </TableCell>
+                            <TableCell className={cn(
+                              "text-right font-mono text-sm font-semibold align-top pt-4",
+                              vorpColor(Number(pick.five_yr_vorp)),
+                            )}>
+                              {formatVorp(Number(pick.five_yr_vorp))}
+                            </TableCell>
+                            <TableCell className="text-center align-top pt-4">
+                              <GradeBadge grade={pick.vorp_grade} />
+                            </TableCell>
+                          </TableRow>
                         );
                       })}
                   </TableBody>
