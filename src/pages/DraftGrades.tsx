@@ -349,10 +349,9 @@ const DraftGrades = () => {
                   return (
                     <Fragment key={pickId(pick)}>
                       <TableRow
-                        onClick={() => !noData && toggleExpand(pickId(pick))}
                         className={cn(
                           i % 2 === 0 ? "" : "bg-white/[0.015]",
-                          noData ? "opacity-40" : "cursor-pointer hover:bg-white/[0.04]",
+                          noData ? "opacity-40" : "hover:bg-white/[0.04]",
                           expanded && "bg-white/[0.05]",
                         )}
                       >
@@ -362,15 +361,23 @@ const DraftGrades = () => {
                         <TableCell className="text-sm text-slate-300 whitespace-nowrap">
                           {pick.team_name}
                         </TableCell>
-                        <TableCell className="font-medium text-white text-sm">
-                          <span className="flex items-center gap-1.5">
-                            {!noData && (
-                              expanded
+                        <TableCell className="font-medium text-white text-sm p-0 pl-4">
+                          {noData ? (
+                            <span className="flex items-center gap-1.5 py-4 pr-4">
+                              {pick.player_name}
+                            </span>
+                          ) : (
+                            <button
+                              onClick={() => toggleExpand(pickId(pick))}
+                              className="flex items-center gap-1.5 w-full text-left py-4 pr-4 cursor-pointer"
+                            >
+                              {expanded
                                 ? <ChevronDown className="h-3 w-3 text-slate-500 shrink-0" />
                                 : <ChevronRight className="h-3 w-3 text-slate-600 shrink-0" />
-                            )}
-                            {pick.player_name}
-                          </span>
+                              }
+                              {pick.player_name}
+                            </button>
+                          )}
                         </TableCell>
                         <TableCell>
                           <PosBadge pos={pick.position} />
@@ -490,9 +497,7 @@ const DraftGrades = () => {
                         return (
                           <Fragment key={pickId(pick)}>
                             <TableRow
-                              onClick={() => toggleExpand(pickId(pick))}
                               className={cn(
-                                "cursor-pointer",
                                 i % 2 === 0 ? "" : "bg-white/[0.015]",
                                 expanded && "bg-white/[0.05]",
                                 "hover:bg-white/[0.04]",
@@ -501,14 +506,17 @@ const DraftGrades = () => {
                               <TableCell className="text-center font-mono text-slate-400 text-xs">
                                 {pick.round}.{String(pick.pick_number).padStart(2, "0")}
                               </TableCell>
-                              <TableCell className="font-medium text-white text-sm">
-                                <span className="flex items-center gap-1.5">
+                              <TableCell className="font-medium text-white text-sm p-0 pl-4">
+                                <button
+                                  onClick={() => toggleExpand(pickId(pick))}
+                                  className="flex items-center gap-1.5 w-full text-left py-4 pr-4 cursor-pointer"
+                                >
                                   {expanded
                                     ? <ChevronDown className="h-3 w-3 text-slate-500 shrink-0" />
                                     : <ChevronRight className="h-3 w-3 text-slate-600 shrink-0" />
                                   }
                                   {pick.player_name}
-                                </span>
+                                </button>
                               </TableCell>
                               <TableCell>
                                 <PosBadge pos={pick.position} />
