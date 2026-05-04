@@ -1,7 +1,8 @@
 
-import { useMemo } from "react";
+import { useState, useMemo } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
+import Recaps from "./Recaps";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -277,6 +278,8 @@ function TopScorers({ matchups }: { matchups: MatchupScoresView[] }) {
 // ── Page ───────────────────────────────────────────────────────────────────────
 
 const Season14 = () => {
+  const [tab, setTab] = useState<"season" | "recaps">("season");
+
   const { data: matchups, isLoading } = useQuery({
     queryKey: ["season14-matchups"],
     queryFn: async () => {
@@ -303,63 +306,89 @@ const Season14 = () => {
 
   return (
     <div className="min-h-screen space-y-6">
-      <header className="mb-6">
+      {/* ── Header ── */}
+      <header className="mb-2">
         <div className="flex items-center gap-3 mb-1">
           <h1 className="text-4xl font-bold text-white">Season 14</h1>
           <Badge variant="outline" className="border-blue-500/40 text-blue-400 text-sm px-3">
             {SEASON_YEAR}
           </Badge>
-          {currentWeek > 0 && (
+          {tab === "season" && currentWeek > 0 && (
             <Badge variant="outline" className="border-white/20 text-slate-400 text-sm px-3">
               Week {currentWeek}
             </Badge>
           )}
         </div>
-        <p className="text-muted-foreground">
-          {gamesPlayed > 0 ? `${gamesPlayed} games played` : "Season not yet started"}
-        </p>
+        {tab === "season" && (
+          <p className="text-muted-foreground">
+            {gamesPlayed > 0 ? `${gamesPlayed} games played` : "Season not yet started"}
+          </p>
+        )}
       </header>
 
-      {isLoading ? (
-        <div className="flex items-center justify-center py-20">
-          <p className="text-slate-400 animate-pulse">Loading Season 14 data…</p>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-          {/* Standings — takes 2/3 */}
-          <div className="xl:col-span-2 space-y-6">
-            <Card className="p-6">
-              <CardHeader className="px-0 pt-0 pb-4">
-                <CardTitle className="text-lg">Standings</CardTitle>
-              </CardHeader>
-              <CardContent className="px-0 pb-0">
-                <Standings matchups={matchups ?? []} />
-              </CardContent>
-            </Card>
+      {/* ── Tab toggle ── */}
+      <div className="flex gap-1 rounded-lg border border-white/10 p-1 w-fit">
+        {([
+          { key: "season", label: "S14 '26" },
+          { key: "recaps", label: "Recaps"  },
+        ] as { key: "season" | "recaps"; label: string }[]).map(({ key, label }) => (
+          <button
+            key={key}
+            onClick={() => setTab(key)}
+            className={cn(
+              "px-4 py-1.5 text-sm rounded-md transition-colors",
+              tab === key ? "bg-white/10 text-white font-medium" : "text-slate-400 hover:text-white",
+            )}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
 
-            <Card className="p-6">
-              <CardHeader className="px-0 pt-0 pb-4">
-                <CardTitle className="text-lg">Top Scoring Weeks</CardTitle>
-              </CardHeader>
-              <CardContent className="px-0 pb-0">
-                <TopScorers matchups={matchups ?? []} />
-              </CardContent>
-            </Card>
+      {/* ── Season 14 content ── */}
+      {tab === "season" && (
+        isLoading ? (
+          <div className="flex items-center justify-center py-20">
+            <p className="text-slate-400 animate-pulse">Loading Season 14 data…</p>
           </div>
+        ) : (
+          <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+            <div className="xl:col-span-2 space-y-6">
+              <Card className="p-6">
+                <CardHeader className="px-0 pt-0 pb-4">
+                  <CardTitle className="text-lg">Standings</CardTitle>
+                </CardHeader>
+                <CardContent className="px-0 pb-0">
+                  <Standings matchups={matchups ?? []} />
+                </CardContent>
+              </Card>
 
-          {/* Recent results — right column */}
-          <div>
-            <Card className="p-6">
-              <CardHeader className="px-0 pt-0 pb-4">
-                <CardTitle className="text-lg">Recent Results</CardTitle>
-              </CardHeader>
-              <CardContent className="px-0 pb-0">
-                <RecentResults matchups={matchups ?? []} />
-              </CardContent>
-            </Card>
+              <Card className="p-6">
+                <CardHeader className="px-0 pt-0 pb-4">
+                  <CardTitle className="text-lg">Top Scoring Weeks</CardTitle>
+                </CardHeader>
+                <CardContent className="px-0 pb-0">
+                  <TopScorers matchups={matchups ?? []} />
+                </CardContent>
+              </Card>
+            </div>
+
+            <div>
+              <Card className="p-6">
+                <CardHeader className="px-0 pt-0 pb-4">
+                  <CardTitle className="text-lg">Recent Results</CardTitle>
+                </CardHeader>
+                <CardContent className="px-0 pb-0">
+                  <RecentResults matchups={matchups ?? []} />
+                </CardContent>
+              </Card>
+            </div>
           </div>
-        </div>
+        )
       )}
+
+      {/* ── Recaps content ── */}
+      {tab === "recaps" && <Recaps />}
     </div>
   );
 };

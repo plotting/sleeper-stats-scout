@@ -27,7 +27,6 @@ import {
   Zap,
   LineChart,
   Flame,
-  Newspaper,
   GraduationCap,
 } from 'lucide-react';
 import { useIsMobile } from '@/hooks/use-mobile';
@@ -46,7 +45,6 @@ const links = [
   { to: '/head-to-head', label: 'H2H', icon: Swords },
   { to: '/records', label: 'Records', icon: Star },
   { to: '/analytics', label: 'Analytics', icon: LineChart },
-  { to: '/recaps', label: 'Recaps', icon: Newspaper },
   { to: '/draft-grades', label: 'Grades', icon: GraduationCap },
 ];
 
