@@ -77,6 +77,23 @@ function acquireLine(profile: TeamProfile): string {
   return `When they do trade for players, ${profile.topAcquiredPosition}s are the position they chase hardest.`;
 }
 
+/** A short, punchy archetype tag summarizing a team's overall style — checked
+ *  in priority order so the most distinctive trait wins over a generic one. */
+function deriveArchetype(p: TeamProfile): string {
+  if (p.tradeCount === 0) return "Draft & Hold";
+  if (p.netTradeVorp >= 150 && p.avgPickValue >= 20) return "Total Value Machine";
+  if (p.netTradeVorp >= 100) return "Trade Shark";
+  if (p.netTradeVorp <= -150) return "Value Donor";
+  if (p.avgPickValue >= 40) return "Draft-Day Sniper";
+  if (p.avgPickValue <= -40) return "Reach Merchant";
+  if (p.blindSpot === "TE") return "TE Skeptic";
+  if (p.topDraftPosition === "RB") return "RB Zealot";
+  if (p.topDraftPosition === "WR") return "WR Whisperer";
+  if (p.topDraftPosition === "QB") return "Early-QB Believer";
+  if (p.tradeCount >= 30) return "Wheeler-Dealer";
+  return "Steady Hand";
+}
+
 const GMScouting = () => {
   const { data: teams } = useQuery({
     queryKey: ["scouting-teams"],
@@ -296,7 +313,10 @@ const GMScouting = () => {
           {profiles.map((p) => (
             <Card key={p.teamId} className="border-white/10 bg-[#1a1a2e] overflow-hidden">
               <div className="px-5 pt-5 pb-3 border-b border-white/10 flex items-center justify-between gap-2">
-                <h2 className="text-xl font-bold text-white">{p.teamName}</h2>
+                <div>
+                  <h2 className="text-xl font-bold text-white">{p.teamName}</h2>
+                  <span className="text-[11px] font-medium text-violet-300 uppercase tracking-wide">{deriveArchetype(p)}</span>
+                </div>
                 <span className={cn(
                   "text-xs font-mono font-semibold px-2 py-0.5 rounded border",
                   p.netTradeVorp >= 20 ? "text-emerald-400 bg-emerald-400/10 border-emerald-400/25"

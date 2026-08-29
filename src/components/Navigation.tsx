@@ -31,6 +31,7 @@ import {
   MoreHorizontal,
   Rss,
   UserSearch,
+  Landmark,
 } from 'lucide-react';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useQuery } from '@tanstack/react-query';
@@ -55,6 +56,7 @@ const links = [
 // under Season14, and Rookies' functionality was absorbed into Draft Grades'
 // ADP/Pick Value tabs — both dropped from the nav upstream on main.
 const moreLinks = [
+  { to: '/hall', label: 'The Hall', icon: Landmark },
   { to: '/weekly-records', label: 'By Week', icon: BarChart2 },
   { to: '/head-to-head', label: 'H2H', icon: Swords },
   { to: '/analytics', label: 'Analytics', icon: LineChart },
