@@ -4,6 +4,7 @@ import {
   fetchLeagueRosters,
   fetchMatchups,
   fetchLeagueDrafts,
+  fetchDraft,
   fetchDraftPicks,
   fetchTransactions,
   buildRosterOwnerMap,
@@ -111,7 +112,7 @@ export async function saveTeamMappings(
 
 // ─── Roster → DB team ID lookup ─────────────────────────────────────────────
 
-async function buildRosterToTeamMap(
+export async function buildRosterToTeamMap(
   leagueId: string,
 ): Promise<Map<number, number>> {
   const [rosterOwnerMap, dbResult] = await Promise.all([
@@ -172,6 +173,17 @@ export async function syncScoresAndSchedules(
   const lastScoredWeek = league.settings.last_scored_leg || league.settings.leg || 0;
   const totalWeeks = Math.max(lastScoredWeek, playoffStart > 0 ? playoffStart + 3 : 0);
 
+  // `last_scored_leg` turned out not to be a reliable "this week is fully
+  // final" signal on its own — Sleeper can advance it as soon as the first
+  // game of a leg reports stats, not once every game in that leg has ended.
+  // A week strictly before the currently-active leg is unambiguously over
+  // (the season can't be playing week N+1 while week N is still live), so
+  // that's the safe primary gate. Once the season is marked complete, `leg`
+  // may freeze below the final week number, so fall back to syncing
+  // everything in that case instead of permanently stranding the last week.
+  const currentLeg = league.settings.leg || 0;
+  const seasonComplete = league.status === 'complete';
+
   if (totalWeeks === 0) {
     log(`No weeks to sync for ${year}`, 'warn');
     return;
@@ -198,10 +210,22 @@ export async function syncScoresAndSchedules(
         pairs.set(m.matchup_id, g);
       }
 
+      // Sleeper returns a literal 0 (not null) for points in weeks that
+      // haven't been played yet, so `points` alone can't distinguish "really
+      // scored 0" from "hasn't happened". Gate on `week < currentLeg` (see
+      // above) rather than `last_scored_leg` — a week strictly before the
+      // active one is guaranteed fully final, which avoids writing a real
+      // `0` for a team whose game just hasn't kicked off yet this leg (that
+      // 0-0 would otherwise read back as a genuine tie). Skipping the row
+      // entirely (rather than writing a 0) lets matchup_scores_view's join
+      // return a true null for unplayed games, which every "is this game in
+      // the future" check across the app relies on — the `scores` table
+      // itself is NOT NULL, so 0 can't mean "unknown".
+      const weekIsScored = seasonComplete ? week <= totalWeeks : week < currentLeg;
       const scoreRows = matchups
         .map((m) => {
           const teamId = rosterMap.get(m.roster_id);
-          if (!teamId) return null;
+          if (!teamId || !weekIsScored) return null;
           return { season_id: seasonId, week_number: week, team_id: teamId, score: m.points ?? 0 };
         })
         .filter(Boolean) as { season_id: number; week_number: number; team_id: number; score: number }[];
@@ -217,9 +241,12 @@ export async function syncScoresAndSchedules(
 
       for (const [, pair] of pairs) {
         if (pair.length !== 2) continue;
-        const homeId = rosterMap.get(pair[0].roster_id);
-        const awayId = rosterMap.get(pair[1].roster_id);
-        if (!homeId || !awayId) continue;
+        const idA = rosterMap.get(pair[0].roster_id);
+        const idB = rosterMap.get(pair[1].roster_id);
+        if (!idA || !idB) continue;
+        // Always store with lower team_id as home — canonical ordering prevents
+        // duplicate rows when Sleeper returns the pair in different order across syncs.
+        const [homeId, awayId] = idA < idB ? [idA, idB] : [idB, idA];
         scheduleRows.push({
           season_id: seasonId,
           week_number: week,
@@ -237,10 +264,25 @@ export async function syncScoresAndSchedules(
         if (se) throw new Error(`scores upsert failed (week ${week}): ${se.message}`);
       }
       if (scheduleRows.length) {
+        // The `schedules` table enforces uniqueness per team per week via two
+        // separate constraints — (season_id, week_number, home_team_id) and
+        // (season_id, week_number, away_team_id) — not a single combined key.
+        // Postgres can't resolve ON CONFLICT against two constraints at once,
+        // so upsert falls back to a plain insert and collides with whatever's
+        // already there on a re-sync. Delete-then-insert avoids that entirely
+        // and matches the "existing data is replaced" behavior this page
+        // already advertises.
+        const { error: delErr } = await supabase
+          .from('schedules')
+          .delete()
+          .eq('season_id', seasonId)
+          .eq('week_number', week);
+        if (delErr) throw new Error(`schedules delete failed (week ${week}): ${delErr.message}`);
+
         const { error: sche } = await supabase
           .from('schedules')
-          .upsert(scheduleRows, { onConflict: 'season_id,week_number,home_team_id,away_team_id' });
-        if (sche) throw new Error(`schedules upsert failed (week ${week}): ${sche.message}`);
+          .insert(scheduleRows);
+        if (sche) throw new Error(`schedules insert failed (week ${week}): ${sche.message}`);
       }
 
       log(
@@ -272,6 +314,16 @@ export async function syncDraftPicks(
   }
 
   const rosterMap = await buildRosterToTeamMap(league.league_id);
+
+  // Build user_id → roster_id reverse-lookup.
+  // Sleeper's draft_order is keyed by user_id (18-digit snowflake), NOT roster_id.
+  // We need this to convert draft_order keys → small integer roster_ids (1-N).
+  const rosterOwnerRaw = await buildRosterOwnerMap(league.league_id); // roster_id → user_id
+  const userIdToRosterId = new Map<string, number>();
+  for (const [rosterId, userId] of rosterOwnerRaw) {
+    userIdToRosterId.set(userId, rosterId);
+  }
+
   const drafts = await fetchLeagueDrafts(league.league_id);
 
   if (!drafts || drafts.length === 0) {
@@ -279,10 +331,18 @@ export async function syncDraftPicks(
     return;
   }
 
-  // Only sync "regular" startup/rookie drafts (not keeper/auction stubs)
-  const mainDrafts = drafts.filter((d) => d.status === 'complete');
+  // Log all drafts so we can diagnose status/type mismatches
+  log(`Drafts found for ${year} (${drafts.length} total):`);
+  for (const d of drafts) {
+    log(`  id=${d.draft_id} type=${d.type} status=${d.status} rounds=${d.settings?.rounds ?? '?'} teams=${d.settings?.teams ?? '?'}`);
+  }
+
+  // Include any draft that has been started or completed — dynasty leagues often
+  // create a separate draft object per round; round 2 may have status 'drafting'
+  // or another non-'complete' value even after all picks are in.
+  const mainDrafts = drafts.filter((d) => d.status !== 'pre_draft');
   if (mainDrafts.length === 0) {
-    log(`No completed drafts for ${year}`, 'warn');
+    log(`No non-pre_draft drafts for ${year}`, 'warn');
     return;
   }
 
@@ -292,7 +352,38 @@ export async function syncDraftPicks(
   for (let di = 0; di < mainDrafts.length; di++) {
     const draft = mainDrafts[di];
     try {
+      // Fetch full draft details to get draft_order (league endpoint sometimes omits it).
+      // draft_order maps roster_id (string) → draft_slot (number).
+      // We invert it to slot → roster_id so we can store original_roster_id per pick.
+      let slotToRosterId = new Map<number, number>();
+      try {
+        const fullDraft = await fetchDraft(draft.draft_id);
+        if (fullDraft.draft_order) {
+          for (const [keyStr, slot] of Object.entries(fullDraft.draft_order)) {
+            const parsedKey = Number(keyStr);
+            let rosterId: number | undefined;
+            if (parsedKey > 9999) {
+              // draft_order is keyed by Sleeper user_id (18-digit snowflake) — convert to roster_id
+              rosterId = userIdToRosterId.get(keyStr);
+            } else {
+              // draft_order is keyed by roster_id directly (small int 1-N)
+              rosterId = parsedKey;
+            }
+            if (rosterId !== undefined) {
+              slotToRosterId.set(slot, rosterId);
+            }
+          }
+          log(`Draft ${draft.draft_id}: loaded draft_order (${slotToRosterId.size} slots → roster_ids)`);
+        } else {
+          log(`Draft ${draft.draft_id}: draft_order is null, draft_slot will equal pick position`, 'warn');
+        }
+      } catch {
+        log(`Draft ${draft.draft_id}: could not fetch draft details, falling back`, 'warn');
+      }
+
       const picks = await fetchDraftPicks(draft.draft_id);
+      log(`Draft ${draft.draft_id}: ${picks.length} picks from Sleeper`);
+
       const rows = picks
         .map((p) => {
           const teamId = rosterMap.get(p.roster_id);
@@ -300,12 +391,17 @@ export async function syncDraftPicks(
           const firstName = p.metadata?.first_name ?? '';
           const lastName = p.metadata?.last_name ?? '';
           const playerName = [firstName, lastName].filter(Boolean).join(' ') || `Player ${p.player_id}`;
+          // draft_slot stores the ORIGINAL OWNER'S Sleeper roster_id (from draft_order inversion).
+          // This equals SleeperTradedPick.roster_id, enabling correct traded-pick resolution.
+          // Falls back to raw p.draft_slot if draft_order unavailable.
+          const originalRosterId = slotToRosterId.get(p.draft_slot) ?? p.draft_slot;
           return {
             season_id: seasonId,
             round: p.round,
             pick_number: p.pick_no,
             team_id: teamId,
             player_name: playerName,
+            draft_slot: originalRosterId,
           };
         })
         .filter(Boolean) as {
@@ -314,14 +410,20 @@ export async function syncDraftPicks(
         pick_number: number;
         team_id: number;
         player_name: string;
+        draft_slot: number;
       }[];
 
       if (rows.length) {
-        await supabase
+        log(`Draft ${draft.draft_id}: upserting ${rows.length} rows (rounds ${[...new Set(rows.map(r => r.round))].join(',')})`);
+        const { error: upsertErr, count } = await supabase
           .from('draft_picks')
-          .upsert(rows, { onConflict: 'season_id,round,pick_number' });
-        totalPicks += rows.length;
-        log(`Draft ${draft.draft_id}: inserted ${rows.length} picks`, 'success');
+          .upsert(rows, { onConflict: 'season_id,round,pick_number', count: 'exact' });
+        if (upsertErr) {
+          log(`Draft ${draft.draft_id}: upsert error — ${upsertErr.message} (code ${upsertErr.code})`, 'error');
+        } else {
+          totalPicks += rows.length;
+          log(`Draft ${draft.draft_id}: upserted ${rows.length} rows (db count=${count ?? '?'})`, 'success');
+        }
       }
     } catch (err) {
       log(`Draft ${draft.draft_id} failed: ${String(err)}`, 'error');
@@ -370,6 +472,27 @@ export async function syncTrades(
     return;
   }
 
+  // ── Season boundary rule ────────────────────────────────────────────────
+  // Historically, any trade up to and including this season's rookie draft
+  // belonged to the season that had just finished — only trades made after
+  // the draft counted for this new season. This is a whole-day rule, not a
+  // to-the-minute one: a trade made later the same calendar day as the draft
+  // (before or after the last pick) still counts as "during the draft".
+  // Compare calendar dates (UTC), using each draft's last pick as its actual
+  // end time (falls back to start_time for a draft still in progress).
+  const previousSeasonId = seasonId > 1 ? await findSeasonId(year - 1) : null;
+  const seasonDrafts = await fetchLeagueDrafts(league.league_id);
+  const draftEndTimes = (seasonDrafts ?? [])
+    .map((d) => d.last_picked ?? d.start_time)
+    .filter((t): t is number => t != null);
+  const draftCutoffMs = draftEndTimes.length > 0 ? Math.max(...draftEndTimes) : null;
+  const draftCutoffDate = draftCutoffMs != null ? new Date(draftCutoffMs).toISOString().split('T')[0] : null;
+  if (draftCutoffDate != null) {
+    log(`Season ${year} draft cutoff: ${draftCutoffDate}`);
+  } else if (previousSeasonId != null) {
+    log(`Season ${year} draft not yet scheduled — trades will sync to season ${year - 1} until it is`, 'warn');
+  }
+
   const rosterMap = await buildRosterToTeamMap(league.league_id);
   if (rosterMap.size === 0) {
     log('No roster→team mappings. Run Team Mapping first.', 'error');
@@ -388,11 +511,13 @@ export async function syncTrades(
     return seasonIdCache.get(y) ?? null;
   };
 
-  // Helper: resolve the (R.SS) slot for a traded pick from draft_picks table
+  // Helper: resolve the (R.SS) slot for a traded pick from draft_picks table.
+  // Uses draft_slot (= SleeperDraftPick.draft_slot = original roster_id) which never
+  // changes when a pick is traded, unlike team_id which reflects the final owner.
   const resolvePickSlot = async (
     pickSeason: string,
     round: number,
-    originalTeamId: number,
+    sleeperRosterId: number,  // SleeperTradedPick.roster_id (original owner, never changes)
   ): Promise<string | null> => {
     const sid = await getSeasonIdCached(Number(pickSeason));
     if (sid === null) return null;
@@ -401,7 +526,7 @@ export async function syncTrades(
       .select('pick_number')
       .eq('season_id', sid)
       .eq('round', round)
-      .eq('team_id', originalTeamId)
+      .eq('draft_slot', sleeperRosterId)
       .maybeSingle();
     if (!data) return null;
     const slot = ((data.pick_number - 1) % numTeams) + 1;
@@ -438,9 +563,17 @@ export async function syncTrades(
 
         const tradeDate = new Date(tx.created).toISOString().split('T')[0];
 
+        // Trades on/before this season's draft belong to the season that
+        // just finished; a not-yet-scheduled draft means every trade so far
+        // is still "before the draft". Compared by calendar date (not exact
+        // timestamp) — a trade made later the same day as the draft still
+        // counts as "during the draft".
+        const isBeforeOrAtDraft = draftCutoffDate == null ? true : tradeDate <= draftCutoffDate;
+        const effectiveSeasonId = isBeforeOrAtDraft && previousSeasonId != null ? previousSeasonId : seasonId;
+
         const { data: tradeRow, error: tradeErr } = await supabase
           .from('trades')
-          .insert({ season_id: seasonId, team1_id: team1Id, team2_id: team2Id, trade_date: tradeDate })
+          .insert({ season_id: effectiveSeasonId, team1_id: team1Id, team2_id: team2Id, trade_date: tradeDate })
           .select('id')
           .single();
 
@@ -491,8 +624,11 @@ export async function syncTrades(
           const origStr = origName ? ` (via ${origName})` : '';
 
           let pickDesc: string;
-          if (originalTeamId) {
-            const slot = await resolvePickSlot(pick.season, pick.round, originalTeamId);
+          if (pick.roster_id) {
+            // Pass pick.roster_id (Sleeper's original owner roster ID) directly — this matches
+            // draft_slot stored in draft_picks, which is set from SleeperDraftPick.draft_slot
+            // and never changes as picks are traded.
+            const slot = await resolvePickSlot(pick.season, pick.round, pick.roster_id);
             pickDesc = slot
               ? `${pick.season} ${slot}${origStr}`
               : `${pick.season} ${roundOrdinal(pick.round)} Round Pick${origStr}`;

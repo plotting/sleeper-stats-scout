@@ -59,6 +59,69 @@ export type Database = {
           },
         ]
       }
+      playoff_sim_history: {
+        Row: {
+          as_of_week: number
+          bracket_size: number
+          computed_at: string
+          id: number
+          num_sims: number
+          playoff_pct: number
+          proj_ppg: number
+          proj_seed: number
+          proj_std: number
+          proj_wins: number
+          season_id: number
+          seed_pct: Json
+          team_id: number
+        }
+        Insert: {
+          as_of_week: number
+          bracket_size: number
+          computed_at?: string
+          id?: number
+          num_sims: number
+          playoff_pct: number
+          proj_ppg: number
+          proj_seed: number
+          proj_std: number
+          proj_wins: number
+          season_id: number
+          seed_pct: Json
+          team_id: number
+        }
+        Update: {
+          as_of_week?: number
+          bracket_size?: number
+          computed_at?: string
+          id?: number
+          num_sims?: number
+          playoff_pct?: number
+          proj_ppg?: number
+          proj_seed?: number
+          proj_std?: number
+          proj_wins?: number
+          season_id?: number
+          seed_pct?: Json
+          team_id?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "playoff_sim_history_season_id_fkey"
+            columns: ["season_id"]
+            isOneToOne: false
+            referencedRelation: "seasons"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "playoff_sim_history_team_id_fkey"
+            columns: ["team_id"]
+            isOneToOne: false
+            referencedRelation: "teams"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       schedules: {
         Row: {
           away_team_id: number | null

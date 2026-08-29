@@ -2,34 +2,36 @@
 import { Link } from "react-router-dom";
 import { TableCell, TableRow } from "@/components/ui/table";
 import { TeamRecordsView } from "@/types/database";
-import { getFinalPlacementEmoji } from "../playoff-bracket/utils/bracketUtils";
+import { ComputedTeamRecord } from "./useStandingsData";
+import {
+  getFinalPlacementEmoji,
+  getPlacementLabel,
+  getPlacementColors,
+} from "../playoff-bracket/utils/displayUtils";
+import { cn } from "@/lib/utils";
 
 interface StandingsTableRowProps {
   team: TeamRecordsView;
   index: number;
   seasonId: number;
   teamPlacement?: number;
+  computedRecord?: ComputedTeamRecord;
 }
 
-const StandingsTableRow = ({ team, index, seasonId, teamPlacement }: StandingsTableRowProps) => {
-  // Get placement title based on placement number
-  const getPlacementTitle = (placement?: number): string => {
-    if (!placement) return "";
-    
-    switch (placement) {
-      case 1: return "1st Place";
-      case 2: return "2nd Place";
-      case 3: return "3rd Place";
-      case 4: return "4th Place";
-      case 5: return "5th Place";
-      case 6: return "6th Place";
-      case 7: return "7th Place";
-      case 8: return "8th Place";
-      case 9: return "9th Place";
-      case 10: return "10th Place";
-      default: return `${placement}th Place`;
-    }
-  };
+const StandingsTableRow = ({ team, index, seasonId, teamPlacement, computedRecord }: StandingsTableRowProps) => {
+  const emoji = getFinalPlacementEmoji(teamPlacement);
+  const label = getPlacementLabel(teamPlacement);
+  const colors = getPlacementColors(teamPlacement);
+
+  // Prefer computed values (derived from raw matchup data) over view values
+  const rsWins   = computedRecord?.rsWins   ?? team.regular_season_wins   ?? 0;
+  const rsLosses = computedRecord?.rsLosses ?? team.regular_season_losses ?? 0;
+  const rsTies   = computedRecord?.rsTies   ?? team.regular_season_ties   ?? 0;
+  const rsPF     = computedRecord?.rsPF     ?? team.regular_season_points_for    ?? 0;
+  const rsPA     = computedRecord?.rsPA     ?? team.regular_season_points_against ?? 0;
+  const poWins   = computedRecord?.poWins   ?? team.playoff_wins   ?? 0;
+  const poLosses = computedRecord?.poLosses ?? team.playoff_losses ?? 0;
+  const poTies   = computedRecord?.poTies   ?? team.playoff_ties   ?? 0;
 
   return (
     <TableRow key={team.team_id}>
@@ -37,27 +39,33 @@ const StandingsTableRow = ({ team, index, seasonId, teamPlacement }: StandingsTa
         {index + 1}
       </TableCell>
       <TableCell>
-        <Link 
-          to={`/team/${team.team_id}?season=${seasonId}`} 
+        <Link
+          to={`/team/${team.team_id}?season=${seasonId}`}
           className="text-primary hover:underline"
         >
           {team.team_name}
         </Link>
       </TableCell>
       <TableCell className="text-center">
-        {team.regular_season_wins}-{team.regular_season_losses}
-        {team.regular_season_ties > 0 ? `-${team.regular_season_ties}` : ''}
+        {rsWins}-{rsLosses}
+        {rsTies > 0 ? `-${rsTies}` : ""}
       </TableCell>
       <TableCell className="text-center">
-        {team.playoff_wins}-{team.playoff_losses}
-        {team.playoff_ties > 0 ? `-${team.playoff_ties}` : ''}
+        {poWins}-{poLosses}
+        {poTies > 0 ? `-${poTies}` : ""}
       </TableCell>
-      <TableCell className="text-center">{team.regular_season_points_for.toFixed(1)}</TableCell>
-      <TableCell className="text-center">{team.regular_season_points_against.toFixed(1)}</TableCell>
-      <TableCell className="text-center font-medium text-xl">
+      <TableCell className="text-center">{rsPF.toFixed(1)}</TableCell>
+      <TableCell className="text-center">{rsPA.toFixed(1)}</TableCell>
+      <TableCell className="text-center">
         {teamPlacement ? (
-          <span title={getPlacementTitle(teamPlacement)}>
-            {getFinalPlacementEmoji(teamPlacement)}
+          <span
+            className={cn(
+              "inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium border whitespace-nowrap",
+              colors,
+            )}
+          >
+            <span>{emoji}</span>
+            <span>{label}</span>
           </span>
         ) : ""}
       </TableCell>

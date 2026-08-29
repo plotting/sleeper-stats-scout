@@ -50,6 +50,7 @@ interface CareerStats {
     ties: number;
     percentage: number;
   };
+  careerPpg: number;
 }
 
 interface CareerRecordsSectionProps {
@@ -84,6 +85,10 @@ export const CareerRecordsSection = ({ careerStats }: CareerRecordsSectionProps)
     (a, b) => b.careerRecord.percentage - a.careerRecord.percentage
   );
 
+  const ppgValues = sortedStats.map((s) => s.careerPpg).filter((v) => v > 0);
+  const highestPpg = ppgValues.length ? Math.max(...ppgValues) : null;
+  const lowestPpg = ppgValues.length ? Math.min(...ppgValues) : null;
+
   return (
     <div className="space-y-6">
       <Card className="p-6 overflow-x-auto">
@@ -97,6 +102,7 @@ export const CareerRecordsSection = ({ careerStats }: CareerRecordsSectionProps)
               <TableHead>Playoffs</TableHead>
               <TableHead>Consolation</TableHead>
               <TableHead>Vs All</TableHead>
+              <TableHead>Career PPG</TableHead>
               <TableHead>100+ Games</TableHead>
               <TableHead>High/Low</TableHead>
             </TableRow>
@@ -138,6 +144,15 @@ export const CareerRecordsSection = ({ careerStats }: CareerRecordsSectionProps)
                   <br />
                   <span className="text-sm text-muted-foreground">
                     {stat.hypothetical.percentage.toFixed(1)}%
+                  </span>
+                </TableCell>
+                <TableCell>
+                  <span className={
+                    stat.careerPpg === highestPpg ? "text-emerald-400 font-semibold"
+                    : stat.careerPpg === lowestPpg ? "text-red-400 font-semibold"
+                    : ""
+                  }>
+                    {stat.careerPpg.toFixed(1)}
                   </span>
                 </TableCell>
                 <TableCell>{stat.scoring.hundredPlus}</TableCell>

@@ -9,7 +9,7 @@ interface StandingsTableProps {
 }
 
 const StandingsTable = ({ seasonId }: StandingsTableProps) => {
-  const { sortedByRegularSeason, teamPlacements, isLoading } = useStandingsData(seasonId);
+  const { sortedByRegularSeason, teamPlacements, computedRecords, isLoading } = useStandingsData(seasonId);
 
   if (isLoading) {
     return <p className="text-center py-4">Loading standings...</p>;
@@ -26,7 +26,8 @@ const StandingsTable = ({ seasonId }: StandingsTableProps) => {
               team={team}
               index={index}
               seasonId={seasonId}
-              teamPlacement={teamPlacements.get(team.team_id)}
+              teamPlacement={teamPlacements.get(team.team_id!)}
+              computedRecord={computedRecords.get(team.team_id!)}
             />
           ))}
         </TableBody>

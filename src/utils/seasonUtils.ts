@@ -8,7 +8,7 @@ export const getSeasonLabel = (season: string | number): string => {
 };
 
 export const getAllSeasons = () => {
-  return Array.from({ length: 13 }, (_, i) => ({
+  return Array.from({ length: 14 }, (_, i) => ({
     value: (i + 1).toString(),
     label: getSeasonLabel(i + 1),
   }));

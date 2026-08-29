@@ -36,11 +36,10 @@ const FinalPlacementGames: React.FC<FinalPlacementGamesProps> = ({
   if (seventhPlaceGame) gamesToShow++;
   if (ninthPlaceGame) gamesToShow++;
   
-  // Format team name with seed
+  // Format team name (seed is rendered separately via homeSeed/awaySeed props)
   const formatTeamWithSeed = (teamId: number | null, teamName: string | null) => {
     if (!teamId || !teamName) return "";
-    const seed = teamSeeds.get(teamId);
-    return seed ? `(${seed}) ${teamName}` : teamName;
+    return teamName;
   };
 
   // Update parent counter using a stable dependency array
@@ -78,9 +77,11 @@ const FinalPlacementGames: React.FC<FinalPlacementGamesProps> = ({
             matchupId={matchupIds[0]}
             homeTeam={formatTeamWithSeed(thirdPlaceGame.home_team_id, thirdPlaceGame.home_team_name)}
             homeTeamId={thirdPlaceGame.home_team_id}
+            homeSeed={thirdPlaceGame.home_team_id ? teamSeeds.get(thirdPlaceGame.home_team_id) : undefined}
             homeScore={thirdPlaceGame.home_score}
             awayTeam={formatTeamWithSeed(thirdPlaceGame.away_team_id, thirdPlaceGame.away_team_name)}
             awayTeamId={thirdPlaceGame.away_team_id}
+            awaySeed={thirdPlaceGame.away_team_id ? teamSeeds.get(thirdPlaceGame.away_team_id) : undefined}
             awayScore={thirdPlaceGame.away_score}
             editMode={editMode}
             onTeamSelect={onTeamSelect}
@@ -99,9 +100,11 @@ const FinalPlacementGames: React.FC<FinalPlacementGamesProps> = ({
             matchupId={matchupIds[thirdPlaceGame ? 1 : 0]}
             homeTeam={formatTeamWithSeed(seventhPlaceGame.home_team_id, seventhPlaceGame.home_team_name)}
             homeTeamId={seventhPlaceGame.home_team_id}
+            homeSeed={seventhPlaceGame.home_team_id ? teamSeeds.get(seventhPlaceGame.home_team_id) : undefined}
             homeScore={seventhPlaceGame.home_score}
             awayTeam={formatTeamWithSeed(seventhPlaceGame.away_team_id, seventhPlaceGame.away_team_name)}
             awayTeamId={seventhPlaceGame.away_team_id}
+            awaySeed={seventhPlaceGame.away_team_id ? teamSeeds.get(seventhPlaceGame.away_team_id) : undefined}
             awayScore={seventhPlaceGame.away_score}
             isConsolation
             editMode={editMode}
@@ -121,9 +124,11 @@ const FinalPlacementGames: React.FC<FinalPlacementGamesProps> = ({
             matchupId={matchupIds[thirdPlaceGame && seventhPlaceGame ? 2 : (thirdPlaceGame || seventhPlaceGame ? 1 : 0)]}
             homeTeam={formatTeamWithSeed(ninthPlaceGame.home_team_id, ninthPlaceGame.home_team_name)}
             homeTeamId={ninthPlaceGame.home_team_id}
+            homeSeed={ninthPlaceGame.home_team_id ? teamSeeds.get(ninthPlaceGame.home_team_id) : undefined}
             homeScore={ninthPlaceGame.home_score}
             awayTeam={formatTeamWithSeed(ninthPlaceGame.away_team_id, ninthPlaceGame.away_team_name)}
             awayTeamId={ninthPlaceGame.away_team_id}
+            awaySeed={ninthPlaceGame.away_team_id ? teamSeeds.get(ninthPlaceGame.away_team_id) : undefined}
             awayScore={ninthPlaceGame.away_score}
             isConsolation
             editMode={editMode}

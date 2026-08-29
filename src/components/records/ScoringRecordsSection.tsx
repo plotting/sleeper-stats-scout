@@ -35,6 +35,13 @@ interface CombinedRecord {
   score: string;
 }
 
+interface SeasonPpgRecord {
+  team: string;
+  season: number;
+  games: number;
+  ppg: number;
+}
+
 interface ScoringRecordsSectionProps {
   regularSeasonHigh: ScoringRecord[];
   regularSeasonLow: ScoringRecord[];
@@ -42,6 +49,58 @@ interface ScoringRecordsSectionProps {
   playoffLow: ScoringRecord[];
   largestMargins: MarginRecord[];
   highestCombined: CombinedRecord[];
+  highestSeasonPpg: SeasonPpgRecord[];
+  lowestSeasonPpg: SeasonPpgRecord[];
+}
+
+function ScoreTable({ records }: { records: ScoringRecord[] }) {
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>Score</TableHead>
+          <TableHead>Team</TableHead>
+          <TableHead>Opponent</TableHead>
+          <TableHead>Season/Week</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {records.map((record, index) => (
+          <TableRow key={index}>
+            <TableCell className="font-medium">{record.score.toFixed(1)}</TableCell>
+            <TableCell>{record.team}</TableCell>
+            <TableCell>{record.opponent}</TableCell>
+            <TableCell>{`S${record.season}/W${record.week}`}</TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  );
+}
+
+function PpgTable({ records }: { records: SeasonPpgRecord[] }) {
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>PPG</TableHead>
+          <TableHead>Team</TableHead>
+          <TableHead>Season</TableHead>
+          <TableHead>Games</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {records.map((record, index) => (
+          <TableRow key={index}>
+            <TableCell className="font-medium">{record.ppg.toFixed(1)}</TableCell>
+            <TableCell>{record.team}</TableCell>
+            <TableCell>{`S${record.season}`}</TableCell>
+            <TableCell>{record.games}</TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  );
 }
 
 export const ScoringRecordsSection = ({
@@ -51,99 +110,27 @@ export const ScoringRecordsSection = ({
   playoffLow,
   largestMargins,
   highestCombined,
+  highestSeasonPpg,
+  lowestSeasonPpg,
 }: ScoringRecordsSectionProps) => {
   return (
     <div className="grid gap-6 md:grid-cols-2">
       <Card className="p-6">
         <h2 className="text-xl font-semibold mb-4">Highest Regular Season Scores</h2>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Score</TableHead>
-              <TableHead>Team</TableHead>
-              <TableHead>Opponent</TableHead>
-              <TableHead>Season/Week</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {regularSeasonHigh.map((record, index) => (
-              <TableRow key={index}>
-                <TableCell className="font-medium">{record.score.toFixed(1)}</TableCell>
-                <TableCell>{record.team}</TableCell>
-                <TableCell>{record.opponent}</TableCell>
-                <TableCell>{`S${record.season}/W${record.week}`}</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-
-        <h2 className="text-xl font-semibold mb-4 mt-6">Lowest Regular Season Scores</h2>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Score</TableHead>
-              <TableHead>Team</TableHead>
-              <TableHead>Opponent</TableHead>
-              <TableHead>Season/Week</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {regularSeasonLow.map((record, index) => (
-              <TableRow key={index}>
-                <TableCell className="font-medium">{record.score.toFixed(1)}</TableCell>
-                <TableCell>{record.team}</TableCell>
-                <TableCell>{record.opponent}</TableCell>
-                <TableCell>{`S${record.season}/W${record.week}`}</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+        <ScoreTable records={regularSeasonHigh} />
+      </Card>
+      <Card className="p-6">
+        <h2 className="text-xl font-semibold mb-4">Lowest Regular Season Scores</h2>
+        <ScoreTable records={regularSeasonLow} />
       </Card>
 
       <Card className="p-6">
         <h2 className="text-xl font-semibold mb-4">Highest Playoff Scores</h2>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Score</TableHead>
-              <TableHead>Team</TableHead>
-              <TableHead>Opponent</TableHead>
-              <TableHead>Season/Week</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {playoffHigh.map((record, index) => (
-              <TableRow key={index}>
-                <TableCell className="font-medium">{record.score.toFixed(1)}</TableCell>
-                <TableCell>{record.team}</TableCell>
-                <TableCell>{record.opponent}</TableCell>
-                <TableCell>{`S${record.season}/W${record.week}`}</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-
-        <h2 className="text-xl font-semibold mb-4 mt-6">Lowest Playoff Scores</h2>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Score</TableHead>
-              <TableHead>Team</TableHead>
-              <TableHead>Opponent</TableHead>
-              <TableHead>Season/Week</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {playoffLow.map((record, index) => (
-              <TableRow key={index}>
-                <TableCell className="font-medium">{record.score.toFixed(1)}</TableCell>
-                <TableCell>{record.team}</TableCell>
-                <TableCell>{record.opponent}</TableCell>
-                <TableCell>{`S${record.season}/W${record.week}`}</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+        <ScoreTable records={playoffHigh} />
+      </Card>
+      <Card className="p-6">
+        <h2 className="text-xl font-semibold mb-4">Lowest Playoff Scores</h2>
+        <ScoreTable records={playoffLow} />
       </Card>
 
       <Card className="p-6">
@@ -192,6 +179,17 @@ export const ScoringRecordsSection = ({
             ))}
           </TableBody>
         </Table>
+      </Card>
+
+      <Card className="p-6">
+        <h2 className="text-xl font-semibold mb-4">Highest Single-Season PPG</h2>
+        <p className="text-xs text-muted-foreground -mt-3 mb-4">Regular season, minimum 5 games played</p>
+        <PpgTable records={highestSeasonPpg} />
+      </Card>
+      <Card className="p-6">
+        <h2 className="text-xl font-semibold mb-4">Lowest Single-Season PPG</h2>
+        <p className="text-xs text-muted-foreground -mt-3 mb-4">Regular season, minimum 5 games played</p>
+        <PpgTable records={lowestSeasonPpg} />
       </Card>
     </div>
   );

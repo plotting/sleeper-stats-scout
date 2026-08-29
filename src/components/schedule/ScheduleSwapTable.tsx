@@ -43,6 +43,20 @@ const ScheduleSwapTable = ({ seasonId }: ScheduleSwapTableProps) => {
     return <p className="text-center py-4">Loading schedule data...</p>;
   }
 
+  const hasCompletedGames = matchups?.some(
+    (m) => m.home_score != null && m.away_score != null
+  );
+
+  if (!hasCompletedGames) {
+    return (
+      <Card>
+        <CardContent className="py-12 text-center text-muted-foreground">
+          Season hasn't started yet — schedule analysis will show up after Week 1.
+        </CardContent>
+      </Card>
+    );
+  }
+
   // Calculate swap records
   const calculateSwapRecords = () => {
     if (!teams || !matchups) return {};

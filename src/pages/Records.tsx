@@ -1,4 +1,5 @@
 
+import { useMemo } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -8,24 +9,57 @@ import { MiscRecordsSection } from "@/components/records/MiscRecordsSection";
 import { CareerRecordsSection } from "@/components/records/CareerRecordsSection";
 import { StreaksSection } from "@/components/records/StreaksSection";
 import { AllTimeScheduleRecords } from "@/components/records/AllTimeScheduleRecords";
+import { TopPerformancesSection } from "@/components/records/TopPerformancesSection";
+import { TradeRecordsSection } from "@/components/records/TradeRecordsSection";
 
 const Records = () => {
   const { data: matchups, isLoading: matchupsLoading } = useQuery({
     queryKey: ['matchups-records'],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('matchup_scores_view')
-        .select('*')
-        .order('season_id')
-        .order('week_number');
-      if (error) throw error;
-      
-      // Log a sample of matchups to confirm is_consolation is working
-      console.log("Sample matchups with is_consolation:", data?.slice(0, 5));
-      
-      return data as MatchupScoresView[];
+      const PAGE = 1000;
+      let rows: MatchupScoresView[] = [];
+      let from = 0;
+      while (true) {
+        const { data, error } = await supabase
+          .from('matchup_scores_view')
+          .select('*')
+          .order('season_id')
+          .order('week_number')
+          .range(from, from + PAGE - 1);
+        if (error) throw error;
+        if (!data || data.length === 0) break;
+        rows = rows.concat(data as MatchupScoresView[]);
+        if (data.length < PAGE) break;
+        from += PAGE;
+      }
+      // Deduplicate: old syncs stored the same game twice (home/away swapped).
+      // Without this, every scoring record and career stat double-counts.
+      const seen = new Set<string>();
+      return rows.filter(m => {
+        const ids = [m.home_team_id ?? 0, m.away_team_id ?? 0].sort((a, b) => a - b);
+        const key = `${m.season_id}-${m.week_number}-${ids[0]}-${ids[1]}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
     },
   });
+
+  const { data: seasons } = useQuery({
+    queryKey: ['seasons-list'],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('seasons').select('id, year, season_number');
+      if (error) throw error;
+      return data;
+    },
+  });
+
+  const yearMap = useMemo(() => {
+    const m = new Map<number, number>();
+    if (!seasons) return m;
+    for (const s of seasons) m.set(s.id, s.year ?? s.season_number);
+    return m;
+  }, [seasons]);
 
   const calculateCareerStats = () => {
     if (!matchups) return [];
@@ -45,6 +79,8 @@ const Records = () => {
         vsHighest: number;
         vsLowest: number;
       };
+      regularSeasonPointTotal: number;
+      regularSeasonGames: number;
     }>();
 
     matchups.forEach(match => {
@@ -73,7 +109,9 @@ const Records = () => {
               timesLowest: 0,
               vsHighest: 0,
               vsLowest: 0,
-            }
+            },
+            regularSeasonPointTotal: 0,
+            regularSeasonGames: 0,
           });
         }
 
@@ -93,6 +131,12 @@ const Records = () => {
         if (score > otherScore) target.wins++;
         else if (score < otherScore) target.losses++;
         else target.ties++;
+
+        // Regular-season points total, for career PPG
+        if (!isConsolation && !isPlayoff) {
+          stat.regularSeasonPointTotal += score;
+          stat.regularSeasonGames++;
+        }
 
         // Update scoring stats
         if (score >= 100) stat.scoring.hundredPlus++;
@@ -168,7 +212,8 @@ const Records = () => {
       hypothetical: {
         ...stat.hypothetical,
         percentage: calculatePercentage(stat.hypothetical)
-      }
+      },
+      careerPpg: stat.regularSeasonGames > 0 ? stat.regularSeasonPointTotal / stat.regularSeasonGames : 0,
     }));
   };
 
@@ -261,6 +306,36 @@ const Records = () => {
     };
   };
 
+  // Single-season PPG (regular season only, min 5 games so a partial/in-progress
+  // season like the current one can't sneak onto the list with a tiny sample).
+  const calculateSeasonPpgRecords = () => {
+    if (!matchups) return { highestSeasonPpg: [], lowestSeasonPpg: [] };
+
+    const bySeasonTeam = new Map<string, { team: string; season: number; total: number; games: number }>();
+    for (const m of matchups) {
+      if (m.is_playoff || m.is_consolation) continue;
+      const addTeam = (team: string | null, score: number | null) => {
+        if (!team || score == null) return;
+        const key = `${m.season_id}-${team}`;
+        if (!bySeasonTeam.has(key)) bySeasonTeam.set(key, { team, season: m.season_id, total: 0, games: 0 });
+        const rec = bySeasonTeam.get(key)!;
+        rec.total += score;
+        rec.games++;
+      };
+      addTeam(m.home_team_name, m.home_score);
+      addTeam(m.away_team_name, m.away_score);
+    }
+
+    const seasonPpgs = [...bySeasonTeam.values()]
+      .filter((r) => r.games >= 5)
+      .map((r) => ({ team: r.team, season: r.season, games: r.games, ppg: r.total / r.games }));
+
+    return {
+      highestSeasonPpg: [...seasonPpgs].sort((a, b) => b.ppg - a.ppg).slice(0, 10),
+      lowestSeasonPpg: [...seasonPpgs].sort((a, b) => a.ppg - b.ppg).slice(0, 10),
+    };
+  };
+
   const calculateHypotheticalRecords = () => {
     if (!matchups) return { best: [], worst: [] };
 
@@ -334,6 +409,7 @@ const Records = () => {
 
   const careerStats = calculateCareerStats();
   const scoringRecords = calculateScoringRecords();
+  const seasonPpgRecords = calculateSeasonPpgRecords();
   const hypotheticalRecords = calculateHypotheticalRecords();
 
   if (matchupsLoading) {
@@ -349,34 +425,52 @@ const Records = () => {
 
       <Tabs defaultValue="scoring" className="space-y-4">
         <TabsList>
-          <TabsTrigger value="scoring">Scoring Records</TabsTrigger>
-          <TabsTrigger value="career">Career Records</TabsTrigger>
-          <TabsTrigger value="streaks">Streaks</TabsTrigger>
-          <TabsTrigger value="schedules">Schedules</TabsTrigger>
-          <TabsTrigger value="misc">Miscellaneous</TabsTrigger>
+          <TabsTrigger value="scoring">Scoring</TabsTrigger>
+          <TabsTrigger value="history">Team History</TabsTrigger>
+          <TabsTrigger value="schedule">Schedule &amp; Luck</TabsTrigger>
+          <TabsTrigger value="trades">Trade Records</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="scoring">
-          <ScoringRecordsSection {...scoringRecords} />
+        <TabsContent value="scoring" className="space-y-10">
+          <section>
+            <h2 className="text-lg font-semibold mb-4">Scoring Records</h2>
+            <ScoringRecordsSection {...scoringRecords} {...seasonPpgRecords} />
+          </section>
+          <section>
+            <h2 className="text-lg font-semibold mb-4">Top Performances</h2>
+            {matchups && (
+              <TopPerformancesSection allMatchups={matchups} yearMap={yearMap} />
+            )}
+          </section>
         </TabsContent>
 
-        <TabsContent value="career">
-          <CareerRecordsSection careerStats={careerStats} />
+        <TabsContent value="history" className="space-y-10">
+          <section>
+            <h2 className="text-lg font-semibold mb-4">Career Records</h2>
+            <CareerRecordsSection careerStats={careerStats} />
+          </section>
+          <section>
+            <h2 className="text-lg font-semibold mb-4">Streaks</h2>
+            <StreaksSection matchups={matchups || []} />
+          </section>
         </TabsContent>
 
-        <TabsContent value="streaks">
-          <StreaksSection matchups={matchups || []} />
+        <TabsContent value="schedule" className="space-y-10">
+          <section>
+            <h2 className="text-lg font-semibold mb-4">Schedules</h2>
+            <AllTimeScheduleRecords matchups={matchups || []} />
+          </section>
+          <section>
+            <h2 className="text-lg font-semibold mb-4">Miscellaneous</h2>
+            <MiscRecordsSection
+              bestRecords={hypotheticalRecords.best}
+              worstRecords={hypotheticalRecords.worst}
+            />
+          </section>
         </TabsContent>
 
-        <TabsContent value="schedules">
-          <AllTimeScheduleRecords matchups={matchups || []} />
-        </TabsContent>
-
-        <TabsContent value="misc">
-          <MiscRecordsSection 
-            bestRecords={hypotheticalRecords.best}
-            worstRecords={hypotheticalRecords.worst}
-          />
+        <TabsContent value="trades">
+          <TradeRecordsSection />
         </TabsContent>
       </Tabs>
     </div>

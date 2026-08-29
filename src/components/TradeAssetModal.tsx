@@ -19,12 +19,23 @@ interface TradeAssetModalProps {
   assetDescription: string | null;
 }
 
+/** Strip internal markers and provenance info so callers passing either the
+ *  raw stored description or the cleaned display description still match. */
+function normalizeDesc(raw: string): string {
+  return raw
+    .replace(/\s*\[fut:\d+\]/g, "")
+    .replace(/\s*\(via [^)]+\)/g, "")
+    .trim();
+}
+
 const TradeAssetModal = ({ open, onOpenChange, assetDescription }: TradeAssetModalProps) => {
+  const normalizedTarget = assetDescription ? normalizeDesc(assetDescription) : null;
+
   const { data: trades, isLoading } = useQuery({
-    queryKey: ["trades-by-asset", assetDescription],
+    queryKey: ["trades-by-asset", normalizedTarget],
     queryFn: async () => {
-      if (!assetDescription) return [];
-      
+      if (!normalizedTarget) return [];
+
       const { data, error } = await supabase
         .from("trades")
         .select(`
@@ -42,17 +53,17 @@ const TradeAssetModal = ({ open, onOpenChange, assetDescription }: TradeAssetMod
           ),
           season:seasons(season_number)
         `);
-      
+
       if (error) throw error;
-      
+
       // Filter out trades that don't have the asset in their items
-      const filteredTrades = data?.filter(trade => 
-        trade.items.some(item => item.item_description === assetDescription)
+      const filteredTrades = data?.filter(trade =>
+        trade.items.some(item => normalizeDesc(item.item_description) === normalizedTarget)
       );
-      
+
       return filteredTrades || [];
     },
-    enabled: !!assetDescription && open
+    enabled: !!normalizedTarget && open
   });
 
   if (!assetDescription) return null;
@@ -76,7 +87,7 @@ const TradeAssetModal = ({ open, onOpenChange, assetDescription }: TradeAssetMod
             {trades.map((trade) => {
               // Find the specific item that matches our asset
               const targetItem = trade.items.find(item => 
-                item.item_description === assetDescription
+                normalizeDesc(item.item_description) === normalizedTarget
               );
               
               if (!targetItem) return null;
@@ -133,7 +144,7 @@ const TradeAssetModal = ({ open, onOpenChange, assetDescription }: TradeAssetMod
                           {team1Items.length > 0 ? (
                             team1Items.map((item, index) => (
                               <li key={index} className={
-                                item.item_description === assetDescription 
+                                normalizeDesc(item.item_description) === normalizedTarget 
                                   ? "font-bold text-primary" 
                                   : "text-muted-foreground"
                               }>
@@ -151,7 +162,7 @@ const TradeAssetModal = ({ open, onOpenChange, assetDescription }: TradeAssetMod
                           {team2Items.length > 0 ? (
                             team2Items.map((item, index) => (
                               <li key={index} className={
-                                item.item_description === assetDescription 
+                                normalizeDesc(item.item_description) === normalizedTarget 
                                   ? "font-bold text-primary" 
                                   : "text-muted-foreground"
                               }>
