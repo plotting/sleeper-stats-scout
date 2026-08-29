@@ -308,6 +308,10 @@ function AllTimeTabContent({ expectedVorpCurve, curveReady }: {
         if (!map.has(key)) map.set(key, []);
         map.get(key)!.push(p);
       }
+      const ROUND_BUCKETS = ["1-2", "3-4", "5-6", "7-8", "9+"] as const;
+      const bucketOf = (round: number): typeof ROUND_BUCKETS[number] =>
+        round <= 2 ? "1-2" : round <= 4 ? "3-4" : round <= 6 ? "5-6" : round <= 8 ? "7-8" : "9+";
+
       const rows = [...map.entries()].map(([team_name, tp]) => {
         const totalVorp   = tp.reduce((s, p) => s + Number(p.five_yr_vorp ?? 0), 0);
         const pvs         = tp.map(getPV).filter((v): v is number => v !== null);
@@ -321,6 +325,29 @@ function AllTimeTabContent({ expectedVorpCurve, curveReady }: {
           const yrAvg  = yrPvs.length ? yrPvs.reduce((s, v) => s + v, 0) / yrPvs.length : null;
           return { year: yr, picks: yp, total_vorp: yrVorp, avg_pick_val: yrAvg };
         });
+
+        // Best/worst single pick (trophy-card callouts) and per-round-bucket
+        // average value, so a team's draft profile reads at a glance instead
+        // of requiring a scroll through every individual pick.
+        const withPv = tp.map((p) => ({ p, pv: getPV(p) })).filter((x): x is { p: DraftGradeRow; pv: number } => x.pv !== null);
+        let bestPick: { p: DraftGradeRow; pv: number } | null = null;
+        let worstPick: { p: DraftGradeRow; pv: number } | null = null;
+        for (const x of withPv) {
+          if (!bestPick || x.pv > bestPick.pv) bestPick = x;
+          if (!worstPick || x.pv < worstPick.pv) worstPick = x;
+        }
+        const bucketSums = new Map<string, { sum: number; n: number }>();
+        for (const x of withPv) {
+          const b = bucketOf(x.p.round);
+          if (!bucketSums.has(b)) bucketSums.set(b, { sum: 0, n: 0 });
+          const e = bucketSums.get(b)!;
+          e.sum += x.pv; e.n++;
+        }
+        const roundBuckets = ROUND_BUCKETS.map((label) => {
+          const e = bucketSums.get(label);
+          return { label, avg: e && e.n > 0 ? e.sum / e.n : null };
+        });
+
         return {
           team_name,
           pick_count: tp.length,
@@ -330,8 +357,20 @@ function AllTimeTabContent({ expectedVorpCurve, curveReady }: {
           avg_pick_value: isFinite(avgPickVal) ? avgPickVal : 0,
           pick_efficiency_grade: teamPickValueGrade(isFinite(avgPickVal) ? avgPickVal : 0),
           byYear,
+          bestPick,
+          worstPick,
+          roundBuckets,
+          percentile: 0, // filled in below, once every team's avg_pick_value is known
         };
       });
+
+      // Percentile = share of the league this team's pick-value efficiency beats.
+      const byEfficiency = [...rows].sort((a, b) => a.avg_pick_value - b.avg_pick_value);
+      const percentileByName = new Map(
+        byEfficiency.map((r, i) => [r.team_name, byEfficiency.length > 1 ? Math.round((i / (byEfficiency.length - 1)) * 100) : 100]),
+      );
+      for (const r of rows) r.percentile = percentileByName.get(r.team_name) ?? 0;
+
       return sort === "vorp"
         ? rows.sort((a, b) => b.total_vorp - a.total_vorp)
         : rows.sort((a, b) => b.avg_pick_value - a.avg_pick_value);
@@ -395,6 +434,7 @@ function AllTimeTabContent({ expectedVorpCurve, curveReady }: {
                   <TableHead className="w-20 text-center">VORP</TableHead>
                   <TableHead className="text-right w-28">Avg Pick Val</TableHead>
                   <TableHead className="w-24 text-center">Efficiency</TableHead>
+                  <TableHead className="w-20 text-center">Percentile</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -427,6 +467,7 @@ function AllTimeTabContent({ expectedVorpCurve, curveReady }: {
                       {formatPickVal(team.avg_pick_value)}
                     </TableCell>
                     <TableCell className="text-center"><GradeBadge grade={team.pick_efficiency_grade} /></TableCell>
+                    <TableCell className="text-center text-xs font-mono text-slate-400">Top {100 - team.percentile}%</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -451,6 +492,59 @@ function AllTimeTabContent({ expectedVorpCurve, curveReady }: {
             </div>
           </CardHeader>
           <CardContent className="pt-2 space-y-6">
+            {/* Trophy cards + round-value profile — the career-level snapshot */}
+            <div className="grid gap-3 sm:grid-cols-3">
+              {selected.bestPick && (
+                <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/[0.04] p-3">
+                  <p className="text-[10px] font-semibold text-emerald-400 uppercase tracking-wider mb-1">Best Pick</p>
+                  <p className="text-sm font-bold text-white">{selected.bestPick.p.player_name}</p>
+                  <p className="text-xs text-slate-500">
+                    {selected.bestPick.p.draft_year} · {selected.bestPick.p.round}.{String(selected.bestPick.p.pick_number).padStart(2, "0")}
+                    <span className="text-emerald-400 font-mono ml-1.5">{formatPickVal(selected.bestPick.pv)}</span>
+                  </p>
+                </div>
+              )}
+              {selected.worstPick && (
+                <div className="rounded-lg border border-red-500/20 bg-red-500/[0.04] p-3">
+                  <p className="text-[10px] font-semibold text-red-400 uppercase tracking-wider mb-1">Costliest Miss</p>
+                  <p className="text-sm font-bold text-white">{selected.worstPick.p.player_name}</p>
+                  <p className="text-xs text-slate-500">
+                    {selected.worstPick.p.draft_year} · {selected.worstPick.p.round}.{String(selected.worstPick.p.pick_number).padStart(2, "0")}
+                    <span className="text-red-400 font-mono ml-1.5">{formatPickVal(selected.worstPick.pv)}</span>
+                  </p>
+                </div>
+              )}
+              <div className="rounded-lg border border-white/10 bg-white/[0.02] p-3">
+                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-1">League Percentile</p>
+                <p className="text-sm font-bold text-white">Top {100 - selected.percentile}%</p>
+                <p className="text-xs text-slate-500">by pick-value efficiency</p>
+              </div>
+            </div>
+
+            <div>
+              <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-2">Value by Round</p>
+              <div className="flex items-end gap-3 h-16">
+                {selected.roundBuckets.map(({ label, avg }) => {
+                  const maxAbs = Math.max(20, ...selected.roundBuckets.map((b) => Math.abs(b.avg ?? 0)));
+                  const heightPct = avg === null ? 0 : Math.min(100, (Math.abs(avg) / maxAbs) * 100);
+                  return (
+                    <div key={label} className="flex-1 flex flex-col items-center justify-end h-full gap-1">
+                      <div className="w-full flex-1 flex flex-col justify-end">
+                        {avg !== null && (
+                          <div
+                            className={cn("w-full rounded-sm", avg >= 0 ? "bg-emerald-500/60" : "bg-red-500/60")}
+                            style={{ height: `${heightPct}%` }}
+                            title={formatPickVal(avg)}
+                          />
+                        )}
+                      </div>
+                      <span className="text-[10px] text-slate-500">R{label}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
             {selected.byYear.map(({ year, picks: yp, total_vorp: yrVorp, avg_pick_val: yrAvgPv }) => (
               <div key={year}>
                 <div className="flex items-center gap-3 mb-2 pb-1.5 border-b border-white/10">

@@ -17,6 +17,7 @@ import Rookies from "./pages/Rookies";
 import DraftGrades from "./pages/DraftGrades";
 import DynastyDigest from "./pages/DynastyDigest";
 import GMScouting from "./pages/GMScouting";
+import Hall from "./pages/Hall";
 import NotFound from "./pages/NotFound";
 import "./App.css";
 
@@ -52,6 +53,7 @@ function App() {
               <Route path="/draft-grades" element={<DraftGrades />} />
               <Route path="/dynasty-digest" element={<DynastyDigest />} />
               <Route path="/gm-scouting" element={<GMScouting />} />
+              <Route path="/hall" element={<Hall />} />
               <Route path="/season14" element={<Season14 />} />
               <Route path="/admin" element={<Admin />} />
               <Route path="*" element={<NotFound />} />
