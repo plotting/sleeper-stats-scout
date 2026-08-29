@@ -28,8 +28,6 @@ import {
   LineChart,
   Flame,
   GraduationCap,
-  Newspaper,
-  Sparkles,
   MoreHorizontal,
   Rss,
   UserSearch,
@@ -53,13 +51,14 @@ const links = [
 
 // Everything else lives behind "More" so the primary bar stays short —
 // splitting these out actually narrows the nav instead of just appending to it.
+// Recaps and Rookies are intentionally absent: Recaps now lives as a sub-tab
+// under Season14, and Rookies' functionality was absorbed into Draft Grades'
+// ADP/Pick Value tabs — both dropped from the nav upstream on main.
 const moreLinks = [
   { to: '/weekly-records', label: 'By Week', icon: BarChart2 },
   { to: '/head-to-head', label: 'H2H', icon: Swords },
   { to: '/analytics', label: 'Analytics', icon: LineChart },
   { to: '/draft-grades', label: 'Grades', icon: GraduationCap },
-  { to: '/recaps', label: 'Recaps', icon: Newspaper },
-  { to: '/rookies', label: 'Rookies', icon: Sparkles },
   { to: '/dynasty-digest', label: 'Digest', icon: Rss },
   { to: '/gm-scouting', label: 'GM Scout', icon: UserSearch },
 ];
