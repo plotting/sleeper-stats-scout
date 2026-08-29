@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from "react";
+import React from "react";
 import { MatchupScoresView } from "@/types/database";
 import WeekLabels from "./WeekLabels";
 import type { Team } from "@/types/database";
@@ -9,7 +9,7 @@ import PlayoffSemifinals from "./PlayoffSemifinals";
 import PlacementGames from "./PlacementGames";
 import ConsolationBracket from "./ConsolationBracket";
 import ChampionshipGame from "./ChampionshipGame";
-import { getPlayoffMatchups, getConsolationMatchups, getWeekFifteenConsolation } from "./five-team/fiveTeamUtils";
+import BracketSection from "./BracketSection";
 
 interface SixTeamPlayoffsProps {
   matchups: MatchupScoresView[];
@@ -21,179 +21,186 @@ interface SixTeamPlayoffsProps {
   seasonNumber?: number;
 }
 
-const SixTeamPlayoffs: React.FC<SixTeamPlayoffsProps> = ({ 
+const SixTeamPlayoffs: React.FC<SixTeamPlayoffsProps> = ({
   matchups,
   editMode = false,
   onTeamSelect,
   onScoreUpdate,
   teams = [],
   teamSeeds = new Map(),
-  seasonNumber = 11
+  seasonNumber = 11,
 }) => {
-  const [matchupCounter, setMatchupCounter] = useState(0);
-  
-  // Get playoff week numbers based on season
-  const { playoffStartWeek, champWeek, displayWeeks, isLoserAdvancesFormat } = getPlayoffWeeks(seasonNumber);
-  
-  // Filter playoff matchups (non-consolation)
-  const playoffMatchups = getPlayoffMatchups(matchups);
+  const { playoffStartWeek, champWeek, displayWeeks, isLoserAdvancesFormat } =
+    getPlayoffWeeks(seasonNumber);
 
-  // Get wildcard matchups (first playoff week)
-  const wildcardGames = playoffMatchups.filter(
-    (matchup) => matchup.week_number === playoffStartWeek
-  );
-  
-  // Sort wildcard games by seed to put higher seeds on top
+  // ── Seasons 11-12: 6-team bracket (seeds 1-6) ────────────────────────────
+  const bracketSize = 6;
+  const bracketTeamIds: Set<number> =
+    teamSeeds.size > 0
+      ? new Set(
+          [...teamSeeds.entries()]
+            .filter(([, seed]) => seed <= bracketSize)
+            .map(([id]) => id)
+        )
+      : new Set();
+
+  const isBracket = (m: MatchupScoresView) =>
+    bracketTeamIds.size > 0
+      ? bracketTeamIds.has(m.home_team_id!) && bracketTeamIds.has(m.away_team_id!)
+      : m.is_playoff === true && !m.is_consolation;
+
+  // NOTE: intentionally the loose "!isBracket" check (at least one team outside
+  // the bracket), not the stricter "both teams outside" check. When our seed
+  // computation disagrees with Sleeper's actual historical bracket (this can
+  // happen on multi-way ties — see Season 12, where Aron was the real 6-seed
+  // per Sleeper's bracket API but our win%/PF tiebreak ranks CJ 6th instead),
+  // the strict check causes real games between two "consolation-looking" teams
+  // to be silently dropped whenever one of them is wrongly seeded into the
+  // bracket. The loose check risks a bracket team's bye-week game being
+  // mislabeled as a placement game, but never loses a real game from display.
+  const isConsolationGame = (m: MatchupScoresView) => !isBracket(m);
+
+  // ── Wildcard (week playoffStartWeek) ─────────────────────────────────────
+  const allWildcardWeek = matchups.filter(m => m.week_number === playoffStartWeek);
+  const wildcardGames = allWildcardWeek.filter(m => isBracket(m));
+  const consolationWeek1 = allWildcardWeek.filter(isConsolationGame);
+
+  // Track which bracket seeds lost the wildcard — they drop to a lower bracket track.
+  const wildcardLosers = new Set<number>();
+  for (const m of wildcardGames) {
+    if (m.home_score == null || m.away_score == null) continue;
+    const loserId = m.home_score >= m.away_score ? m.away_team_id! : m.home_team_id!;
+    if (loserId) wildcardLosers.add(loserId);
+  }
+
+  // Sort wildcard by seed
   const sortedWildcardGames = [...wildcardGames].sort((a, b) => {
-    const aHigherSeed = Math.min(teamSeeds.get(a.home_team_id || 0) || 999, teamSeeds.get(a.away_team_id || 0) || 999);
-    const bHigherSeed = Math.min(teamSeeds.get(b.home_team_id || 0) || 999, teamSeeds.get(b.away_team_id || 0) || 999);
-    return aHigherSeed - bHigherSeed;
+    const aBest = Math.min(teamSeeds.get(a.home_team_id ?? 0) ?? 999, teamSeeds.get(a.away_team_id ?? 0) ?? 999);
+    const bBest = Math.min(teamSeeds.get(b.home_team_id ?? 0) ?? 999, teamSeeds.get(b.away_team_id ?? 0) ?? 999);
+    return aBest - bBest;
   });
 
-  // Get semifinal matchups (second playoff week)
-  const semiFinals = playoffMatchups.filter(
-    (matchup) => matchup.week_number === playoffStartWeek + 1
+  // ── Semis (week playoffStartWeek + 1) ─────────────────────────────────────
+  const semisWeek = playoffStartWeek + 1;
+  const allSemiWeek = matchups.filter(m => m.week_number === semisWeek);
+  // True semis: bracket games that are NOT between two wildcard losers
+  const semiFinals = allSemiWeek.filter(m =>
+    isBracket(m) &&
+    !(wildcardLosers.has(m.home_team_id!) && wildcardLosers.has(m.away_team_id!))
   );
-  
-  // Sort semifinal matchups by seed to put higher seeds on top
+  // Wildcard-loser bracket game (e.g. seeds 5v6 in week 16 for 5th/6th place track)
+  const wildcardLosersBracketGame = allSemiWeek.find(m =>
+    isBracket(m) &&
+    wildcardLosers.has(m.home_team_id!) && wildcardLosers.has(m.away_team_id!)
+  );
+  const consolationWeek2 = allSemiWeek.filter(isConsolationGame);
+
   const sortedSemiFinals = [...semiFinals].sort((a, b) => {
-    const aHigherSeed = Math.min(teamSeeds.get(a.home_team_id || 0) || 999, teamSeeds.get(a.away_team_id || 0) || 999);
-    const bHigherSeed = Math.min(teamSeeds.get(b.home_team_id || 0) || 999, teamSeeds.get(b.away_team_id || 0) || 999);
-    return aHigherSeed - bHigherSeed;
+    const aBest = Math.min(teamSeeds.get(a.home_team_id ?? 0) ?? 999, teamSeeds.get(a.away_team_id ?? 0) ?? 999);
+    const bBest = Math.min(teamSeeds.get(b.home_team_id ?? 0) ?? 999, teamSeeds.get(b.away_team_id ?? 0) ?? 999);
+    return aBest - bBest;
   });
 
-  // Get championship matchup (final playoff week)
-  const championship = playoffMatchups.find(
-    (matchup) => matchup.week_number === champWeek
+  // Semi winners / losers
+  const semiFinalWinners = new Set<number>();
+  const semiFinalLosers = new Set<number>();
+  for (const m of semiFinals) {
+    if (m.home_score == null || m.away_score == null) continue;
+    const [wid, lid] =
+      m.home_score >= m.away_score
+        ? [m.home_team_id!, m.away_team_id!]
+        : [m.away_team_id!, m.home_team_id!];
+    if (wid) semiFinalWinners.add(wid);
+    if (lid) semiFinalLosers.add(lid);
+  }
+
+  // ── Finals (champWeek) ────────────────────────────────────────────────────
+  const allChampWeek = matchups.filter(m => m.week_number === champWeek);
+  const bracketChampWeek = allChampWeek.filter(m => isBracket(m));
+  const consolationWeek3 = allChampWeek.filter(isConsolationGame);
+
+  // Championship = champ-week bracket game between two semi-winners
+  const championship = bracketChampWeek.find(
+    m => semiFinalWinners.has(m.home_team_id!) && semiFinalWinners.has(m.away_team_id!)
+  ) ?? bracketChampWeek[0];
+
+  // 3rd place = champ-week bracket game between two semi-losers
+  const thirdPlaceGame = bracketChampWeek.find(
+    m =>
+      m !== championship &&
+      semiFinalLosers.has(m.home_team_id!) &&
+      semiFinalLosers.has(m.away_team_id!)
   );
 
-  // Get third place game (between semifinal losers)
-  const semiFinalLosers = sortedSemiFinals
-    .filter(match => match.home_score !== null && match.away_score !== null)
-    .map(match => match.home_score! > match.away_score! ? match.away_team_id : match.home_team_id);
+  // ── Consolation ordering — dynamic week detection ─────────────────────────
+  // If consolation ends before champWeek (e.g. only 4 consolation teams in a
+  // 6-bracket season), consolationWeek3 will be empty.  In that case the
+  // "finals" are in consolationWeek2 and the "semis" are in consolationWeek1.
+  const consolFinalsGames = consolationWeek3.length > 0 ? consolationWeek3 : consolationWeek2;
+  const consolSemisGames  = consolationWeek3.length > 0 ? consolationWeek2 : consolationWeek1;
+  const consolFinalWeekNum = consolationWeek3.length > 0 ? champWeek : semisWeek;
 
-  const thirdPlaceGame = playoffMatchups.find(
-    (matchup) => 
-      matchup.week_number === champWeek && 
-      matchup !== championship &&
-      semiFinalLosers.includes(matchup.home_team_id || 0) && 
-      semiFinalLosers.includes(matchup.away_team_id || 0)
+  const consolSemiWinners = new Set<number>();
+  const consolSemiLosers  = new Set<number>();
+  for (const m of consolSemisGames) {
+    if (m.home_score == null || m.away_score == null) continue;
+    const [wid, lid] =
+      m.home_score >= m.away_score
+        ? [m.home_team_id!, m.away_team_id!]
+        : [m.away_team_id!, m.home_team_id!];
+    if (wid) consolSemiWinners.add(wid);
+    if (lid) consolSemiLosers.add(lid);
+  }
+
+  // 5th place: consolation finals game where BOTH teams won their consol semi
+  const fifthPlaceGame = consolFinalsGames.find(
+    m => consolSemiWinners.has(m.home_team_id!) && consolSemiWinners.has(m.away_team_id!)
+  );
+  // 9th place (toilet bowl): consolation finals game where BOTH teams lost their consol semi
+  const ninthPlaceGame = consolFinalsGames.find(
+    m => consolSemiLosers.has(m.home_team_id!) && consolSemiLosers.has(m.away_team_id!)
+  );
+  // 7th place: remaining consolation finals game (may be undefined if only 4 consol teams)
+  const seventhPlaceGame = consolFinalsGames.find(
+    m => m !== fifthPlaceGame && m !== ninthPlaceGame
   );
 
-  // Get consolation matchups
-  const consolationMatchups = getConsolationMatchups(matchups);
-
-  // Get week 15 consolation matchups (first round)
-  const weekFifteenConsolation = getWeekFifteenConsolation(consolationMatchups);
-  
-  // Sort week 15 consolation matchups by seed
-  const sortedWeekFifteenConsolation = [...weekFifteenConsolation].sort((a, b) => {
-    const aHigherSeed = Math.min(teamSeeds.get(a.home_team_id || 0) || 999, teamSeeds.get(a.away_team_id || 0) || 999);
-    const bHigherSeed = Math.min(teamSeeds.get(b.home_team_id || 0) || 999, teamSeeds.get(b.away_team_id || 0) || 999);
-    return aHigherSeed - bHigherSeed;
+  // Sort consolation week 1 by seed
+  const sortedConsolationWeek1 = [...consolationWeek1].sort((a, b) => {
+    const aBest = Math.min(teamSeeds.get(a.home_team_id ?? 0) ?? 999, teamSeeds.get(a.away_team_id ?? 0) ?? 999);
+    const bBest = Math.min(teamSeeds.get(b.home_team_id ?? 0) ?? 999, teamSeeds.get(b.away_team_id ?? 0) ?? 999);
+    return aBest - bBest;
   });
 
-  // Get week 16 consolation matchups (second round)
-  const weekSixteenConsolation = consolationMatchups.filter(
-    (matchup) => matchup.week_number === playoffStartWeek + 1
-  );
-  
-  // Find specific placement games for week 16 consolation matchups
-  // The placement games are identified based on the image provided by the user
-  const fifthPlaceGame = weekSixteenConsolation.find(matchup => {
-    // Look for Marshall vs Aron for season 12
-    if (seasonNumber === 12) {
-      return (matchup.home_team_name?.includes("Marshall") || matchup.away_team_name?.includes("Marshall")) && 
-             (matchup.home_team_name?.includes("Aron") || matchup.away_team_name?.includes("Aron"));
-    } else if (seasonNumber === 11) {
-      // For season 11, look for Brian vs Marshall
-      return (matchup.home_team_name?.includes("Brian") && matchup.away_team_name?.includes("Marshall")) ||
-             (matchup.away_team_name?.includes("Brian") && matchup.home_team_name?.includes("Marshall"));
-    }
-    
-    // For other seasons, fallback to first consolation game
-    return weekSixteenConsolation.length > 0;
-  });
-  
-  // For 7th place game, use Nate vs Melissa for season 12
-  const seventhPlaceGame = weekSixteenConsolation.find(matchup => {
-    if (seasonNumber === 12) {
-      return (matchup.home_team_name?.includes("Nate") || matchup.away_team_name?.includes("Nate")) &&
-             (matchup.home_team_name?.includes("Melissa") || matchup.away_team_name?.includes("Melissa")) &&
-             matchup !== fifthPlaceGame;
-    } else if (seasonNumber === 11) {
-      // Season 11 specific match
-      return (matchup.home_team_name?.includes("Nate") || matchup.away_team_name?.includes("Nate")) &&
-             matchup !== fifthPlaceGame;
-    }
-    
-    // For other seasons, find a likely 7th place game
-    return weekSixteenConsolation.length > 1 && matchup !== fifthPlaceGame;
-  });
-  
-  // For 9th place game (toilet bowl), use CJ vs Thom for season 12
-  const ninthPlaceGame = weekSixteenConsolation.find(matchup => {
-    if (seasonNumber === 12) {
-      return (matchup.home_team_name?.includes("CJ") || matchup.away_team_name?.includes("CJ")) &&
-             (matchup.home_team_name?.includes("Thom") || matchup.away_team_name?.includes("Thom")) &&
-             matchup !== fifthPlaceGame &&
-             matchup !== seventhPlaceGame;
-    } else if (seasonNumber === 11) {
-      // Season 11 specific match
-      return (matchup.home_team_name?.includes("Melissa") || matchup.away_team_name?.includes("Melissa")) &&
-             matchup !== fifthPlaceGame &&
-             matchup !== seventhPlaceGame;
-    }
-    
-    // For other seasons, find a likely toilet bowl game
-    return matchup !== fifthPlaceGame && matchup !== seventhPlaceGame;
-  });
-  
-  // Remove the identified games from the general consolation list
-  const otherWeekSixteenConsolation = weekSixteenConsolation.filter(
-    matchup => 
-      matchup !== fifthPlaceGame && 
-      matchup !== seventhPlaceGame && 
-      matchup !== ninthPlaceGame
-  );
+  // In a 6-team bracket, consolation placements start at 7th.
+  // The last consolation game is between teams placing (N-1)th and Nth where N = total teams.
+  const totalTeams = teamSeeds.size > 0 ? teamSeeds.size : 10;
+  const lastPlaceNum = totalTeams - 1;
+  const ninthPlaceTitle = `${lastPlaceNum}th Place (Last Place)`;
+  const consolationTitle = isLoserAdvancesFormat
+    ? "Consolation Bracket (Loser Advances)"
+    : "Consolation Bracket";
+  const toiletBowlRoundTitle = isLoserAdvancesFormat
+    ? "Toilet Bowl Round 1: Loser advances"
+    : "Consolation Round 1";
 
-  // For seasons 8-12, use the "loser advances" title format
-  const ninthPlaceTitle = isLoserAdvancesFormat ? "9th Place Game (Toilet Bowl)" : "9th Place Game";
-  const consolationTitle = isLoserAdvancesFormat ? "Consolation Bracket (Loser Advances)" : "Consolation Bracket";
-  const toiletBowlRoundTitle = isLoserAdvancesFormat ? "Toilet Bowl Round 1: Loser advances" : "Consolation Round 1";
-
-  // Generate IDs for all matchups using useMemo to avoid state updates during render
-  const otherConsolationMatchupIds = React.useMemo(() => {
-    if (otherWeekSixteenConsolation.length === 0) return [];
-    
-    const nextAvailableId = matchupCounter;
-    return Array.from(
-      { length: otherWeekSixteenConsolation.length }, 
-      (_, index) => nextAvailableId + index
-    );
-  }, [otherWeekSixteenConsolation.length, matchupCounter]);
-  
-  // Update matchup counter after generating IDs
-  useEffect(() => {
-    if (otherWeekSixteenConsolation.length > 0) {
-      const newCounter = matchupCounter + otherWeekSixteenConsolation.length;
-      setMatchupCounter(newCounter);
-    }
-  }, [otherWeekSixteenConsolation.length, matchupCounter]);
+  // ── Shared matchup counter ────────────────────────────────────────────────
+  let matchupCounter = 0;
+  const nextId = () => matchupCounter++;
 
   return (
     <div className="overflow-auto">
       <div className="flex flex-col min-w-[1000px]">
         <WeekLabels weeks={displayWeeks} />
-        
+
         <div className="grid grid-cols-3 gap-8">
-          {/* Left Column - Week 15 */}
+          {/* Left Column — Wildcard week */}
           <div className="space-y-12">
             <PlayoffWildcard
               wildcardGames={sortedWildcardGames}
               teamSeeds={teamSeeds}
               matchupCounter={matchupCounter}
-              onMatchupCounterUpdate={setMatchupCounter}
+              onMatchupCounterUpdate={() => {}}
               editMode={editMode}
               onTeamSelect={onTeamSelect}
               onScoreUpdate={onScoreUpdate}
@@ -201,48 +208,50 @@ const SixTeamPlayoffs: React.FC<SixTeamPlayoffsProps> = ({
             />
           </div>
 
-          {/* Middle Column - Week 16 */}
+          {/* Middle Column — Semis */}
           <div className="space-y-12">
             <PlayoffSemifinals
               semiFinals={sortedSemiFinals}
               teamSeeds={teamSeeds}
               matchupCounter={matchupCounter}
-              onMatchupCounterUpdate={setMatchupCounter}
+              onMatchupCounterUpdate={() => {}}
               editMode={editMode}
               onTeamSelect={onTeamSelect}
               onScoreUpdate={onScoreUpdate}
               teams={teams}
             />
-            
-            {/* Add 5th place game in middle column for seasons 11-12 */}
-            {(seasonNumber === 11 || seasonNumber === 12) && fifthPlaceGame && (
-              <div className="mt-12">
-                <PlacementGames
-                  fifthPlaceGame={fifthPlaceGame}
-                  teamSeeds={teamSeeds}
-                  matchupCounter={matchupCounter}
-                  onMatchupCounterUpdate={setMatchupCounter}
-                  editMode={editMode}
-                  onTeamSelect={onTeamSelect}
-                  onScoreUpdate={onScoreUpdate}
-                  teams={teams}
-                  showOnlyFifthPlace={true}
-                  fifthPlaceTitle="5th Place Game"
-                  showDivider={true}
-                  dividerText="Consolation Bracket"
-                />
-              </div>
+            {wildcardLosersBracketGame && (
+              <BracketSection
+                title="5th Place"
+                subtitle="Seeded bracket – lower half"
+                matchups={[{
+                  matchupId: matchupCounter + wildcardGames.length + sortedSemiFinals.length,
+                  homeTeam: wildcardLosersBracketGame.home_team_name,
+                  homeTeamId: wildcardLosersBracketGame.home_team_id,
+                  homeSeed: wildcardLosersBracketGame.home_team_id ? teamSeeds.get(wildcardLosersBracketGame.home_team_id) : undefined,
+                  homeScore: wildcardLosersBracketGame.home_score,
+                  awayTeam: wildcardLosersBracketGame.away_team_name,
+                  awayTeamId: wildcardLosersBracketGame.away_team_id,
+                  awaySeed: wildcardLosersBracketGame.away_team_id ? teamSeeds.get(wildcardLosersBracketGame.away_team_id) : undefined,
+                  awayScore: wildcardLosersBracketGame.away_score,
+                  isConsolation: false
+                }]}
+                editMode={editMode}
+                onTeamSelect={onTeamSelect}
+                onScoreUpdate={onScoreUpdate}
+                teams={teams}
+              />
             )}
           </div>
 
-          {/* Right Column - Week 17 */}
+          {/* Right Column — Championship + 3rd place */}
           <div className="space-y-12">
             {championship && (
               <ChampionshipGame
                 championship={championship}
                 teamSeeds={teamSeeds}
                 matchupCounter={matchupCounter}
-                onMatchupCounterUpdate={setMatchupCounter}
+                onMatchupCounterUpdate={() => {}}
                 editMode={editMode}
                 onTeamSelect={onTeamSelect}
                 onScoreUpdate={onScoreUpdate}
@@ -250,13 +259,12 @@ const SixTeamPlayoffs: React.FC<SixTeamPlayoffsProps> = ({
               />
             )}
 
-            {/* Third Place Game */}
             {thirdPlaceGame && (
-              <PlacementGames 
+              <PlacementGames
                 thirdPlaceGame={thirdPlaceGame}
                 teamSeeds={teamSeeds}
                 matchupCounter={matchupCounter}
-                onMatchupCounterUpdate={setMatchupCounter}
+                onMatchupCounterUpdate={() => {}}
                 editMode={editMode}
                 onTeamSelect={onTeamSelect}
                 onScoreUpdate={onScoreUpdate}
@@ -266,28 +274,29 @@ const SixTeamPlayoffs: React.FC<SixTeamPlayoffsProps> = ({
             )}
           </div>
         </div>
-        
-        {/* Consolation Bracket - Only show divider if not already showing it with 5th place game */}
-        {!(seasonNumber === 11 || seasonNumber === 12) && (
-          <div className="w-full my-8">
-            <div className="flex items-center justify-center">
-              <div className="h-px bg-border flex-grow"></div>
-              <span className="px-4 text-sm text-muted-foreground font-medium">{consolationTitle}</span>
-              <div className="h-px bg-border flex-grow"></div>
-            </div>
+
+        {/* Full-width consolation divider */}
+        <div className="w-full my-8">
+          <div className="flex items-center justify-center">
+            <div className="h-px bg-border flex-grow" />
+            <span className="px-4 text-sm text-muted-foreground font-medium">
+              {consolationTitle}
+            </span>
+            <div className="h-px bg-border flex-grow" />
           </div>
-        )}
-        
-        {/* Consolation Bracket */}
+        </div>
+
         <div className="grid grid-cols-2 gap-8">
-          {/* Week 15 */}
+          {/* Consolation Round 1 */}
           <div>
-            <h4 className="text-center text-sm font-medium mb-4">Week {playoffStartWeek}</h4>
+            <h4 className="text-center text-sm font-medium mb-4">
+              Week {playoffStartWeek}
+            </h4>
             <ConsolationBracket
-              weekFifteenConsolation={sortedWeekFifteenConsolation}
+              weekFifteenConsolation={sortedConsolationWeek1}
               teamSeeds={teamSeeds}
               matchupCounter={matchupCounter}
-              onMatchupCounterUpdate={setMatchupCounter}
+              onMatchupCounterUpdate={() => {}}
               editMode={editMode}
               onTeamSelect={onTeamSelect}
               onScoreUpdate={onScoreUpdate}
@@ -297,45 +306,56 @@ const SixTeamPlayoffs: React.FC<SixTeamPlayoffsProps> = ({
             />
           </div>
 
-          {/* Week 16 */}
+          {/* Consolation Finals */}
           <div>
-            <h4 className="text-center text-sm font-medium mb-4">Week {playoffStartWeek + 1}</h4>
-            
-            {/* 7th Place and 9th Place Games for seasons 11-12 since 5th is already shown */}
-            {(seasonNumber === 11 || seasonNumber === 12) && (
-              <>
-                {/* 7th Place Game */}
-                {seventhPlaceGame && (
-                  <PlacementGames 
-                    seventhPlaceGame={seventhPlaceGame}
-                    teamSeeds={teamSeeds}
-                    matchupCounter={matchupCounter}
-                    onMatchupCounterUpdate={setMatchupCounter}
-                    editMode={editMode}
-                    onTeamSelect={onTeamSelect}
-                    onScoreUpdate={onScoreUpdate}
-                    teams={teams}
-                    seventhPlaceTitle="7th Place Game"
-                  />
-                )}
-                
-                {/* 9th Place Game */}
-                {ninthPlaceGame && (
-                  <div className="mt-6">
-                    <PlacementGames 
-                      ninthPlaceGame={ninthPlaceGame}
-                      teamSeeds={teamSeeds}
-                      matchupCounter={matchupCounter}
-                      onMatchupCounterUpdate={setMatchupCounter}
-                      editMode={editMode}
-                      onTeamSelect={onTeamSelect}
-                      onScoreUpdate={onScoreUpdate}
-                      teams={teams}
-                      ninthPlaceTitle="9th Place Game (Toilet Bowl)"
-                    />
-                  </div>
-                )}
-              </>
+            <h4 className="text-center text-sm font-medium mb-4">
+              Week {consolFinalWeekNum}
+            </h4>
+            {fifthPlaceGame && (
+              <PlacementGames
+                fifthPlaceGame={fifthPlaceGame}
+                teamSeeds={teamSeeds}
+                matchupCounter={matchupCounter}
+                onMatchupCounterUpdate={() => {}}
+                editMode={editMode}
+                onTeamSelect={onTeamSelect}
+                onScoreUpdate={onScoreUpdate}
+                teams={teams}
+                showOnlyFifthPlace={true}
+                fifthPlaceTitle="7th Place Game"
+              />
+            )}
+
+            {seventhPlaceGame && (
+              <div className="mt-6">
+                <PlacementGames
+                  seventhPlaceGame={seventhPlaceGame}
+                  teamSeeds={teamSeeds}
+                  matchupCounter={matchupCounter}
+                  onMatchupCounterUpdate={() => {}}
+                  editMode={editMode}
+                  onTeamSelect={onTeamSelect}
+                  onScoreUpdate={onScoreUpdate}
+                  teams={teams}
+                  seventhPlaceTitle="9th Place Game"
+                />
+              </div>
+            )}
+
+            {ninthPlaceGame && (
+              <div className="mt-6">
+                <PlacementGames
+                  ninthPlaceGame={ninthPlaceGame}
+                  teamSeeds={teamSeeds}
+                  matchupCounter={matchupCounter}
+                  onMatchupCounterUpdate={() => {}}
+                  editMode={editMode}
+                  onTeamSelect={onTeamSelect}
+                  onScoreUpdate={onScoreUpdate}
+                  teams={teams}
+                  ninthPlaceTitle={ninthPlaceTitle}
+                />
+              </div>
             )}
           </div>
         </div>

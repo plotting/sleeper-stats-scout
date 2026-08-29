@@ -22,7 +22,7 @@ import { Link } from "react-router-dom";
 import { getAllSeasons, getSeasonLabel } from "@/utils/seasonUtils";
 
 const Draft = () => {
-  const [selectedSeason, setSelectedSeason] = useState("1");
+  const [selectedSeason, setSelectedSeason] = useState("14");
 
   const { data: draftPicks, isLoading } = useQuery({
     queryKey: ['draft', selectedSeason],

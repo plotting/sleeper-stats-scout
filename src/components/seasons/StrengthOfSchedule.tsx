@@ -83,6 +83,16 @@ const StrengthOfSchedule = ({ seasonId }: StrengthOfScheduleProps) => {
     return <p className="text-center py-4">Loading strength of schedule data...</p>;
   }
 
+  if (!currentMatchups || currentMatchups.length === 0) {
+    return (
+      <Card>
+        <CardContent className="py-12 text-center text-muted-foreground">
+          Season {seasonId}'s schedule hasn't been generated yet — strength of schedule will show up once it has.
+        </CardContent>
+      </Card>
+    );
+  }
+
   // Calculate Preseason SOS
   const calculatePreseasonSOS = () => {
     if (!teams || !currentMatchups || !priorSeasonRecords) return {};

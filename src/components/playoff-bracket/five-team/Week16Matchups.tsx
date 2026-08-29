@@ -2,9 +2,10 @@ import React from "react";
 import { MatchupScoresView } from "@/types/database";
 import BracketSection from "../BracketSection";
 import type { Team } from "@/types/database";
-import { 
+import {
   getWeekFifteenConsolationLosers,
-  identifyPlacementGames 
+  getWeekFifteenConsolationWinners,
+  identifyPlacementGames,
 } from "./fiveTeamUtils";
 
 interface Week16MatchupsProps {
@@ -42,13 +43,15 @@ const Week16Matchups: React.FC<Week16MatchupsProps> = ({
     return seed ? `(${seed}) ${teamName}` : teamName;
   };
 
-  // Get the week 15 consolation losers (who advance to next round)
-  const weekFifteenLosers = getWeekFifteenConsolationLosers(weekFifteenConsolation);
-  
-  // Identify placement games
+  // Winners and losers from week-15 consolation games
+  const weekFifteenWinners = getWeekFifteenConsolationWinners(weekFifteenConsolation);
+  const weekFifteenLosers  = getWeekFifteenConsolationLosers(weekFifteenConsolation);
+
+  // Identify placement games using winner/loser logic (no hardcoded names)
   const { fifthPlaceGame, seventhPlaceGame, ninthPlaceGame } = identifyPlacementGames(
     consolationMatchups,
-    weekFifteenLosers
+    weekFifteenLosers,
+    weekFifteenWinners,
   );
 
   // Create matchup for championship game
@@ -147,7 +150,6 @@ const Week16Matchups: React.FC<Week16MatchupsProps> = ({
 
   return (
     <div className="space-y-6">
-      <h3 className="text-lg font-semibold mb-6 text-center">Week 16</h3>
       <div className="space-y-12">
         <BracketSection
           title="Championship Game"

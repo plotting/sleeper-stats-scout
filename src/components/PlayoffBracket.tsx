@@ -7,11 +7,12 @@ import FiveTeamPlayoffs from "./playoff-bracket/FiveTeamPlayoffs";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Card } from "./ui/card";
-import { MatchupScoresView, TeamRecordsView } from "@/types/database";
+import { MatchupScoresView } from "@/types/database";
+import { useStandingsData } from "./standings/useStandingsData";
 
 const PlayoffBracket = ({ season }: { season: string }) => {
   const seasonNum = Number(season);
-  
+
   // Fetch playoff and consolation matchups data based on season
   const { data: matchups, isLoading: matchupsLoading } = useQuery({
     queryKey: ['playoff-matchups', seasonNum],
@@ -22,9 +23,17 @@ const PlayoffBracket = ({ season }: { season: string }) => {
         .eq('season_id', seasonNum)
         .or('is_playoff.eq.true,is_consolation.eq.true')
         .order('week_number');
-        
+
       if (error) throw error;
-      return data as MatchupScoresView[];
+      // Deduplicate by week + team pair — old syncs may have non-canonical
+      // home/away assignments creating two rows for the same matchup.
+      const seen = new Set<string>();
+      return (data as MatchupScoresView[]).filter(m => {
+        const key = `${m.week_number}-${[m.home_team_id, m.away_team_id].sort((a, b) => (a ?? 0) - (b ?? 0)).join('-')}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
     },
   });
 
@@ -40,47 +49,16 @@ const PlayoffBracket = ({ season }: { season: string }) => {
     },
   });
 
-  // Fetch regular season standings to determine seeding
-  const { data: standings, isLoading: standingsLoading } = useQuery({
-    queryKey: ['standings', seasonNum],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('team_records_view')
-        .select('*')
-        .eq('season_id', seasonNum);
-        
-      if (error) throw error;
-      return data as TeamRecordsView[];
-    },
-  });
+  // Seeding is derived from deduplicated regular-season records (same
+  // computation the Overview standings page uses) — team_records_view
+  // itself can contain stale/duplicated win-loss data from old syncs.
+  const { teamSeeds, isLoading: standingsLoading } = useStandingsData(seasonNum);
 
   const isLoading = matchupsLoading || teamsLoading || standingsLoading;
 
   if (isLoading) {
     return <p className="text-center py-4">Loading playoff data...</p>;
   }
-
-  // Sort teams by regular season record to determine seeding
-  const sortedTeams = standings ? [...standings].sort((a, b) => {
-    const aTotal = a.regular_season_wins + a.regular_season_losses + (a.regular_season_ties || 0);
-    const bTotal = b.regular_season_wins + b.regular_season_losses + (b.regular_season_ties || 0);
-    
-    const aPercentage = aTotal === 0 ? 0 : (a.regular_season_wins + 0.5 * (a.regular_season_ties || 0)) / aTotal;
-    const bPercentage = bTotal === 0 ? 0 : (b.regular_season_wins + 0.5 * (b.regular_season_ties || 0)) / bTotal;
-    
-    if (aPercentage !== bPercentage) {
-      return bPercentage - aPercentage;
-    }
-    return b.regular_season_points_for - a.regular_season_points_for;
-  }) : [];
-
-  // Create a map of team ID to seed number
-  const teamSeeds = new Map<number, number>();
-  sortedTeams.forEach((team, index) => {
-    if (team.team_id) {
-      teamSeeds.set(team.team_id, index + 1);
-    }
-  });
 
   // Display appropriate bracket based on season
   const renderBracket = () => {
@@ -103,19 +81,20 @@ const PlayoffBracket = ({ season }: { season: string }) => {
       />;
     }
 
-    // Seasons 11-12: 6-team playoffs with playoffs starting in week 15
+    // Seasons 11-12: 6-team playoffs (confirmed via Sleeper's playoff_teams=6
+    // league setting for both seasons — playoffs starting in week 15)
     if (seasonNum <= 12) {
-      return <SixTeamPlayoffs 
-        matchups={matchups || []} 
+      return <SixTeamPlayoffs
+        matchups={matchups || []}
         teams={teams || []}
         teamSeeds={teamSeeds}
         seasonNumber={seasonNum}
       />;
     }
 
-    // Season 13+: 5-team playoffs
-    return <FiveTeamPlayoffs 
-      matchups={matchups || []} 
+    // Season 13+: 5-team playoffs (confirmed via Sleeper's playoff_teams=5 setting)
+    return <FiveTeamPlayoffs
+      matchups={matchups || []}
       teams={teams || []}
       teamSeeds={teamSeeds}
     />;

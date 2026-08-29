@@ -3,11 +3,14 @@ import { useParams, useSearchParams } from "react-router-dom";
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import type { MatchupScoresView } from "@/types/database";
 import TeamHeader from "@/components/team/TeamHeader";
 import TeamStatsCards from "@/components/team/TeamStatsCards";
 import TeamMatchups from "@/components/team/TeamMatchups";
 import TeamDraftHistory from "@/components/team/TeamDraftHistory";
 import TeamTradesHistory from "@/components/team/TeamTradesHistory";
+import TeamScoringChart from "@/components/team/TeamScoringChart";
+import TeamH2HBreakdown from "@/components/team/TeamH2HBreakdown";
 import TradeAssetModal from "@/components/TradeAssetModal";
 
 const TeamPage = () => {
@@ -158,6 +161,20 @@ const TeamPage = () => {
     retry: 1,
   });
 
+  // All-time matchups for H2H breakdown (career view)
+  const { data: allTimeMatchups } = useQuery({
+    queryKey: ["team-all-matchups", id],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("matchup_scores_view")
+        .select("*")
+        .or(`home_team_id.eq.${parseInt(id!)},away_team_id.eq.${parseInt(id!)}`);
+      if (error) throw error;
+      return data as MatchupScoresView[];
+    },
+    enabled: !!id,
+  });
+
   const isPageLoading = isLoading || recordsLoading || consolationLoading;
   
   if (isPageLoading) {
@@ -202,15 +219,25 @@ const TeamPage = () => {
           <TeamMatchups teamId={parsedTeamId} selectedSeason={selectedSeason} />
         )}
 
-        <TeamDraftHistory 
-          teamId={parsedTeamId} 
-          onAssetClick={handleAssetClick} 
+        {/* Scoring trend chart — season view only */}
+        {selectedSeason !== 'career' && (
+          <TeamScoringChart teamId={parsedTeamId} seasonId={parseInt(selectedSeason)} />
+        )}
+
+        {/* All-time H2H record vs each opponent */}
+        {allTimeMatchups && allTimeMatchups.length > 0 && (
+          <TeamH2HBreakdown teamId={parsedTeamId} matchups={allTimeMatchups} />
+        )}
+
+        <TeamDraftHistory
+          teamId={parsedTeamId}
+          onAssetClick={handleAssetClick}
           selectedSeason={selectedSeason}
         />
 
-        <TeamTradesHistory 
-          teamId={parsedTeamId} 
-          selectedSeason={selectedSeason} 
+        <TeamTradesHistory
+          teamId={parsedTeamId}
+          selectedSeason={selectedSeason}
         />
       </div>
 

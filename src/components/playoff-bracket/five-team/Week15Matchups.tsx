@@ -93,9 +93,7 @@ const Week15Matchups: React.FC<Week15MatchupsProps> = ({
 
   return (
     <div className="space-y-6">
-      <h3 className="text-lg font-semibold mb-6 text-center">Week 15</h3>
       <div className="space-y-12">
-        {/* Removed redundant "Playoff Bracket" title */}
         <BracketSection
           title="Wildcard Games"
           matchups={wildcardMatchups}
@@ -104,15 +102,17 @@ const Week15Matchups: React.FC<Week15MatchupsProps> = ({
           onScoreUpdate={onScoreUpdate}
           teams={teams}
         />
-        
-        <BracketSection
-          title="1 Seed Semifinal"
-          matchups={seedOneMatchup}
-          editMode={editMode}
-          onTeamSelect={onTeamSelect}
-          onScoreUpdate={onScoreUpdate}
-          teams={teams}
-        />
+
+        {seedOneMatchup.length > 0 && (
+          <BracketSection
+            title="1 Seed Semifinal"
+            matchups={seedOneMatchup}
+            editMode={editMode}
+            onTeamSelect={onTeamSelect}
+            onScoreUpdate={onScoreUpdate}
+            teams={teams}
+          />
+        )}
       </div>
 
       {/* Full width divider with text */}

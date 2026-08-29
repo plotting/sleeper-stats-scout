@@ -34,7 +34,7 @@ const PLAYOFF_START_WEEK = 15;
 
 // ─── Per-season stats ─────────────────────────────────────────────────────────
 
-interface SeasonStats {
+export interface SeasonStats {
   seasonId: number;
   seasonNumber: number;
   year: number;
@@ -47,7 +47,7 @@ interface SeasonStats {
   totalPointsScored: number;
 }
 
-function computeSeasonStats(
+export function computeSeasonStats(
   seasonId: number,
   seasonNumber: number,
   year: number,

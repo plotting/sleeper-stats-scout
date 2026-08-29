@@ -54,23 +54,13 @@ const ToiletBowlRound: React.FC<ToiletBowlRoundProps> = ({
             </div>
             <Matchup
               matchupId={matchupCounter + index}
-              homeTeam={
-                matchup.home_team_id ? 
-                  teamSeeds.get(matchup.home_team_id) ? 
-                    `(${teamSeeds.get(matchup.home_team_id)}) ${matchup.home_team_name}` : 
-                    matchup.home_team_name : 
-                  ""
-              }
+              homeTeam={matchup.home_team_id ? matchup.home_team_name : ""}
               homeTeamId={matchup.home_team_id}
+              homeSeed={matchup.home_team_id ? teamSeeds.get(matchup.home_team_id) : undefined}
               homeScore={matchup.home_score}
-              awayTeam={
-                matchup.away_team_id ? 
-                  teamSeeds.get(matchup.away_team_id) ? 
-                    `(${teamSeeds.get(matchup.away_team_id)}) ${matchup.away_team_name}` : 
-                    matchup.away_team_name : 
-                  ""
-              }
+              awayTeam={matchup.away_team_id ? matchup.away_team_name : ""}
               awayTeamId={matchup.away_team_id}
+              awaySeed={matchup.away_team_id ? teamSeeds.get(matchup.away_team_id) : undefined}
               awayScore={matchup.away_score}
               isConsolation
               editMode={editMode}

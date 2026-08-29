@@ -18,6 +18,8 @@ export interface SleeperLeague {
     last_scored_leg: number;
   };
   total_rosters: number;
+  /** Starting lineup slots in order, e.g. ["QB","RB","RB","WR","WR","TE","FLEX","DEF","BN",...] */
+  roster_positions: string[];
 }
 
 export interface SleeperUser {
@@ -32,6 +34,8 @@ export interface SleeperRoster {
   roster_id: number;
   owner_id: string | null;
   league_id: string;
+  players: string[] | null;
+  starters: string[] | null;
   settings: {
     wins: number;
     losses: number;
@@ -55,10 +59,16 @@ export interface SleeperDraft {
   season: string;
   type: string;
   status: string;
+  /** Epoch ms when the draft started/is scheduled to start. Null if not yet scheduled. */
+  start_time: number | null;
+  /** Epoch ms of the most recent pick — the draft's actual end, if complete. */
+  last_picked: number | null;
   settings: {
     rounds: number;
     teams: number;
   };
+  /** Maps roster_id (string) → draft_slot (number). Invert to get slot → original roster owner. */
+  draft_order: Record<string, number> | null;
 }
 
 export interface SleeperDraftPick {
@@ -165,6 +175,10 @@ export const fetchMatchups = (id: string, week: number) =>
 
 export const fetchLeagueDrafts = (id: string) =>
   get<SleeperDraft[]>(`/league/${id}/drafts`);
+
+/** Fetch a single draft by ID — always includes draft_order even when the league endpoint omits it. */
+export const fetchDraft = (draftId: string) =>
+  get<SleeperDraft>(`/draft/${draftId}`);
 
 export const fetchDraftPicks = (draftId: string) =>
   get<SleeperDraftPick[]>(`/draft/${draftId}/picks`);

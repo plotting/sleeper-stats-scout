@@ -28,24 +28,39 @@ import {
   LineChart,
   Flame,
   GraduationCap,
+  MoreHorizontal,
+  Rss,
+  UserSearch,
 } from 'lucide-react';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { type Team } from '@/types/database';
 import { cn } from '@/lib/utils';
+import { formatDistanceToNowStrict } from 'date-fns';
 
+// Core pages, kept as flat top-level links.
 const links = [
   { to: '/season14', label: 'S14 \'26', icon: Flame },
   { to: '/', label: 'Seasons', icon: Trophy },
   { to: '/weekly-scores', label: 'Scores', icon: Calendar },
-  { to: '/weekly-records', label: 'By Week', icon: BarChart2 },
   { to: '/draft', label: 'Draft', icon: BookOpen },
   { to: '/trades', label: 'Trades', icon: ArrowLeftRight },
-  { to: '/head-to-head', label: 'H2H', icon: Swords },
   { to: '/records', label: 'Records', icon: Star },
+];
+
+// Everything else lives behind "More" so the primary bar stays short —
+// splitting these out actually narrows the nav instead of just appending to it.
+// Recaps and Rookies are intentionally absent: Recaps now lives as a sub-tab
+// under Season14, and Rookies' functionality was absorbed into Draft Grades'
+// ADP/Pick Value tabs — both dropped from the nav upstream on main.
+const moreLinks = [
+  { to: '/weekly-records', label: 'By Week', icon: BarChart2 },
+  { to: '/head-to-head', label: 'H2H', icon: Swords },
   { to: '/analytics', label: 'Analytics', icon: LineChart },
   { to: '/draft-grades', label: 'Grades', icon: GraduationCap },
+  { to: '/dynasty-digest', label: 'Digest', icon: Rss },
+  { to: '/gm-scouting', label: 'GM Scout', icon: UserSearch },
 ];
 
 const Navigation = () => {
@@ -62,6 +77,24 @@ const Navigation = () => {
       if (error) throw error;
       return data as Team[];
     },
+  });
+
+  // Most recent trade sync as a proxy "last synced" signal — not exact for
+  // every table, but trades sync on the same cadence as everything else and
+  // is cheap to query.
+  const { data: lastSyncedAt } = useQuery({
+    queryKey: ['last-synced-at'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('trades')
+        .select('created_at')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (error) throw error;
+      return data?.created_at ?? null;
+    },
+    staleTime: 5 * 60 * 1000,
   });
 
   const isActive = (to: string) =>
@@ -123,6 +156,22 @@ const Navigation = () => {
                     </Link>
                   </SheetClose>
                 ))}
+                {moreLinks.map((link) => (
+                  <SheetClose asChild key={link.to}>
+                    <Link
+                      to={link.to}
+                      className={cn(
+                        'flex items-center gap-2 px-3 py-2.5 rounded-md text-sm transition-colors',
+                        isActive(link.to)
+                          ? 'text-white bg-white/10 font-medium'
+                          : 'text-slate-400 hover:text-white hover:bg-white/5',
+                      )}
+                    >
+                      <link.icon className="h-4 w-4" />
+                      {link.label}
+                    </Link>
+                  </SheetClose>
+                ))}
 
                 <div className="border-t border-white/10 mt-3 pt-3">
                   <p className="px-3 text-xs text-slate-500 mb-2 uppercase tracking-wider">Teams</p>
@@ -160,6 +209,11 @@ const Navigation = () => {
                     >
                       <Zap className="h-4 w-4" />
                       Data Sync
+                      {lastSyncedAt && (
+                        <span className="ml-auto text-[10px] text-slate-500 font-normal">
+                          {formatDistanceToNowStrict(new Date(lastSyncedAt), { addSuffix: true })}
+                        </span>
+                      )}
                     </Link>
                   </SheetClose>
                 </div>
@@ -171,6 +225,40 @@ const Navigation = () => {
             {links.map((link) => (
               <NavLink key={link.to} {...link} />
             ))}
+
+            {/* More dropdown — lower-traffic pages */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  className={cn(
+                    'flex items-center gap-1 text-sm px-3 py-1.5 rounded-md transition-all duration-150',
+                    moreLinks.some((l) => isActive(l.to))
+                      ? 'text-white bg-white/10 font-medium'
+                      : 'text-slate-400 hover:text-white hover:bg-white/5',
+                  )}
+                >
+                  <MoreHorizontal className="h-3.5 w-3.5" />
+                  More
+                  <ChevronDown className="h-3 w-3 opacity-60" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="bg-[#1a1a2e] border-white/10 min-w-[160px]">
+                {moreLinks.map((link) => (
+                  <DropdownMenuItem key={link.to} asChild>
+                    <Link
+                      to={link.to}
+                      className={cn(
+                        'flex w-full items-center gap-2 cursor-pointer',
+                        isActive(link.to) && 'text-blue-400',
+                      )}
+                    >
+                      <link.icon className="h-3.5 w-3.5" />
+                      {link.label}
+                    </Link>
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
 
             {/* Teams dropdown */}
             <DropdownMenu>
@@ -215,9 +303,11 @@ const Navigation = () => {
               </DropdownMenuContent>
             </DropdownMenu>
 
-            {/* Sync link */}
+            {/* Sync link — last-synced time shown as a tooltip, not inline,
+                so the bar's width doesn't grow with it */}
             <Link
               to="/admin"
+              title={lastSyncedAt ? `Data last synced ${formatDistanceToNowStrict(new Date(lastSyncedAt), { addSuffix: true })}` : undefined}
               className={cn(
                 'flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-md ml-2 border transition-all duration-150',
                 isActive('/admin')

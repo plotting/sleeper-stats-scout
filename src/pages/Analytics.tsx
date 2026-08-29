@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useEffect, useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -23,7 +23,13 @@ import { getAllSeasons, getSeasonYear } from "@/utils/seasonUtils";
 import type { MatchupScoresView } from "@/types/database";
 import { getTeamFinalPlacements } from "@/components/playoff-bracket/utils/placementUtils";
 import { cn } from "@/lib/utils";
-import { TrendingUp, TrendingDown, Minus, Target, Award, Zap, Shuffle, Crown, Sparkles } from "lucide-react";
+import { TrendingUp, TrendingDown, Minus, Target, Award, Zap, Shuffle, Crown, Sparkles, Loader2 } from "lucide-react";
+import { usePlayoffSimWorker } from "@/hooks/usePlayoffSimWorker";
+import type { WorkerSimResult } from "@/workers/playoffSim.worker";
+import { fetchLeagueRosters, fetchLeague, LEAGUE_ID } from "@/services/sleeperApi";
+import { buildRosterToTeamMap } from "@/services/sleeperSync";
+import { computeTeamWeekProjections, type TeamWeekProjection } from "@/services/playerProjections";
+import { savePlayoffSimSnapshot, deletePlayoffSimHistoryForSeason, fetchPlayoffSimHistory } from "@/services/playoffSimHistory";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -46,6 +52,19 @@ function stdDev(arr: number[]): number {
 
 // ─── Data hook ────────────────────────────────────────────────────────────────
 
+/** Old syncs stored the same game twice (home/away swapped) — without this,
+ *  every count that touches raw matchup rows silently double-counts. */
+function dedupeMatchups(rows: MatchupScoresView[]): MatchupScoresView[] {
+  const seen = new Set<string>();
+  return rows.filter((m) => {
+    const ids = [m.home_team_id ?? 0, m.away_team_id ?? 0].sort((a, b) => a - b);
+    const key = `${m.season_id}-${m.week_number}-${ids[0]}-${ids[1]}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 function useAnalyticsData(seasonId: string) {
   const { data: matchups, isLoading } = useQuery({
     queryKey: ["analytics-matchups", seasonId],
@@ -56,7 +75,7 @@ function useAnalyticsData(seasonId: string) {
         .eq("season_id", parseInt(seasonId))
         .order("week_number");
       if (error) throw error;
-      return data as MatchupScoresView[];
+      return dedupeMatchups(data as MatchupScoresView[]);
     },
   });
 
@@ -82,7 +101,7 @@ function useAnalyticsData(seasonId: string) {
         if (data.length < PAGE) break;
         from += PAGE;
       }
-      return rows;
+      return dedupeMatchups(rows);
     },
   });
 
@@ -384,159 +403,6 @@ function ConsistencyTab({ matchups }: { matchups: MatchupScoresView[] }) {
           })}
         </TableBody>
       </Table>
-    </div>
-  );
-}
-
-// ─── Dynasty Trajectory ───────────────────────────────────────────────────────
-
-interface TrajectoryRow {
-  teamId: number;
-  teamName: string;
-  seasons: { year: number; winPct: number; ppg: number; wins: number; losses: number; ties: number }[];
-  trend: number; // slope of winPct over last 3 seasons
-}
-
-function computeTrajectory(
-  allMatchups: MatchupScoresView[],
-  yearMap: Map<number, number>,
-): TrajectoryRow[] {
-  // stats per team per season
-  const map = new Map<string, { wins: number; losses: number; ties: number; totalScore: number; games: number }>();
-  const teamNames = new Map<number, string>();
-
-  const key = (teamId: number, seasonId: number) => `${teamId}:${seasonId}`;
-
-  for (const m of allMatchups.filter((m) => m.is_playoff !== true && m.is_consolation !== true)) {
-    if (!m.home_team_id || !m.away_team_id || m.home_score == null || m.away_score == null) continue;
-
-    teamNames.set(m.home_team_id, m.home_team_name!);
-    teamNames.set(m.away_team_id, m.away_team_name!);
-
-    const hk = key(m.home_team_id, m.season_id!);
-    const ak = key(m.away_team_id, m.season_id!);
-    if (!map.has(hk)) map.set(hk, { wins: 0, losses: 0, ties: 0, totalScore: 0, games: 0 });
-    if (!map.has(ak)) map.set(ak, { wins: 0, losses: 0, ties: 0, totalScore: 0, games: 0 });
-
-    const h = map.get(hk)!;
-    const a = map.get(ak)!;
-
-    h.totalScore += m.home_score; h.games++;
-    a.totalScore += m.away_score; a.games++;
-
-    if (m.home_score > m.away_score) { h.wins++; a.losses++; }
-    else if (m.away_score > m.home_score) { a.wins++; h.losses++; }
-    else { h.ties++; a.ties++; }
-  }
-
-  // Group by team
-  const byTeam = new Map<number, { seasonId: number; wins: number; losses: number; ties: number; totalScore: number; games: number }[]>();
-  for (const [k, v] of map) {
-    const [teamId, seasonId] = k.split(":").map(Number);
-    if (!byTeam.has(teamId)) byTeam.set(teamId, []);
-    byTeam.get(teamId)!.push({ seasonId, ...v });
-  }
-
-  return [...byTeam.entries()].map(([teamId, seasons]) => {
-    const sorted = seasons
-      .map((s) => ({ year: yearMap.get(s.seasonId) ?? s.seasonId, ...s }))
-      .sort((a, b) => a.year - b.year);
-
-    const rows = sorted.map((s) => ({
-      year: s.year,
-      winPct: s.wins + s.losses + s.ties > 0 ? (s.wins + s.ties * 0.5) / (s.wins + s.losses + s.ties) : 0,
-      ppg: s.games > 0 ? s.totalScore / s.games : 0,
-      wins: s.wins,
-      losses: s.losses,
-      ties: s.ties,
-    }));
-
-    // Simple trend: slope of win% over last 3 seasons
-    const last = rows.slice(-3);
-    const trend = last.length >= 2 ? last[last.length - 1].winPct - last[0].winPct : 0;
-
-    return { teamId, teamName: teamNames.get(teamId) ?? `Team ${teamId}`, seasons: rows, trend };
-  }).sort((a, b) => {
-    // Sort by most recent season win% descending
-    const aLast = a.seasons[a.seasons.length - 1]?.winPct ?? 0;
-    const bLast = b.seasons[b.seasons.length - 1]?.winPct ?? 0;
-    return bLast - aLast;
-  });
-}
-
-function DynastyTrajectory({
-  allMatchups,
-  yearMap,
-}: {
-  allMatchups: MatchupScoresView[];
-  yearMap: Map<number, number>;
-}) {
-  const rows = useMemo(() => computeTrajectory(allMatchups, yearMap), [allMatchups, yearMap]);
-  const years = useMemo(() => {
-    const s = new Set<number>();
-    rows.forEach((r) => r.seasons.forEach((s2) => s.add(s2.year)));
-    return [...s].sort((a, b) => a - b);
-  }, [rows]);
-
-  if (rows.length === 0) return <p className="text-slate-400 text-sm">No data available.</p>;
-
-  return (
-    <div className="space-y-4">
-      <p className="text-sm text-slate-400">
-        Regular season win % by year. Trend arrow reflects change over the last 3 seasons.
-      </p>
-      <div className="overflow-x-auto">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Team</TableHead>
-              {years.map((y) => (
-                <TableHead key={y} className="text-center text-xs w-16">{y}</TableHead>
-              ))}
-              <TableHead className="text-center w-20">Trend</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {rows.map((r) => {
-              const TrendIcon =
-                r.trend > 0.08 ? TrendingUp : r.trend < -0.08 ? TrendingDown : Minus;
-              const trendColor =
-                r.trend > 0.08 ? "text-emerald-400" : r.trend < -0.08 ? "text-red-400" : "text-slate-400";
-
-              return (
-                <TableRow key={r.teamId}>
-                  <TableCell>
-                    <Link to={`/team/${r.teamId}`} className="text-primary hover:underline font-medium text-sm">
-                      {r.teamName}
-                    </Link>
-                  </TableCell>
-                  {years.map((y) => {
-                    const s = r.seasons.find((s) => s.year === y);
-                    if (!s) return <TableCell key={y} className="text-center text-slate-600 text-xs">—</TableCell>;
-                    const pct = s.winPct;
-                    const bg =
-                      pct >= 0.65 ? "bg-emerald-500/20 text-emerald-400" :
-                      pct >= 0.5 ? "bg-blue-500/15 text-blue-300" :
-                      pct >= 0.35 ? "bg-amber-500/15 text-amber-400" :
-                      "bg-red-500/15 text-red-400";
-                    return (
-                      <TableCell key={y} className="text-center p-1">
-                        <div className={cn("rounded-md py-1 text-xs font-mono", bg)}>
-                          {fmt(pct * 100, 0)}%
-                          <div className="text-slate-500 text-[10px]">{s.wins}-{s.losses}{s.ties > 0 ? `-${s.ties}` : ""}</div>
-                        </div>
-                      </TableCell>
-                    );
-                  })}
-                  <TableCell className="text-center">
-                    <TrendIcon className={cn("h-4 w-4 mx-auto", trendColor)} />
-                  </TableCell>
-                </TableRow>
-              );
-            })}
-          </TableBody>
-        </Table>
-      </div>
     </div>
   );
 }
@@ -1107,13 +973,6 @@ function avg(arr: number[]): number {
   return arr.length === 0 ? 0 : arr.reduce((a, b) => a + b, 0) / arr.length;
 }
 
-function sampleNormal(mean: number, std: number): number {
-  const u1 = Math.random();
-  const u2 = Math.random();
-  const z = Math.sqrt(-2 * Math.log(u1 + 1e-10)) * Math.cos(2 * Math.PI * u2);
-  return Math.max(40, mean + z * std);
-}
-
 /** Abramowitz & Stegun approximation for standard normal CDF */
 function normalCDF(z: number): number {
   const a1 = 0.254829592, a2 = -0.284496736, a3 = 1.421413741;
@@ -1129,6 +988,33 @@ function normalCDF(z: number): number {
 function matchupWinProb(m1: number, s1: number, m2: number, s2: number): number {
   const denom = Math.sqrt(s1 ** 2 + s2 ** 2);
   return denom > 0 ? normalCDF((m1 - m2) / denom) : 0.5;
+}
+
+interface TeamWeekStat {
+  mean: number;
+  std: number;
+  /** True when this came from real rosters + Sleeper's weekly projections
+   *  (bye-aware), false when falling back to the season-long team model. */
+  playerLevel: boolean;
+}
+
+/** A specific team's projected mean/std for one future week — prefers the
+ *  bye-aware, roster-based projection for that week when available, and
+ *  otherwise falls back to the season-long team-level model with std
+ *  widened by how far out the week is (forecast confidence decays with
+ *  distance, so a repeat pairing further out isn't as predictable). */
+function getEffectiveTeamWeekStat(
+  weekProjections: Map<number, Map<number, TeamWeekProjection> | null>,
+  teamId: number,
+  week: number,
+  nearestWeek: number,
+  fallbackMean: number,
+  fallbackStd: number,
+): TeamWeekStat {
+  const wp = weekProjections.get(week)?.get(teamId);
+  if (wp) return { mean: wp.mean, std: Math.max(wp.std, 4), playerLevel: true };
+  const horizonMul = Math.sqrt(1 + 0.08 * Math.max(week - nearestWeek, 0));
+  return { mean: fallbackMean, std: fallbackStd * horizonMul, playerLevel: false };
 }
 
 interface SimTeam {
@@ -1147,15 +1033,6 @@ interface FutureGame {
   homeId: number;
   awayId: number;
   week: number;
-}
-
-interface SimResult {
-  teamId: number;
-  avgProjectedWins: number;
-  avgRank: number;        // projected final standing rank (1 = #1 seed)
-  pct4: number;
-  pct5: number;
-  pct6: number;
 }
 
 function computeSimTeams(
@@ -1274,75 +1151,18 @@ function getFutureGames(
   return games;
 }
 
-const NUM_SIMS = 10_000;
+const DEFAULT_NUM_SIMS = 1_000_000;
 
-function runMonteCarlo(teams: SimTeam[], futureGames: FutureGame[]): SimResult[] {
-  if (teams.length === 0) return [];
-  if (futureGames.length === 0) {
-    const sorted = [...teams].sort((a, b) => b.wins - a.wins || b.pf - a.pf);
-    return sorted.map((t, i) => ({
-      teamId: t.teamId,
-      avgProjectedWins: t.wins,
-      avgRank: i + 1,
-      pct4: i < 4 ? 1 : 0,
-      pct5: i < 5 ? 1 : 0,
-      pct6: i < 6 ? 1 : 0,
-    }));
-  }
-
-  const counts   = new Map(teams.map((t) => [t.teamId, { c4: 0, c5: 0, c6: 0 }]));
-  const winAccum = new Map(teams.map((t) => [t.teamId, 0]));
-  const rankAccum = new Map(teams.map((t) => [t.teamId, 0]));
-
-  for (let sim = 0; sim < NUM_SIMS; sim++) {
-    const simWins = new Map(teams.map((t) => [t.teamId, t.wins + t.ties * 0.5]));
-    const simPF   = new Map(teams.map((t) => [t.teamId, t.pf]));
-
-    for (const g of futureGames) {
-      const home = teams.find((t) => t.teamId === g.homeId);
-      const away = teams.find((t) => t.teamId === g.awayId);
-      if (!home || !away) continue;
-      const hs  = sampleNormal(home.projMean, home.projStd);
-      const as_ = sampleNormal(away.projMean, away.projStd);
-      simPF.set(g.homeId, (simPF.get(g.homeId) ?? 0) + hs);
-      simPF.set(g.awayId, (simPF.get(g.awayId) ?? 0) + as_);
-      if (hs > as_)       simWins.set(g.homeId, (simWins.get(g.homeId) ?? 0) + 1);
-      else if (as_ > hs)  simWins.set(g.awayId, (simWins.get(g.awayId) ?? 0) + 1);
-      else {
-        simWins.set(g.homeId, (simWins.get(g.homeId) ?? 0) + 0.5);
-        simWins.set(g.awayId, (simWins.get(g.awayId) ?? 0) + 0.5);
-      }
-    }
-
-    const ranked = teams
-      .map((t) => ({ teamId: t.teamId, wins: simWins.get(t.teamId) ?? 0, pf: simPF.get(t.teamId) ?? 0 }))
-      .sort((a, b) => b.wins - a.wins || b.pf - a.pf);
-
-    for (let i = 0; i < ranked.length; i++) {
-      const tid = ranked[i].teamId;
-      const c = counts.get(tid);
-      if (!c) continue;
-      if (i < 4) c.c4++;
-      if (i < 5) c.c5++;
-      if (i < 6) c.c6++;
-      rankAccum.set(tid, (rankAccum.get(tid) ?? 0) + (i + 1));
-    }
-    for (const [tid, w] of simWins) winAccum.set(tid, (winAccum.get(tid) ?? 0) + w);
-  }
-
-  return teams
-    .map((t) => {
-      const c = counts.get(t.teamId) ?? { c4: 0, c5: 0, c6: 0 };
-      return {
-        teamId: t.teamId,
-        avgProjectedWins: (winAccum.get(t.teamId) ?? 0) / NUM_SIMS,
-        avgRank: (rankAccum.get(t.teamId) ?? 0) / NUM_SIMS,
-        pct4: c.c4 / NUM_SIMS,
-        pct5: c.c5 / NUM_SIMS,
-        pct6: c.c6 / NUM_SIMS,
-      };
-    })
-    .sort((a, b) => a.avgRank - b.avgRank);
+/** Masks out regular-season scores after `asOfWeek`, so the simulation can be
+ *  re-run as if only weeks up to that point were known — the basis for the
+ *  "as of week" look-back selector. Keeps every row (including future weeks)
+ *  so schedule pairings stay intact; only the scores are hidden. */
+function truncateMatchupsAsOf(matchups: MatchupScoresView[], asOfWeek: number): MatchupScoresView[] {
+  return matchups.map((m) =>
+    !m.is_playoff && !m.is_consolation && (m.week_number ?? 0) > asOfWeek
+      ? { ...m, home_score: null, away_score: null }
+      : m,
+  );
 }
 
 function pctColor(pct: number) {
@@ -1359,6 +1179,10 @@ function PlayoffSim({
   dbSeasons: { id: number; year: number; season_number: number }[] | undefined;
 }) {
   const [simKey, setSimKey] = useState(0);
+  const [numSims, setNumSims] = useState(DEFAULT_NUM_SIMS);
+  const { run, isRunning } = usePlayoffSimWorker();
+  const queryClient = useQueryClient();
+  const [results, setResults] = useState<WorkerSimResult[]>([]);
 
   const currentSeasonId = matchups[0]?.season_id;
   const sortedHistIds = useMemo(() => {
@@ -1369,28 +1193,206 @@ function PlayoffSim({
       .map((s) => s.id);
   }, [dbSeasons, currentSeasonId]);
 
-  const teams = useMemo(
-    () => computeSimTeams(matchups, allMatchups, sortedHistIds),
-    [matchups, allMatchups, sortedHistIds],
+  // Every regular-season week with at least one completed game — powers the
+  // "as of week" look-back selector so historical odds can always be replayed.
+  const playedWeeks = useMemo(() => {
+    const s = new Set<number>();
+    for (const m of matchups) {
+      if (!m.is_playoff && !m.is_consolation && m.home_score != null && m.away_score != null && m.week_number) {
+        s.add(m.week_number);
+      }
+    }
+    return [...s].sort((a, b) => a - b);
+  }, [matchups]);
+  const latestPlayedWeek = playedWeeks[playedWeeks.length - 1] ?? 0;
+  // Every selectable "as of" point, oldest first — 0 (preseason) plus every
+  // played week. Shared between the dropdown, the backfill loop, and the
+  // week-over-week delta lookup so all three agree on what "previous" means.
+  const allAsOfWeeks = useMemo(() => [0, ...playedWeeks], [playedWeeks]);
+
+  const [asOfWeek, setAsOfWeek] = useState(latestPlayedWeek);
+  const [playoffSpots, setPlayoffSpots] = useState<number | null>(null);
+  // Reset both selectors when the underlying season changes
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { setAsOfWeek(latestPlayedWeek); setPlayoffSpots(null); }, [currentSeasonId]);
+
+  const effectiveMatchups = useMemo(
+    () => (asOfWeek >= latestPlayedWeek ? matchups : truncateMatchupsAsOf(matchups, asOfWeek)),
+    [matchups, asOfWeek, latestPlayedWeek],
   );
 
-  const futureGames = useMemo(() => getFutureGames(matchups, teams), [matchups, teams]);
+  const teams = useMemo(
+    () => computeSimTeams(effectiveMatchups, allMatchups, sortedHistIds),
+    [effectiveMatchups, allMatchups, sortedHistIds],
+  );
 
-  // simKey re-triggers simulation so user can re-randomize
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const results = useMemo(() => runMonteCarlo(teams, futureGames), [teams, futureGames, simKey]);
+  const futureGames = useMemo(() => getFutureGames(effectiveMatchups, teams), [effectiveMatchups, teams]);
+  const teamMap = new Map(teams.map((t) => [t.teamId, t]));
+
+  const seasonBracketSize = getPlayoffBracketSize(currentSeasonId ?? 0);
+  const effectiveBracketSize = playoffSpots ?? seasonBracketSize;
+
+  // Player-level (bye-aware) projections only apply to the live season — a
+  // completed season never has future games, so this naturally never fires
+  // for historical seasons even without an explicit guard on selection.
+  const latestDbSeasonId = dbSeasons && dbSeasons.length > 0 ? Math.max(...dbSeasons.map((s) => s.id)) : undefined;
+  const isLiveSeason = currentSeasonId != null && currentSeasonId === latestDbSeasonId;
+
+  // Backfill: for a completed past season, replay the sim as of every played
+  // week and persist each snapshot, so the "look back" view can be shown
+  // for any prior season without re-running the Monte Carlo sim live.
+  const [backfilling, setBackfilling] = useState(false);
+  const [backfillProgress, setBackfillProgress] = useState<{ done: number; total: number } | null>(null);
+
+  async function runBackfill() {
+    if (!currentSeasonId || playedWeeks.length === 0) return;
+    const weeksToBackfill = allAsOfWeeks;
+    setBackfilling(true);
+    setBackfillProgress({ done: 0, total: weeksToBackfill.length });
+    try {
+      await deletePlayoffSimHistoryForSeason(currentSeasonId);
+      const bracketSize = getPlayoffBracketSize(currentSeasonId);
+      const backfillNumSims = 100_000;
+      for (let i = 0; i < weeksToBackfill.length; i++) {
+        const week = weeksToBackfill[i];
+        const truncated = truncateMatchupsAsOf(matchups, week);
+        const weekTeams = computeSimTeams(truncated, allMatchups, sortedHistIds);
+        const weekFutureGames = getFutureGames(truncated, weekTeams);
+        if (weekFutureGames.length > 0) {
+          const weekTeamMap = new Map(weekTeams.map((t) => [t.teamId, t]));
+          const weekNearestWeek = Math.min(...weekFutureGames.map((g) => g.week));
+          const enrichedGames = weekFutureGames.map((g) => {
+            const home = weekTeamMap.get(g.homeId);
+            const away = weekTeamMap.get(g.awayId);
+            const homeStat = getEffectiveTeamWeekStat(new Map(), g.homeId, g.week, weekNearestWeek, home?.projMean ?? 0, home?.projStd ?? 20);
+            const awayStat = getEffectiveTeamWeekStat(new Map(), g.awayId, g.week, weekNearestWeek, away?.projMean ?? 0, away?.projStd ?? 20);
+            return {
+              homeId: g.homeId, awayId: g.awayId, week: g.week,
+              homeMean: homeStat.mean, homeStd: homeStat.std,
+              awayMean: awayStat.mean, awayStd: awayStat.std,
+            };
+          });
+          const weekResults = await run({
+            teams: weekTeams.map((t) => ({ teamId: t.teamId, wins: t.wins, losses: t.losses, ties: t.ties, pf: t.pf })),
+            futureGames: enrichedGames,
+            numSims: backfillNumSims,
+            bracketSize,
+          });
+          await savePlayoffSimSnapshot(currentSeasonId, week, bracketSize, backfillNumSims, weekResults.map((r) => {
+            const t = weekTeamMap.get(r.teamId);
+            return {
+              teamId: r.teamId,
+              projPpg: t?.projMean ?? 0,
+              projStd: t?.projStd ?? 0,
+              projWins: r.avgProjectedWins,
+              projSeed: r.avgRank,
+              playoffPct: r.playoffPct,
+              seedPct: r.seedPct,
+            };
+          }));
+        }
+        setBackfillProgress({ done: i + 1, total: weeksToBackfill.length });
+      }
+    } finally {
+      setBackfilling(false);
+      queryClient.invalidateQueries({ queryKey: ["playoff-sim-history", currentSeasonId] });
+    }
+  }
+
+  const { data: rosterData } = useQuery({
+    queryKey: ["sleeper-rosters-for-sim"],
+    queryFn: async () => {
+      const [rosters, league, rosterTeamMap] = await Promise.all([
+        fetchLeagueRosters(LEAGUE_ID),
+        fetchLeague(LEAGUE_ID),
+        buildRosterToTeamMap(LEAGUE_ID),
+      ]);
+      return { rosters, league, rosterTeamMap };
+    },
+    enabled: isLiveSeason,
+    staleTime: 30 * 60 * 1000,
+  });
+
+  // Backfilled week-by-week snapshots (if any exist for this season) power
+  // the "change since last week" indicator next to Playoff % below.
+  const { data: simHistory } = useQuery({
+    queryKey: ["playoff-sim-history", currentSeasonId],
+    queryFn: () => fetchPlayoffSimHistory(currentSeasonId!),
+    enabled: currentSeasonId != null,
+    staleTime: 5 * 60 * 1000,
+  });
+  const historyByWeek = useMemo(() => {
+    const m = new Map<number, Map<number, number>>();
+    for (const row of simHistory ?? []) {
+      if (!m.has(row.as_of_week)) m.set(row.as_of_week, new Map());
+      m.get(row.as_of_week)!.set(row.team_id, row.playoff_pct);
+    }
+    return m;
+  }, [simHistory]);
+  const previousAsOfWeek = (() => {
+    const idx = allAsOfWeeks.indexOf(asOfWeek);
+    return idx > 0 ? allAsOfWeeks[idx - 1] : null;
+  })();
+  const prevWeekPlayoffPct = previousAsOfWeek != null ? historyByWeek.get(previousAsOfWeek) : undefined;
+
+  const futureWeeks = useMemo(
+    () => [...new Set(futureGames.map((g) => g.week))].sort((a, b) => a - b),
+    [futureGames],
+  );
+  const nearestWeek = futureWeeks[0] ?? 0;
+
+  const [weekProjections, setWeekProjections] = useState<Map<number, Map<number, TeamWeekProjection> | null>>(new Map());
+  useEffect(() => {
+    if (!rosterData || futureWeeks.length === 0) { setWeekProjections(new Map()); return; }
+    let cancelled = false;
+    const rosterInputs = rosterData.rosters
+      .map((r) => {
+        const teamId = rosterData.rosterTeamMap.get(r.roster_id);
+        return teamId ? { teamId, players: r.players ?? [], starters: r.starters ?? [] } : null;
+      })
+      .filter((r): r is { teamId: number; players: string[]; starters: string[] } => r != null);
+
+    Promise.all(futureWeeks.map(async (week) => {
+      const proj = await computeTeamWeekProjections(rosterData.league.season, week, rosterInputs, rosterData.league.roster_positions);
+      return [week, proj] as const;
+    })).then((entries) => {
+      if (!cancelled) setWeekProjections(new Map(entries));
+    });
+    return () => { cancelled = true; };
+  }, [rosterData, futureWeeks]);
+
+  // simKey lets the user force a fresh re-randomization without changing inputs
+  useEffect(() => {
+    let cancelled = false;
+    if (teams.length === 0) return;
+    const enrichedGames = futureGames.map((g) => {
+      const home = teamMap.get(g.homeId);
+      const away = teamMap.get(g.awayId);
+      const homeStat = getEffectiveTeamWeekStat(weekProjections, g.homeId, g.week, nearestWeek, home?.projMean ?? 0, home?.projStd ?? 20);
+      const awayStat = getEffectiveTeamWeekStat(weekProjections, g.awayId, g.week, nearestWeek, away?.projMean ?? 0, away?.projStd ?? 20);
+      return {
+        homeId: g.homeId, awayId: g.awayId, week: g.week,
+        homeMean: homeStat.mean, homeStd: homeStat.std,
+        awayMean: awayStat.mean, awayStd: awayStat.std,
+      };
+    });
+    run({
+      teams: teams.map((t) => ({
+        teamId: t.teamId, wins: t.wins, losses: t.losses, ties: t.ties, pf: t.pf,
+      })),
+      futureGames: enrichedGames,
+      numSims,
+      bracketSize: effectiveBracketSize,
+    }).then((res) => { if (!cancelled) setResults(res); });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [teams, futureGames, numSims, effectiveBracketSize, simKey, weekProjections]);
 
   if (teams.length === 0)
     return <p className="text-slate-400 text-sm">No team data for the selected season.</p>;
 
   const weeksLeft = new Set(futureGames.map((g) => g.week)).size;
-  const teamMap = new Map(teams.map((t) => [t.teamId, t]));
-
-  const [playoffSpots, setPlayoffSpots] = useState<4 | 5 | 6>(5);
-
-  // Pick the right pct for the selected cutoff
-  const playoffPct = (r: SimResult) =>
-    playoffSpots === 4 ? r.pct4 : playoffSpots === 5 ? r.pct5 : r.pct6;
+  const numTeams = teams.length;
 
   // Sort by projected rank (avgRank ascending = best seed first)
   const sortedResults = [...results].sort((a, b) => a.avgRank - b.avgRank);
@@ -1400,10 +1402,67 @@ function PlayoffSim({
       <div className="flex items-center gap-3 flex-wrap">
         <button
           onClick={() => setSimKey((k) => k + 1)}
-          className="px-3 py-1.5 text-xs border border-white/10 rounded-md text-slate-400 hover:text-white hover:border-white/20 transition-colors"
+          disabled={isRunning}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs border border-white/10 rounded-md text-slate-400 hover:text-white hover:border-white/20 transition-colors disabled:opacity-50"
         >
-          Re-run ({NUM_SIMS.toLocaleString()} sims)
+          {isRunning && <Loader2 className="h-3 w-3 animate-spin" />}
+          {isRunning ? "Simulating…" : `Re-run (${numSims.toLocaleString()} sims)`}
         </button>
+
+        {!isLiveSeason && playedWeeks.length > 0 && (
+          <button
+            onClick={runBackfill}
+            disabled={backfilling}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs border border-white/10 rounded-md text-slate-400 hover:text-white hover:border-white/20 transition-colors disabled:opacity-50"
+          >
+            {backfilling && <Loader2 className="h-3 w-3 animate-spin" />}
+            {backfilling
+              ? `Backfilling week ${backfillProgress?.done ?? 0}/${backfillProgress?.total ?? playedWeeks.length}…`
+              : "Backfill week-by-week history"}
+          </button>
+        )}
+        {!isLiveSeason && !backfilling && (simHistory?.length ?? 0) === 0 && playedWeeks.length > 0 && (
+          <span className="text-[11px] text-slate-600 italic">Run backfill to see week-over-week change</span>
+        )}
+
+        {/* Sim count */}
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-slate-500">Sims:</span>
+          <div className="flex gap-1 rounded-lg border border-white/10 p-0.5">
+            {[10_000, 100_000, 1_000_000].map((n) => (
+              <button
+                key={n}
+                onClick={() => setNumSims(n)}
+                className={cn(
+                  "px-2 py-1 text-xs rounded-md transition-colors",
+                  numSims === n ? "bg-white/10 text-white font-medium" : "text-slate-400 hover:text-white",
+                )}
+              >
+                {n >= 1_000_000 ? "1M" : n.toLocaleString()}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* As-of-week look-back selector */}
+        {playedWeeks.length > 0 && (
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-slate-500">As of week:</span>
+            <select
+              value={asOfWeek}
+              onChange={(e) => setAsOfWeek(Number(e.target.value))}
+              className="bg-slate-900 border border-white/10 rounded-md text-xs text-white px-2 py-1"
+            >
+              <option value={0} className="bg-slate-900 text-white">Preseason</option>
+              {playedWeeks.map((w) => (
+                <option key={w} value={w} className="bg-slate-900 text-white">
+                  Week {w}{w === latestPlayedWeek ? " (latest)" : ""}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
         <p className="text-xs text-slate-500">
           {weeksLeft > 0 ? `${weeksLeft} regular season week${weeksLeft > 1 ? "s" : ""} remaining` : "Regular season complete — showing final standings"}
         </p>
@@ -1411,13 +1470,13 @@ function PlayoffSim({
         <div className="flex items-center gap-2 ml-auto">
           <span className="text-xs text-slate-500">Playoff spots:</span>
           <div className="flex gap-1 rounded-lg border border-white/10 p-0.5">
-            {([4, 5, 6] as const).map((n) => (
+            {[4, 5, 6].map((n) => (
               <button
                 key={n}
                 onClick={() => setPlayoffSpots(n)}
                 className={cn(
                   "px-2.5 py-1 text-xs rounded-md transition-colors",
-                  playoffSpots === n
+                  effectiveBracketSize === n
                     ? "bg-white/10 text-white font-medium"
                     : "text-slate-400 hover:text-white",
                 )}
@@ -1428,9 +1487,15 @@ function PlayoffSim({
           </div>
         </div>
       </div>
+      <div className={cn("space-y-4 transition-opacity duration-200", isRunning && "opacity-40 pointer-events-none")}>
       <p className="text-xs text-slate-500 border-l-2 border-white/10 pl-3">
         Projected mean blends actual season PPG (weighted by games played) with recency-weighted career average.
-        Sorted by projected seed — Playoff % shows odds of finishing in the top {playoffSpots}.
+        Sorted by projected seed — Playoff % shows odds of finishing in the top {effectiveBracketSize}.
+        {asOfWeek < latestPlayedWeek && (
+          asOfWeek === 0
+            ? " Showing preseason odds — no games played yet, based purely on historical projections."
+            : ` Showing odds as they stood after Week ${asOfWeek} — later results aren't factored in.`
+        )}
       </p>
       <div className="overflow-x-auto">
         <Table>
@@ -1451,7 +1516,6 @@ function PlayoffSim({
             {sortedResults.map((r, i) => {
               const t = teamMap.get(r.teamId);
               if (!t) return null;
-              const pct = playoffPct(r);
               return (
                 <TableRow key={r.teamId}>
                   <TableCell className="text-slate-500 text-sm">{i + 1}</TableCell>
@@ -1478,8 +1542,21 @@ function PlayoffSim({
                   <TableCell className="text-right font-mono text-sm text-slate-300">
                     #{fmt(r.avgRank, 1)}
                   </TableCell>
-                  <TableCell className={cn("text-right font-mono font-semibold text-sm", pctColor(pct))}>
-                    {fmt(pct * 100, 1)}%
+                  <TableCell className={cn("text-right font-mono font-semibold text-sm", pctColor(r.playoffPct))}>
+                    {fmt(r.playoffPct * 100, 1)}%
+                    {(() => {
+                      const prevPct = prevWeekPlayoffPct?.get(r.teamId);
+                      if (prevPct == null) return null;
+                      const delta = r.playoffPct * 100 - prevPct * 100;
+                      if (Math.abs(delta) < 0.05) {
+                        return <span className="ml-1.5 text-[10px] font-normal text-slate-600">±0.0</span>;
+                      }
+                      return (
+                        <span className={cn("ml-1.5 text-[10px] font-normal", delta > 0 ? "text-emerald-500" : "text-red-500")}>
+                          {delta > 0 ? "▲" : "▼"}{fmt(Math.abs(delta), 1)}
+                        </span>
+                      );
+                    })()}
                   </TableCell>
                 </TableRow>
               );
@@ -1487,6 +1564,61 @@ function PlayoffSim({
           </TableBody>
         </Table>
       </div>
+
+      {/* Seed distribution matrix */}
+      {results.length > 0 && (
+        <div className="mt-6 border-t border-white/10 pt-6">
+          <h3 className="text-sm font-semibold text-slate-300 mb-1">Finish Probability by Seed</h3>
+          <p className="text-xs text-slate-500 mb-3">
+            Chance of finishing in each exact position across all {numSims.toLocaleString()} simulated seasons.
+            Shaded columns clinch a playoff spot at that seed.
+          </p>
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Team</TableHead>
+                  {Array.from({ length: numTeams }, (_, i) => (
+                    <TableHead key={i} className="text-center w-14">{i + 1}</TableHead>
+                  ))}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {sortedResults.map((r) => {
+                  const t = teamMap.get(r.teamId);
+                  if (!t) return null;
+                  return (
+                    <TableRow key={r.teamId}>
+                      <TableCell>
+                        <Link to={`/team/${r.teamId}`} className="text-primary hover:underline font-medium text-sm">
+                          {t.teamName}
+                        </Link>
+                      </TableCell>
+                      {r.seedPct.map((pct, seedIdx) => (
+                        <TableCell
+                          key={seedIdx}
+                          className={cn(
+                            "text-center font-mono text-xs p-1",
+                            seedIdx < effectiveBracketSize && "bg-amber-400/[0.06]",
+                          )}
+                        >
+                          {pct >= 0.001 ? (
+                            <span className={pct >= 0.5 ? "text-white font-semibold" : "text-slate-400"}>
+                              {fmt(pct * 100, pct >= 0.1 ? 0 : 1)}%
+                            </span>
+                          ) : (
+                            <span className="text-slate-700">—</span>
+                          )}
+                        </TableCell>
+                      ))}
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
+        </div>
+      )}
 
       {/* Matchup Odds by Week */}
       {weeksLeft > 0 && (() => {
@@ -1501,18 +1633,31 @@ function PlayoffSim({
             <div>
               <h3 className="text-sm font-semibold text-slate-300 mb-1">Remaining Matchup Odds</h3>
               <p className="text-xs text-slate-500">
-                Analytical win probability: P(A beats B) = Φ((μ<sub>A</sub>−μ<sub>B</sub>)/√(σ<sub>A</sub>²+σ<sub>B</sub>²))
+                Analytical win probability: P(A beats B) = Φ((μ<sub>A</sub>−μ<sub>B</sub>)/√(σ<sub>A</sub>²+σ<sub>B</sub>²)).
+                Uncertainty widens the further out a game is — a repeat matchup 9 weeks from now isn't
+                as predictable as the same pairing next week, even though the projection itself hasn't changed.
               </p>
             </div>
-            {sortedWeeks.map((week) => (
+            {sortedWeeks.map((week) => {
+              const weekIsPlayerLevel = weekProjections.get(week) != null;
+              return (
               <div key={week}>
-                <p className="text-xs font-semibold text-slate-400 mb-2 uppercase tracking-wide">Week {week}</p>
+                <p className="text-xs font-semibold text-slate-400 mb-2 uppercase tracking-wide flex items-center gap-2">
+                  Week {week}
+                  {weekIsPlayerLevel && (
+                    <span className="normal-case tracking-normal font-normal text-emerald-400/80 text-[10px] bg-emerald-400/10 rounded px-1.5 py-0.5">
+                      live rosters + bye weeks
+                    </span>
+                  )}
+                </p>
                 <div className="grid gap-2">
                   {gamesByWeek.get(week)!.map((g) => {
                     const home = teamMap.get(g.homeId);
                     const away = teamMap.get(g.awayId);
                     if (!home || !away) return null;
-                    const homeProb = matchupWinProb(home.projMean, home.projStd, away.projMean, away.projStd);
+                    const homeStat = getEffectiveTeamWeekStat(weekProjections, g.homeId, week, nearestWeek, home.projMean, home.projStd);
+                    const awayStat = getEffectiveTeamWeekStat(weekProjections, g.awayId, week, nearestWeek, away.projMean, away.projStd);
+                    const homeProb = matchupWinProb(homeStat.mean, homeStat.std, awayStat.mean, awayStat.std);
                     const awayProb = 1 - homeProb;
                     const favored = homeProb >= awayProb ? home : away;
                     const favProb = Math.max(homeProb, awayProb);
@@ -1578,10 +1723,12 @@ function PlayoffSim({
                   })}
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         );
       })()}
+      </div>
     </div>
   );
 }
@@ -1756,8 +1903,41 @@ function computeParallelUniverse(
     if (ts.size === 0) continue;
     const leagueStd = stdDev([...ts.values()].flatMap(s => s.scores));
 
-    // Actual seeds (by W-L then PF)
-    const actualSorted = [...ts.entries()].sort((a, b) => b[1].actualWins - a[1].actualWins || b[1].actualPF - a[1].actualPF);
+    // Actual seeds (by wins; ties broken by a restricted round-robin among
+    // just the tied teams — not points-for. This is the league's real
+    // tiebreak rule: confirmed against Sleeper's actual historical bracket
+    // seeding, where plain win%+PF gets a 3-way tie wrong.)
+    const winGroups = new Map<number, number[]>();
+    for (const [tid, s] of ts) {
+      if (!winGroups.has(s.actualWins)) winGroups.set(s.actualWins, []);
+      winGroups.get(s.actualWins)!.push(tid);
+    }
+    const actualOrder: number[] = [];
+    for (const wins of [...winGroups.keys()].sort((a, b) => b - a)) {
+      const group = winGroups.get(wins)!;
+      if (group.length === 1) { actualOrder.push(group[0]); continue; }
+      const h2hWins = new Map<number, number>(group.map((id) => [id, 0]));
+      for (const scores of weekMap.values()) {
+        const byTeam = new Map(scores.map((s) => [s.teamId, s.score]));
+        for (const a of group) {
+          const aScore = byTeam.get(a);
+          if (aScore == null) continue;
+          for (const b of group) {
+            if (a === b) continue;
+            const bScore = byTeam.get(b);
+            if (bScore == null) continue;
+            if (aScore > bScore) h2hWins.set(a, (h2hWins.get(a) ?? 0) + 1);
+          }
+        }
+      }
+      const sortedGroup = [...group].sort((a, b) => {
+        const aw = h2hWins.get(a) ?? 0, bw = h2hWins.get(b) ?? 0;
+        if (aw !== bw) return bw - aw;
+        return ts.get(b)!.actualPF - ts.get(a)!.actualPF;
+      });
+      actualOrder.push(...sortedGroup);
+    }
+    const actualSorted = actualOrder.map((tid) => [tid, ts.get(tid)!] as [number, TS]);
     const actualSeedMap = new Map(actualSorted.map(([tid], i) => [tid, i + 1]));
 
     // All-play seeds (by all-play win%, PPG tiebreaker)
@@ -2369,9 +2549,26 @@ function CareerPowerRankings({ allMatchups }: { allMatchups: MatchupScoresView[]
   if (rows.length === 0) return <p className="text-slate-400 text-sm">No career data available.</p>;
 
   const maxScore = Math.max(...rows.map((r) => r.powerScore), 1);
+  const leader = rows[0];
 
   return (
     <div className="space-y-4">
+      <div className="rounded-xl border border-amber-400/20 bg-gradient-to-br from-amber-400/[0.07] to-transparent p-5 flex items-center justify-between flex-wrap gap-4">
+        <div>
+          <p className="text-xs uppercase tracking-wide text-amber-400/80 mb-1">All-time leader</p>
+          <Link to={`/team/${leader.teamId}`} className="text-2xl font-bold text-white hover:text-amber-300 transition-colors">
+            {leader.teamName}
+          </Link>
+          <p className="text-sm text-slate-400 mt-1">
+            {leader.titles > 0 ? `${leader.titles} title${leader.titles > 1 ? "s" : ""} · ` : ""}
+            {fmt(leader.playoffAppPct * 100, 0)}% playoff rate · {fmt(leader.careerPPG)} career PPG
+          </p>
+        </div>
+        <div className="text-right">
+          <p className="text-3xl font-bold font-mono text-amber-300">{leader.powerScore}</p>
+          <p className="text-xs text-slate-500">composite score</p>
+        </div>
+      </div>
       <p className="text-sm text-slate-400">
         Composite career score: <span className="text-white/70">25% all-play win%</span> + <span className="text-white/70">15% career PPG</span> + <span className="text-white/70">35% avg finish score</span> + <span className="text-white/70">20% playoff rate</span> + <span className="text-white/70">5% expected title rate</span>
       </p>
@@ -2501,9 +2698,6 @@ const Analytics = () => {
           <TabsTrigger value="consistency">
             <Award className="h-3.5 w-3.5 mr-1.5" />Consistency
           </TabsTrigger>
-          <TabsTrigger value="trajectory">
-            <TrendingUp className="h-3.5 w-3.5 mr-1.5" />Dynasty
-          </TabsTrigger>
           <TabsTrigger value="power">
             <Zap className="h-3.5 w-3.5 mr-1.5" />Power Rankings
           </TabsTrigger>
@@ -2559,25 +2753,6 @@ const Analytics = () => {
           </Card>
         </TabsContent>
 
-        {/* Dynasty Trajectory */}
-        <TabsContent value="trajectory" className="mt-4">
-          <Card className="p-6">
-            <CardHeader className="px-0 pt-0">
-              <CardTitle className="text-lg">Dynasty Trajectory</CardTitle>
-              <CardDescription>
-                Regular season win % and scoring trends across all seasons
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="px-0 pb-0">
-              {isLoading ? (
-                <p className="text-slate-400 text-sm animate-pulse">Loading…</p>
-              ) : allMatchups ? (
-                <DynastyTrajectory allMatchups={allMatchups} yearMap={yearMap} />
-              ) : null}
-            </CardContent>
-          </Card>
-        </TabsContent>
-
         {/* Power Rankings */}
         <TabsContent value="power" className="mt-4">
           <Card className="p-6">
@@ -2622,7 +2797,12 @@ const Analytics = () => {
             <CardHeader className="px-0 pt-0">
               <CardTitle className="text-lg">Career Power Rankings — All Time</CardTitle>
               <CardDescription>
-                Composite all-time ranking based on all-play win%, career PPG, titles, playoff rate, and luck
+                Composite all-time ranking based on all-play win%, career PPG, titles, playoff rate, and luck.
+                For single-season all-play records, see{" "}
+                <Link to="/records" className="text-primary hover:underline">
+                  Records → Miscellaneous
+                </Link>
+                .
               </CardDescription>
             </CardHeader>
             <CardContent className="px-0 pb-0">
@@ -2663,7 +2843,7 @@ const Analytics = () => {
             <CardHeader className="px-0 pt-0">
               <CardTitle className="text-lg">Simulated Playoff Odds — {seasonLabel}</CardTitle>
               <CardDescription>
-                Monte Carlo simulation ({NUM_SIMS.toLocaleString()} runs) of the remaining schedule using projected scoring
+                Monte Carlo simulation (up to {DEFAULT_NUM_SIMS.toLocaleString()} runs) of the remaining schedule using projected scoring
               </CardDescription>
             </CardHeader>
             <CardContent className="px-0 pb-0">

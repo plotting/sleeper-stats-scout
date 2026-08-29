@@ -1,4 +1,5 @@
 
+import { Link } from "react-router-dom";
 import { Card } from "@/components/ui/card";
 import {
   Table,
@@ -27,6 +28,14 @@ export const MiscRecordsSection = ({
 }: MiscRecordsSectionProps) => {
   return (
     <div className="grid gap-6 md:grid-cols-2">
+      <p className="md:col-span-2 text-sm text-muted-foreground -mb-2">
+        These are single-season all-play records. For a career-long composite ranking (all-play
+        win%, PPG, titles, and playoff rate combined), see{" "}
+        <Link to="/analytics" className="text-primary hover:underline">
+          Analytics → Career Rankings
+        </Link>
+        .
+      </p>
       <Card className="p-6">
         <h2 className="text-xl font-semibold mb-4">Best Seasons vs All Teams</h2>
         <Table>

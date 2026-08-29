@@ -1,5 +1,5 @@
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, Fragment } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -54,14 +54,16 @@ interface HistoricalPick {
   round: number;
   pick_number: number;
   five_yr_vorp: number;
+  seasons_with_data: number;
   position: string;
   draft_year: number;
   player_name: string;
 }
 
 type Position = "ALL" | "QB" | "RB" | "WR" | "TE";
-type PageTab  = "grades" | "value" | "curve" | "teams";
+type PageTab  = "grades" | "value" | "curve" | "teams" | "alltime";
 type ViewMode = "picks" | "byteam" | "adp";
+type AllTimeSort = "vorp" | "efficiency";
 
 // ── Style helpers ─────────────────────────────────────────────────────────────
 
@@ -142,6 +144,17 @@ function pickValueColor(v: number): string {
 
 function formatPickVal(v: number): string {
   return v > 0 ? `+${v.toFixed(1)}` : v.toFixed(1);
+}
+
+/**
+ * Extrapolate a partial career to a full 5-year window.
+ * Players with <5 seasons are projected to their current per-year pace.
+ * Players with 0 seasons return 0 (no data yet).
+ */
+function extrapolateToFiveYears(fiveYrVorp: number, seasonsWithData: number): number {
+  if (seasonsWithData <= 0) return 0;
+  if (seasonsWithData >= 5) return fiveYrVorp;
+  return (fiveYrVorp / seasonsWithData) * 5;
 }
 
 function teamPickValueGrade(avg: number): string {
@@ -241,16 +254,280 @@ const ADP_YEARS       = [2025, 2024, 2023, 2022, 2021, 2020, 2019, 2018, 2017, 2
 const GRADABLE_POS    = ["QB", "RB", "WR", "TE"];
 
 const PAGE_TABS: { key: PageTab; label: string }[] = [
-  { key: "grades", label: "VORP Grades" },
-  { key: "value",  label: "Pick Value" },
-  { key: "curve",  label: "Slot Curve" },
-  { key: "teams",  label: "Teams" },
+  { key: "grades",  label: "VORP Grades" },
+  { key: "value",   label: "Pick Value" },
+  { key: "curve",   label: "Slot Curve" },
+  { key: "teams",   label: "Teams" },
+  { key: "alltime", label: "All-Time" },
 ];
+
+// ── All-Time Tab (isolated component with its own query + state) ──────────────
+
+function AllTimeTabContent({ expectedVorpCurve, curveReady }: {
+  expectedVorpCurve: Map<number, number>;
+  curveReady: boolean;
+}) {
+  const [sort, setSort]               = useState<AllTimeSort>("vorp");
+  const [expandedTeam, setExpandedTeam] = useState<string | null>(null);
+
+  const { data: allPicks = [], isLoading, isError } = useQuery({
+    queryKey: ["draft-grades-all"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("rookie_draft_grades" as never)
+        .select("*")
+        .gte("draft_year", 2014)
+        .in("position", GRADABLE_POS)
+        .order("draft_year")
+        .order("overall_pick");
+      if (error) throw error;
+      return data as DraftGradeRow[];
+    },
+  });
+
+  function getExpVorp(slot: number): number | null {
+    if (expectedVorpCurve.has(slot)) return expectedVorpCurve.get(slot)!;
+    for (let d = 1; d <= 3; d++) {
+      if (expectedVorpCurve.has(slot - d)) return expectedVorpCurve.get(slot - d)!;
+      if (expectedVorpCurve.has(slot + d)) return expectedVorpCurve.get(slot + d)!;
+    }
+    return null;
+  }
+
+  function getPV(pick: DraftGradeRow): number | null {
+    const exp = getExpVorp(pick.overall_pick);
+    return exp === null ? null : Number(pick.five_yr_vorp ?? 0) - exp;
+  }
+
+  const summaries = useMemo(() => {
+    if (!allPicks.length || !curveReady) return [];
+    try {
+      const map = new Map<string, DraftGradeRow[]>();
+      for (const p of allPicks) {
+        const key = String(p.team_name ?? "Unknown");
+        if (!map.has(key)) map.set(key, []);
+        map.get(key)!.push(p);
+      }
+      const rows = [...map.entries()].map(([team_name, tp]) => {
+        const totalVorp   = tp.reduce((s, p) => s + Number(p.five_yr_vorp ?? 0), 0);
+        const pvs         = tp.map(getPV).filter((v): v is number => v !== null);
+        const avgPickVal  = pvs.length ? pvs.reduce((s, v) => s + v, 0) / pvs.length : 0;
+        const avgGradeNum = tp.reduce((s, p) => s + (GRADE_NUM[p.vorp_grade] ?? 0), 0) / tp.length;
+        const years       = [...new Set(tp.map((p) => Number(p.draft_year ?? 0)))].sort((a, b) => a - b);
+        const byYear = years.map((yr) => {
+          const yp     = tp.filter((p) => Number(p.draft_year) === yr).sort((a, b) => a.overall_pick - b.overall_pick);
+          const yrVorp = yp.reduce((s, p) => s + Number(p.five_yr_vorp ?? 0), 0);
+          const yrPvs  = yp.map(getPV).filter((v): v is number => v !== null);
+          const yrAvg  = yrPvs.length ? yrPvs.reduce((s, v) => s + v, 0) / yrPvs.length : null;
+          return { year: yr, picks: yp, total_vorp: yrVorp, avg_pick_val: yrAvg };
+        });
+        return {
+          team_name,
+          pick_count: tp.length,
+          year_count: years.length,
+          total_vorp: totalVorp,
+          vorp_grade: numToLetterGrade(isFinite(avgGradeNum) ? avgGradeNum : 0),
+          avg_pick_value: isFinite(avgPickVal) ? avgPickVal : 0,
+          pick_efficiency_grade: teamPickValueGrade(isFinite(avgPickVal) ? avgPickVal : 0),
+          byYear,
+        };
+      });
+      return sort === "vorp"
+        ? rows.sort((a, b) => b.total_vorp - a.total_vorp)
+        : rows.sort((a, b) => b.avg_pick_value - a.avg_pick_value);
+    } catch (e) {
+      console.error("AllTimeTabContent summaries error:", e);
+      return [];
+    }
+  }, [allPicks, expectedVorpCurve, curveReady, sort]); // eslint-disable-line
+
+  const selected = expandedTeam ? (summaries.find((t) => t.team_name === expandedTeam) ?? null) : null;
+
+  if (isLoading || !curveReady) {
+    return <p className="py-12 text-center text-slate-500 text-sm animate-pulse">Loading all-time data…</p>;
+  }
+  if (isError) {
+    return <p className="py-12 text-center text-red-400 text-sm">Failed to load — please refresh.</p>;
+  }
+
+  return (
+    <div className="space-y-4">
+      <Card className="border-white/10">
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <div>
+              <CardTitle className="text-base">All-Time Dynasty Draft Value</CardTitle>
+              <p className="text-xs text-slate-500 mt-1">
+                Every pick across all draft years · Click a team to see their full breakdown
+              </p>
+            </div>
+            <div className="flex gap-1 rounded-lg border border-white/10 p-1">
+              {([
+                { key: "vorp",       label: "By Total VORP" },
+                { key: "efficiency", label: "By Efficiency" },
+              ] as { key: AllTimeSort; label: string }[]).map(({ key, label }) => (
+                <button
+                  key={key}
+                  onClick={() => setSort(key)}
+                  className={cn(
+                    "px-3 py-1.5 text-xs rounded-md transition-colors",
+                    sort === key ? "bg-white/10 text-white font-medium" : "text-slate-400 hover:text-white",
+                  )}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="pt-0">
+          {summaries.length === 0 ? (
+            <p className="py-12 text-center text-slate-500 text-sm">No data found.</p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-8 text-center">#</TableHead>
+                  <TableHead>Team</TableHead>
+                  <TableHead className="text-right w-16">Drafts</TableHead>
+                  <TableHead className="text-right w-16">Picks</TableHead>
+                  <TableHead className="text-right w-28">Total VORP</TableHead>
+                  <TableHead className="w-20 text-center">VORP</TableHead>
+                  <TableHead className="text-right w-28">Avg Pick Val</TableHead>
+                  <TableHead className="w-24 text-center">Efficiency</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {summaries.map((team, i) => (
+                  <TableRow
+                    key={team.team_name}
+                    className={cn(
+                      "cursor-pointer hover:bg-white/[0.04] transition-colors",
+                      i % 2 === 0 ? "" : "bg-white/[0.015]",
+                      expandedTeam === team.team_name && "bg-white/[0.06]",
+                    )}
+                    onClick={() => setExpandedTeam(expandedTeam === team.team_name ? null : team.team_name)}
+                  >
+                    <TableCell className="text-center text-slate-500 text-sm font-mono">{i + 1}</TableCell>
+                    <TableCell className="font-semibold text-white">
+                      <span className="flex items-center gap-1.5">
+                        {expandedTeam === team.team_name
+                          ? <ChevronDown className="h-3 w-3 text-slate-500 shrink-0" />
+                          : <ChevronRight className="h-3 w-3 text-slate-600 shrink-0" />}
+                        {team.team_name}
+                      </span>
+                    </TableCell>
+                    <TableCell className="text-right text-sm text-slate-400">{team.year_count}</TableCell>
+                    <TableCell className="text-right text-sm text-slate-400">{team.pick_count}</TableCell>
+                    <TableCell className={cn("text-right font-mono text-sm font-semibold", vorpColor(team.total_vorp))}>
+                      {formatVorp(team.total_vorp)}
+                    </TableCell>
+                    <TableCell className="text-center"><GradeBadge grade={team.vorp_grade} /></TableCell>
+                    <TableCell className={cn("text-right font-mono text-sm font-semibold", pickValueColor(team.avg_pick_value))}>
+                      {formatPickVal(team.avg_pick_value)}
+                    </TableCell>
+                    <TableCell className="text-center"><GradeBadge grade={team.pick_efficiency_grade} /></TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+
+      {selected && (
+        <Card className="border-white/10">
+          <CardHeader className="pb-2">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <CardTitle className="text-sm font-semibold text-white">{selected.team_name} — All Drafts</CardTitle>
+              <div className="flex items-center gap-3 text-xs flex-wrap">
+                <span className="text-slate-500">Total VORP:</span>
+                <span className={cn("font-mono font-semibold", vorpColor(selected.total_vorp))}>{formatVorp(selected.total_vorp)}</span>
+                <GradeBadge grade={selected.vorp_grade} />
+                <span className="text-slate-500">Avg pick val:</span>
+                <span className={cn("font-mono font-semibold", pickValueColor(selected.avg_pick_value))}>{formatPickVal(selected.avg_pick_value)}</span>
+                <GradeBadge grade={selected.pick_efficiency_grade} />
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="pt-2 space-y-6">
+            {selected.byYear.map(({ year, picks: yp, total_vorp: yrVorp, avg_pick_val: yrAvgPv }) => (
+              <div key={year}>
+                <div className="flex items-center gap-3 mb-2 pb-1.5 border-b border-white/10">
+                  <span className="text-sm font-bold text-white">{year} Draft</span>
+                  <span className={cn("text-xs font-mono font-semibold", vorpColor(yrVorp))}>{formatVorp(yrVorp)} VORP</span>
+                  {yrAvgPv !== null && (
+                    <span className={cn("text-xs font-mono", pickValueColor(yrAvgPv))}>{formatPickVal(yrAvgPv)} avg pick val</span>
+                  )}
+                  <span className="text-xs text-slate-600">{yp.length} pick{yp.length !== 1 ? "s" : ""}</span>
+                </div>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-14 text-center">Pick</TableHead>
+                      <TableHead>Player</TableHead>
+                      <TableHead className="w-14">Pos</TableHead>
+                      <TableHead className="text-right w-24">5yr VORP</TableHead>
+                      <TableHead className="text-right w-24">Expected</TableHead>
+                      <TableHead className="text-right w-24">Pick Val</TableHead>
+                      <TableHead className="w-16 text-center">Grade</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {yp.map((pick, pi) => {
+                      const pv  = getPV(pick);
+                      const exp = getExpVorp(pick.overall_pick);
+                      return (
+                        <TableRow key={pick.pick_id ?? pi} className={pi % 2 === 0 ? "" : "bg-white/[0.015]"}>
+                          <TableCell className="text-center font-mono text-slate-400 text-xs">
+                            {pick.round}.{String(pick.pick_number).padStart(2, "0")}
+                          </TableCell>
+                          <TableCell className="font-medium text-white text-sm">{pick.player_name}</TableCell>
+                          <TableCell><PosBadge pos={pick.position} /></TableCell>
+                          <TableCell className={cn("text-right font-mono text-sm font-semibold", vorpColor(Number(pick.five_yr_vorp ?? 0)))}>
+                            {formatVorp(Number(pick.five_yr_vorp ?? 0))}
+                          </TableCell>
+                          <TableCell className="text-right font-mono text-sm text-slate-500">
+                            {exp !== null ? formatVorp(exp) : "—"}
+                          </TableCell>
+                          <TableCell className={cn("text-right font-mono text-sm font-semibold", pv !== null ? pickValueColor(pv) : "text-slate-600")}>
+                            {pv !== null ? formatPickVal(pv) : "—"}
+                          </TableCell>
+                          <TableCell className="text-center">
+                            {pv !== null ? <GradeBadge grade={pickValueGrade(pv)} /> : <span className="text-slate-600 text-xs">—</span>}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
+      {summaries.length > 0 && (
+        <Card className="border-white/10">
+          <CardContent className="pt-4 pb-4">
+            <div className="text-xs text-slate-500 space-y-1">
+              <p className="font-medium text-slate-300">How these are calculated</p>
+              <p className="leading-relaxed">
+                <span className="text-slate-400 font-mono">Total VORP</span> — sum of every player's 5-year VORP from their draft year.{" "}
+                <span className="text-slate-400 font-mono">Pick Efficiency</span> — avg of (actual VORP − expected VORP for that slot) across all picks. Historical baseline: 2014–2021.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}
 
 // ── Main component ────────────────────────────────────────────────────────────
 
 const DraftGrades = () => {
-  const [year, setYear]               = useState(2023);
+  const [year, setYear]               = useState(2025);
   const [adpYear, setAdpYear]         = useState(2025);
   const [pageTab, setPageTab]         = useState<PageTab>("grades");
   const [viewMode, setViewMode]       = useState<ViewMode>("picks");
@@ -278,15 +555,14 @@ const DraftGrades = () => {
     },
   });
 
-  // Historical picks (2013–2021) — builds expected VORP curve + Slot Curve tab
+  // All draft picks — used for Slot Curve (all years) and expectedVorpCurve (2014–2021 subset)
   const { data: historicalPicks = [] } = useQuery({
-    queryKey: ["draft-grades-historical"],
+    queryKey: ["draft-grades-historical-v2"],
     queryFn: async () => {
       const { data, error } = await supabase
         .from("rookie_draft_grades" as never)
-        .select("overall_pick, round, pick_number, five_yr_vorp, position, draft_year, player_name")
+        .select("overall_pick, round, pick_number, five_yr_vorp, seasons_with_data, position, draft_year, player_name")
         .gte("draft_year", 2014)
-        .lte("draft_year", 2021)
         .in("position", GRADABLE_POS);
       if (error) throw error;
       return data as HistoricalPick[];
@@ -310,11 +586,12 @@ const DraftGrades = () => {
 
   // ── Derived data ───────────────────────────────────────────────────────────
 
-  // Smoothed expected VORP curve (±1 slot) used for Pick Value calculations
+  // Smoothed expected VORP curve (±1 slot) — uses only 2014–2021 (complete 5yr windows) as baseline
   const expectedVorpCurve = useMemo(() => {
     if (historicalPicks.length === 0) return new Map<number, number>();
     const slotMap = new Map<number, number[]>();
     for (const p of historicalPicks) {
+      if (p.draft_year < 2014 || p.draft_year > 2021) continue; // complete 5yr baseline only
       if (!slotMap.has(p.overall_pick)) slotMap.set(p.overall_pick, []);
       slotMap.get(p.overall_pick)!.push(Number(p.five_yr_vorp));
     }
@@ -330,29 +607,39 @@ const DraftGrades = () => {
     return result;
   }, [historicalPicks]);
 
-  // Raw per-slot data for the Slot Curve tab (no smoothing — shows actual players)
+  // Per-slot data for the Slot Curve tab — all years, partial careers extrapolated to 5yr pace
   const slotCurveData = useMemo(() => {
     if (historicalPicks.length === 0) return [];
     const slotMap = new Map<number, {
       overall_pick: number; round: number; pick_number: number;
-      players: { player_name: string; draft_year: number; five_yr_vorp: number; position: string }[];
+      players: {
+        player_name: string; draft_year: number;
+        five_yr_vorp: number; extrapolated_vorp: number;
+        seasons_with_data: number; position: string;
+      }[];
     }>();
     for (const p of historicalPicks) {
       const slot = p.overall_pick;
       if (!slotMap.has(slot)) {
         slotMap.set(slot, { overall_pick: slot, round: p.round, pick_number: p.pick_number, players: [] });
       }
+      const seasons = Number(p.seasons_with_data ?? 0);
+      const raw     = Number(p.five_yr_vorp);
       slotMap.get(slot)!.players.push({
-        player_name: p.player_name,
-        draft_year: p.draft_year,
-        five_yr_vorp: Number(p.five_yr_vorp),
-        position: p.position,
+        player_name:       p.player_name,
+        draft_year:        p.draft_year,
+        five_yr_vorp:      raw,
+        extrapolated_vorp: extrapolateToFiveYears(raw, seasons),
+        seasons_with_data: seasons,
+        position:          p.position,
       });
     }
     return [...slotMap.values()]
       .map((slot) => {
-        const sorted = [...slot.players].sort((a, b) => b.five_yr_vorp - a.five_yr_vorp);
-        const avg = slot.players.reduce((s, p) => s + p.five_yr_vorp, 0) / slot.players.length;
+        // Sort by extrapolated VORP so recent partial-career players rank fairly
+        const sorted = [...slot.players].sort((a, b) => b.extrapolated_vorp - a.extrapolated_vorp);
+        // Average uses extrapolated VORP so all years contribute equally
+        const avg = slot.players.reduce((s, p) => s + p.extrapolated_vorp, 0) / slot.players.length;
         return { ...slot, players: sorted, avg_vorp: avg, count: slot.players.length };
       })
       .sort((a, b) => a.overall_pick - b.overall_pick);
@@ -490,12 +777,12 @@ const DraftGrades = () => {
               <span className="ml-1">· {gradablePicks.length} graded picks</span>
             )}
           </p>
-          {dataNote && pageTab !== "curve" && (
+          {dataNote && pageTab !== "curve" && pageTab !== "alltime" && (
             <p className="text-amber-400/80 text-xs mt-1">{dataNote}</p>
           )}
         </div>
-        {/* Year selector — hidden when on Curve tab (year-agnostic) or ADP sub-tab (has own) */}
-        {pageTab !== "curve" && !(pageTab === "grades" && viewMode === "adp") && (
+        {/* Year selector — hidden on Curve/All-Time (year-agnostic) and ADP sub-tab (has own) */}
+        {pageTab !== "curve" && pageTab !== "alltime" && !(pageTab === "grades" && viewMode === "adp") && (
           <Select value={String(year)} onValueChange={handleYearChange}>
             <SelectTrigger className="w-[140px]">
               <SelectValue />
@@ -781,8 +1068,8 @@ const DraftGrades = () => {
                 <div className="text-xs text-slate-400 space-y-1">
                   <p className="font-medium text-slate-300">How VORP is calculated</p>
                   <p className="text-slate-500 leading-relaxed">
-                    <span className="font-mono text-slate-400">VORP = player's pts − (replacement PPG × player's games played)</span>
-                    {" "}· Injuries don't tank grades since we compare against what the replacement would score in the same number of games.
+                    <span className="font-mono text-slate-400">VORP = player's pts − (replacement PPG × 17 games)</span>
+                    {" "}· Injured players are held to a full season baseline — missed games contribute 0 pts against a 17-game replacement floor.
                     Summed over 5 seasons from draft year. Replacement levels: QB10 · RB30 · WR30 · TE10
                   </p>
                 </div>
@@ -899,7 +1186,7 @@ const DraftGrades = () => {
             <CardHeader className="pb-3">
               <CardTitle className="text-base">Historical Expected VORP by Draft Slot</CardTitle>
               <p className="text-xs text-slate-500 mt-1">
-                2013–2021 baseline · Click any slot to see every player taken there and their 5-year VORP
+                All draft years · Click any slot to see every player taken there · Recent picks with &lt;5 seasons are projected to 5yr pace
               </p>
             </CardHeader>
             <CardContent className="pt-0">
@@ -922,7 +1209,7 @@ const DraftGrades = () => {
                       const best   = slot.players[0]?.five_yr_vorp ?? 0;
                       const worst  = slot.players[slot.players.length - 1]?.five_yr_vorp ?? 0;
                       return (
-                        <>
+                        <Fragment key={slot.overall_pick}>
                           <TableRow
                             key={slot.overall_pick}
                             className={cn("hover:bg-white/[0.04] cursor-pointer", isOpen && "bg-white/[0.05]")}
@@ -945,7 +1232,7 @@ const DraftGrades = () => {
                           </TableRow>
 
                           {isOpen && (
-                            <TableRow key={`${slot.overall_pick}-detail`} className="bg-white/[0.03]">
+                            <TableRow className="bg-white/[0.03]">
                               <TableCell colSpan={5} className="py-2 px-4">
                                 <div className="text-xs mb-1 text-slate-500 font-medium uppercase tracking-wider">
                                   Players taken at {slot.round}.{String(slot.pick_number).padStart(2, "0")}
@@ -960,24 +1247,33 @@ const DraftGrades = () => {
                                     </tr>
                                   </thead>
                                   <tbody>
-                                    {slot.players.map((p) => (
-                                      <tr key={`${p.player_name}-${p.draft_year}`} className="border-b border-white/[0.04]">
-                                        <td className="py-1 pr-6 text-white font-medium">{p.player_name}</td>
-                                        <td className="py-1 pr-6 text-slate-400 font-mono">{p.draft_year}</td>
-                                        <td className="py-1 pr-4">
-                                          <PosBadge pos={p.position} />
-                                        </td>
-                                        <td className={cn("py-1 text-right font-mono font-semibold", vorpColor(p.five_yr_vorp))}>
-                                          {formatVorp(p.five_yr_vorp)}
-                                        </td>
-                                      </tr>
-                                    ))}
+                                    {slot.players.map((p) => {
+                                      const isProjected = p.seasons_with_data > 0 && p.seasons_with_data < 5;
+                                      const hasNoData   = p.seasons_with_data === 0;
+                                      return (
+                                        <tr key={`${p.player_name}-${p.draft_year}`} className="border-b border-white/[0.04]">
+                                          <td className="py-1 pr-6 text-white font-medium">{p.player_name}</td>
+                                          <td className="py-1 pr-6 text-slate-400 font-mono">{p.draft_year}</td>
+                                          <td className="py-1 pr-4">
+                                            <PosBadge pos={p.position} />
+                                          </td>
+                                          <td className={cn("py-1 text-right font-mono font-semibold", hasNoData ? "text-slate-600" : vorpColor(p.extrapolated_vorp))}>
+                                            {hasNoData ? "—" : formatVorp(p.extrapolated_vorp)}
+                                            {isProjected && (
+                                              <span className="ml-1 text-[9px] text-slate-500 font-normal">
+                                                proj ({p.seasons_with_data}yr)
+                                              </span>
+                                            )}
+                                          </td>
+                                        </tr>
+                                      );
+                                    })}
                                   </tbody>
                                 </table>
                               </TableCell>
                             </TableRow>
                           )}
-                        </>
+                        </Fragment>
                       );
                     })}
                   </TableBody>
@@ -1112,6 +1408,13 @@ const DraftGrades = () => {
           )}
         </>
       )}
+      {/* ═══════════════════════════════════════════════════════════════════════
+          ALL-TIME TAB
+      ═══════════════════════════════════════════════════════════════════════ */}
+      {pageTab === "alltime" && (
+        <AllTimeTabContent expectedVorpCurve={expectedVorpCurve} curveReady={curveReady} />
+      )}
+
     </div>
   );
 };

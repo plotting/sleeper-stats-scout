@@ -15,6 +15,8 @@ import Season14 from "./pages/Season14";
 import Recaps from "./pages/Recaps";
 import Rookies from "./pages/Rookies";
 import DraftGrades from "./pages/DraftGrades";
+import DynastyDigest from "./pages/DynastyDigest";
+import GMScouting from "./pages/GMScouting";
 import NotFound from "./pages/NotFound";
 import "./App.css";
 
@@ -48,6 +50,8 @@ function App() {
               <Route path="/recaps" element={<Recaps />} />
               <Route path="/rookies" element={<Rookies />} />
               <Route path="/draft-grades" element={<DraftGrades />} />
+              <Route path="/dynasty-digest" element={<DynastyDigest />} />
+              <Route path="/gm-scouting" element={<GMScouting />} />
               <Route path="/season14" element={<Season14 />} />
               <Route path="/admin" element={<Admin />} />
               <Route path="*" element={<NotFound />} />

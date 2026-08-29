@@ -5,11 +5,11 @@ import { supabase } from "@/integrations/supabase/client";
 import type { MatchupScoresView, TeamRecordsView } from "@/types/database";
 import SeasonSelector from "@/components/weekly-scores/SeasonSelector";
 import WeeklyScoresTable from "@/components/weekly-scores/WeeklyScoresTable";
-import SeasonRecordsTable from "@/components/weekly-scores/SeasonRecordsTable";
+import WLHeatmapCard from "@/components/weekly-scores/WLHeatmapCard";
 import ScheduleTable from "@/components/weekly-scores/ScheduleTable";
 
 const WeeklyScores = () => {
-  const [selectedSeason, setSelectedSeason] = useState("13");
+  const [selectedSeason, setSelectedSeason] = useState("14");
 
   const weekCount = parseInt(selectedSeason) <= 10 ? 16 : 17;
   const regularSeasonWeeks = 14;
@@ -133,12 +133,7 @@ const WeeklyScores = () => {
           selectedSeason={selectedSeason}
         />
 
-        <SeasonRecordsTable 
-          teams={teams}
-          teamData={teamData}
-          regularSeasonWeeks={regularSeasonWeeks}
-          selectedSeason={selectedSeason}
-        />
+        <WLHeatmapCard matchups={matchupScores} />
 
         <ScheduleTable 
           matchupScores={matchupScores}

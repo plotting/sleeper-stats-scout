@@ -62,7 +62,10 @@ import {
   Zap,
   Trophy,
   BarChart2,
+  Scale,
+  Trash2,
 } from 'lucide-react';
+import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 
 // ─── Log entry ─────────────────────────────────────────────────────────────
@@ -180,6 +183,58 @@ const Admin = () => {
   const [statsYear, setStatsYear] = useState<string>('2024');
   const [statsRunning, setStatsRunning] = useState(false);
   const [statsLog, setStatsLog] = useState<LogEntry[]>([]);
+
+  // ── Score adjustments ──
+  interface ScoreAdj {
+    id: number; season_id: number; week_number: number;
+    team_id: number; adjustment: number; reason: string;
+  }
+  const { data: scoreAdjs, refetch: refetchAdjs } = useQuery({
+    queryKey: ['score-adjustments'],
+    queryFn: async () => {
+      const { data, error } = await (supabase as any)
+        .from('score_adjustments')
+        .select('id, season_id, week_number, team_id, adjustment, reason')
+        .order('season_id').order('week_number');
+      if (error) throw error;
+      return data as ScoreAdj[];
+    },
+  });
+  const [adjForm, setAdjForm] = useState({ seasonId: '', weekNumber: '1', teamId: '', adjustment: '', reason: '' });
+  const [adjSaving, setAdjSaving] = useState(false);
+
+  const { data: dbSeasons } = useQuery({
+    queryKey: ['seasons-list'],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('seasons').select('id, year').order('year');
+      if (error) throw error;
+      return data;
+    },
+  });
+
+  async function handleAddAdjustment() {
+    if (!adjForm.seasonId || !adjForm.teamId || adjForm.adjustment === '' || !adjForm.reason) return;
+    setAdjSaving(true);
+    const { error } = await (supabase as any).from('score_adjustments').upsert({
+      season_id: Number(adjForm.seasonId),
+      week_number: Number(adjForm.weekNumber),
+      team_id: Number(adjForm.teamId),
+      adjustment: Number(adjForm.adjustment),
+      reason: adjForm.reason,
+    }, { onConflict: 'season_id,week_number,team_id' });
+    if (!error) {
+      setAdjForm({ seasonId: '', weekNumber: '1', teamId: '', adjustment: '', reason: '' });
+      await refetchAdjs();
+      await queryClient.invalidateQueries();
+    }
+    setAdjSaving(false);
+  }
+
+  async function handleDeleteAdj(id: number) {
+    await (supabase as any).from('score_adjustments').delete().eq('id', id);
+    await refetchAdjs();
+    await queryClient.invalidateQueries();
+  }
 
   // ── Fetch current league info ──
   const { data: currentLeague, isLoading: leagueLoading, error: leagueError, refetch: refetchLeague } = useQuery({
@@ -316,25 +371,52 @@ const Admin = () => {
     });
   }
 
-  async function handleSyncPlayerStats() {
+  async function handleSyncPlayerStats(year?: number) {
+    setStatsRunning(true);
+    setStatsLog([]);
+    const yr = year ?? Number(statsYear);
+    const addLog = (msg: string, level: LogEntry['level'] = 'info') =>
+      setStatsLog((prev) => [...prev, { msg, level, ts: Date.now() }]);
+    try {
+      addLog(`Syncing ${yr} player stats from Sleeper (league scoring, last week excluded)…`);
+      const { data, error } = await supabase.functions.invoke('sync-player-stats', {
+        body: { year: yr, league_id: LEAGUE_ID },
+      });
+      if (error) throw error;
+      if (data?.log) {
+        for (const line of data.log as string[]) {
+          const isErr = line.startsWith('ERROR');
+          addLog(line, isErr ? 'error' : line.startsWith('Upserted') ? 'success' : 'info');
+        }
+      }
+      if (data?.total != null) {
+        addLog(`✓ ${yr}: ${data.total} players synced (${data.weeksFetched} weeks, wk ${data.excludedWeek} excluded)`, 'success');
+      }
+      await queryClient.invalidateQueries();
+    } catch (err) {
+      addLog(`Error: ${String(err)}`, 'error');
+    } finally {
+      setStatsRunning(false);
+    }
+  }
+
+  async function handleSyncAllPlayerStats() {
     setStatsRunning(true);
     setStatsLog([]);
     const addLog = (msg: string, level: LogEntry['level'] = 'info') =>
       setStatsLog((prev) => [...prev, { msg, level, ts: Date.now() }]);
+    const years = Array.from({ length: 12 }, (_, i) => 2013 + i); // 2013–2024
     try {
-      addLog(`Syncing player stats for ${statsYear}…`);
-      const { data, error } = await supabase.functions.invoke('sync-player-stats', {
-        body: { year: Number(statsYear), positions: ['qb', 'rb', 'wr', 'te', 'k'], scoring: 'STD' },
-      });
-      if (error) throw error;
-      const results = data?.results as Record<string, number> | undefined;
-      if (results) {
-        for (const [pos, count] of Object.entries(results)) {
-          addLog(`  ${pos.toUpperCase()}: ${count} players`, 'success');
-        }
-        addLog(`Total: ${data.total} players synced`, 'success');
+      for (const yr of years) {
+        addLog(`── ${yr} ──────────────────────`);
+        const { data, error } = await supabase.functions.invoke('sync-player-stats', {
+          body: { year: yr, league_id: LEAGUE_ID },
+        });
+        if (error) { addLog(`${yr} error: ${error.message}`, 'error'); continue; }
+        addLog(`✓ ${yr}: ${data?.total ?? '?'} players (wk ${data?.excludedWeek} excluded)`, 'success');
       }
       await queryClient.invalidateQueries();
+      addLog('All years synced.', 'success');
     } catch (err) {
       addLog(`Error: ${String(err)}`, 'error');
     } finally {
@@ -351,6 +433,30 @@ const Admin = () => {
           setProgress(((i + p / 100) / allLeagues.length) * 100),
         );
       }
+    });
+  }
+
+  // Sync draft picks (populates draft_slot) then clear & resync trades for ALL seasons.
+  // Run this once after the draft_slot migration to fix pick slot resolution in trade history.
+  async function handleResyncAllDraftsAndTrades() {
+    if (!allLeagues) return;
+    await run(async () => {
+      const total = allLeagues.length * 2; // 2 passes per season
+      for (let i = 0; i < allLeagues.length; i++) {
+        const league = allLeagues[i];
+        log(`[${i + 1}/${allLeagues.length}] Syncing draft picks for ${league.season}…`);
+        await syncDraftPicks(league, log, (p) =>
+          setProgress(((i * 2 + p / 100) / total) * 100),
+        );
+      }
+      for (let i = 0; i < allLeagues.length; i++) {
+        const league = allLeagues[i];
+        log(`[${i + 1}/${allLeagues.length}] Clear & resync trades for ${league.season}…`);
+        await clearAndResyncTrades(league, log, (p) =>
+          setProgress(((allLeagues.length + i + p / 100) / total) * 100),
+        );
+      }
+      log('All seasons done — draft slots + trade descriptions rebuilt.', 'success');
     });
   }
 
@@ -644,6 +750,17 @@ const Admin = () => {
             <RefreshCw className={cn('h-3 w-3 mr-1', running && 'animate-spin')} />
             Clear & Re-sync Trades ({selectedLeague?.season ?? '…'})
           </Button>
+          <Button
+            onClick={handleResyncAllDraftsAndTrades}
+            disabled={running || !allLeagues}
+            size="sm"
+            variant="outline"
+            className="border-orange-500/30 text-orange-400 hover:bg-orange-500/10"
+            title="Re-syncs draft picks for every season (populates draft_slot), then clears and rebuilds all trade descriptions so picks show exact slots like 2022 (2.05)"
+          >
+            <Zap className={cn('h-3 w-3 mr-1', running && 'animate-spin')} />
+            Rebuild All Draft Slots + Trades (All Seasons)
+          </Button>
         </div>
         <LogPanel entries={entries} onClear={clear} />
       </SyncCard>
@@ -652,7 +769,7 @@ const Admin = () => {
       <SyncCard
         icon={BarChart2}
         title="Player Stats"
-        description="Pull fantasy point totals from FantasyPros for a given year. Used to calculate VORP and draft grades."
+        description="Pull weekly stats from Sleeper and apply your league's exact scoring settings. Last week of each season excluded (resting/seeding). Used for VORP and draft grades."
         accent="emerald"
       >
         <div className="flex items-center gap-3 flex-wrap">
@@ -661,19 +778,29 @@ const Admin = () => {
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {Array.from({ length: 13 }, (_, i) => String(2024 - i)).map((yr) => (
+              {Array.from({ length: 12 }, (_, i) => String(2024 - i)).map((yr) => (
                 <SelectItem key={yr} value={yr}>{yr}</SelectItem>
               ))}
             </SelectContent>
           </Select>
           <Button
-            onClick={handleSyncPlayerStats}
+            onClick={() => handleSyncPlayerStats()}
             disabled={statsRunning}
             size="sm"
             className="bg-emerald-700 hover:bg-emerald-600"
           >
             <RefreshCw className={cn('h-3 w-3 mr-1', statsRunning && 'animate-spin')} />
-            Sync {statsYear} Stats
+            Sync {statsYear}
+          </Button>
+          <Button
+            onClick={handleSyncAllPlayerStats}
+            disabled={statsRunning}
+            size="sm"
+            variant="outline"
+            className="border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10"
+          >
+            <Zap className={cn('h-3 w-3 mr-1', statsRunning && 'animate-spin')} />
+            Sync All Years (2013–2024)
           </Button>
         </div>
         {statsLog.length > 0 && (
@@ -694,6 +821,97 @@ const Admin = () => {
             ))}
           </div>
         )}
+      </SyncCard>
+
+      {/* Score Adjustments */}
+      <SyncCard
+        icon={Scale}
+        title="Score Adjustments"
+        description="Commissioner overrides for scores not captured by the Sleeper API (e.g. illegal lineup penalties)."
+        accent="amber"
+      >
+        {/* Existing adjustments */}
+        {scoreAdjs && scoreAdjs.length > 0 && (
+          <div className="mb-4 rounded-lg border border-white/10 overflow-hidden">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-white/10 bg-white/5">
+                  <th className="text-left px-3 py-2 text-slate-400 font-medium">Team</th>
+                  <th className="text-left px-3 py-2 text-slate-400 font-medium">Season</th>
+                  <th className="text-left px-3 py-2 text-slate-400 font-medium">Wk</th>
+                  <th className="text-left px-3 py-2 text-slate-400 font-medium">Adj</th>
+                  <th className="text-left px-3 py-2 text-slate-400 font-medium">Reason</th>
+                  <th className="px-3 py-2" />
+                </tr>
+              </thead>
+              <tbody>
+                {scoreAdjs.map((a) => {
+                  const teamName = dbTeams?.find(t => t.id === a.team_id)?.name ?? a.team_id;
+                  const year = dbSeasons?.find(s => s.id === a.season_id)?.year ?? a.season_id;
+                  return (
+                    <tr key={a.id} className="border-b border-white/5 hover:bg-white/5">
+                      <td className="px-3 py-1.5 font-medium">{teamName}</td>
+                      <td className="px-3 py-1.5">{year}</td>
+                      <td className="px-3 py-1.5">{a.week_number}</td>
+                      <td className={cn('px-3 py-1.5 font-mono', a.adjustment < 0 ? 'text-red-400' : 'text-emerald-400')}>
+                        {a.adjustment > 0 ? '+' : ''}{a.adjustment}
+                      </td>
+                      <td className="px-3 py-1.5 text-slate-400">{a.reason}</td>
+                      <td className="px-3 py-1.5">
+                        <button onClick={() => handleDeleteAdj(a.id)} className="text-slate-500 hover:text-red-400 transition-colors">
+                          <Trash2 className="h-3 w-3" />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* Add form */}
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+          <Select value={adjForm.seasonId} onValueChange={(v) => setAdjForm(f => ({ ...f, seasonId: v }))}>
+            <SelectTrigger className="bg-white/5 border-white/10 text-xs h-8"><SelectValue placeholder="Season" /></SelectTrigger>
+            <SelectContent>
+              {dbSeasons?.map(s => <SelectItem key={s.id} value={String(s.id)}>{s.year}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <Select value={adjForm.weekNumber} onValueChange={(v) => setAdjForm(f => ({ ...f, weekNumber: v }))}>
+            <SelectTrigger className="bg-white/5 border-white/10 text-xs h-8"><SelectValue placeholder="Week" /></SelectTrigger>
+            <SelectContent>
+              {Array.from({ length: 17 }, (_, i) => i + 1).map(w => <SelectItem key={w} value={String(w)}>Week {w}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <Select value={adjForm.teamId} onValueChange={(v) => setAdjForm(f => ({ ...f, teamId: v }))}>
+            <SelectTrigger className="bg-white/5 border-white/10 text-xs h-8"><SelectValue placeholder="Team" /></SelectTrigger>
+            <SelectContent>
+              {dbTeams?.map(t => <SelectItem key={t.id} value={String(t.id)}>{t.name}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <Input
+            type="number"
+            placeholder="Adjustment (e.g. -50)"
+            value={adjForm.adjustment}
+            onChange={(e) => setAdjForm(f => ({ ...f, adjustment: e.target.value }))}
+            className="bg-white/5 border-white/10 text-xs h-8 col-span-1"
+          />
+          <Input
+            placeholder="Reason"
+            value={adjForm.reason}
+            onChange={(e) => setAdjForm(f => ({ ...f, reason: e.target.value }))}
+            className="bg-white/5 border-white/10 text-xs h-8 sm:col-span-1"
+          />
+          <Button
+            onClick={handleAddAdjustment}
+            disabled={adjSaving || !adjForm.seasonId || !adjForm.teamId || adjForm.adjustment === '' || !adjForm.reason}
+            size="sm"
+            className="bg-amber-700 hover:bg-amber-600 h-8 text-xs"
+          >
+            Add Adjustment
+          </Button>
+        </div>
       </SyncCard>
 
       {/* Sync everything for selected season */}

@@ -47,29 +47,39 @@ const WeeklyRecords = () => {
           m => m.home_team_id === team.id || m.away_team_id === team.id
         );
 
-        const scores = teamMatchups.map(m => 
+        const validMatchups = teamMatchups.filter(m =>
+          m.home_score !== null && m.away_score !== null
+        );
+
+        const scores = validMatchups.map(m =>
           m.home_team_id === team.id ? m.home_score : m.away_score
-        ).filter(score => score !== null) as number[];
+        ) as number[];
 
-        const wins = teamMatchups.filter(m => 
-          (m.home_team_id === team.id && m.home_score !== null && m.away_score !== null && m.home_score > m.away_score) ||
-          (m.away_team_id === team.id && m.away_score !== null && m.home_score !== null && m.away_score > m.home_score)
+        const wins = validMatchups.filter(m =>
+          (m.home_team_id === team.id && m.home_score! > m.away_score!) ||
+          (m.away_team_id === team.id && m.away_score! > m.home_score!)
         ).length;
 
-        const losses = teamMatchups.filter(m => 
-          (m.home_team_id === team.id && m.home_score !== null && m.away_score !== null && m.home_score < m.away_score) ||
-          (m.away_team_id === team.id && m.away_score !== null && m.home_score !== null && m.away_score < m.home_score)
-        ).length;
-        
-        // Add proper tie detection
-        const ties = teamMatchups.filter(m => 
-          (m.home_team_id === team.id && m.home_score !== null && m.away_score !== null && m.home_score === m.away_score) ||
-          (m.away_team_id === team.id && m.away_score !== null && m.home_score !== null && m.away_score === m.home_score)
+        const losses = validMatchups.filter(m =>
+          (m.home_team_id === team.id && m.home_score! < m.away_score!) ||
+          (m.away_team_id === team.id && m.away_score! < m.home_score!)
         ).length;
 
-        const avgPoints = scores.length > 0 
-          ? scores.reduce((a, b) => a + b, 0) / scores.length 
+        const ties = validMatchups.filter(m =>
+          m.home_score! === m.away_score!
+        ).length;
+
+        const avgPoints = scores.length > 0
+          ? scores.reduce((a, b) => a + b, 0) / scores.length
           : 0;
+
+        // Dynamic seasons: collect distinct years where this team played this week
+        const seasonYears = [...new Set(validMatchups.map(m => m.season_id))].sort();
+        const seasonsLabel = seasonYears.length === 0
+          ? "—"
+          : seasonYears.length === 1
+            ? `${seasonYears[0]}`
+            : `${seasonYears[0]}–${seasonYears[seasonYears.length - 1]} (${seasonYears.length})`;
 
         return {
           team: team.name,
@@ -77,9 +87,9 @@ const WeeklyRecords = () => {
           losses,
           ties,
           avgPoints,
-          bestScore: Math.max(...(scores.length ? scores : [0])),
-          worstScore: Math.min(...(scores.length ? scores : [0])),
-          seasons: "1-13" // This could be dynamically calculated if needed
+          bestScore: scores.length ? Math.max(...scores) : 0,
+          worstScore: scores.length ? Math.min(...scores) : 0,
+          seasons: seasonsLabel
         };
       });
     }
@@ -132,9 +142,9 @@ const WeeklyRecords = () => {
               <TableRow key={index}>
                 <TableCell className="font-medium">{record.team}</TableCell>
                 <TableCell>{`${record.wins}-${record.losses}-${record.ties}`}</TableCell>
-                <TableCell>{record.avgPoints.toFixed(1)}</TableCell>
-                <TableCell>{record.bestScore.toFixed(1)}</TableCell>
-                <TableCell>{record.worstScore.toFixed(1)}</TableCell>
+                <TableCell>{record.avgPoints.toFixed(2)}</TableCell>
+                <TableCell>{record.bestScore.toFixed(2)}</TableCell>
+                <TableCell>{record.worstScore.toFixed(2)}</TableCell>
                 <TableCell>{record.seasons}</TableCell>
               </TableRow>
             ))}

@@ -4,4 +4,4 @@ export { filterMatchupsByWeek } from './filterUtils';
 export { getSemiFinalLosers, findThirdPlaceGame } from './semifinalUtils';
 export { getToiletBowlTeams } from './consolationUtils';
 export { getTeamFinalPlacements } from './placementUtils';
-export { getFinalPlacementEmoji } from './displayUtils';
+export { getFinalPlacementEmoji, getPlacementLabel, getPlacementColors } from './displayUtils';

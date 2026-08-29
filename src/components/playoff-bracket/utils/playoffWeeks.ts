@@ -15,13 +15,20 @@ export const getPlayoffWeeks = (seasonNumber: number) => {
                     seasonNumber >= 13 ? 17 : 16;
   const finalWeek = champWeek + 1; // Final week is typically one week after championship
   
+  // Build the unique list of weeks to show in the bracket header
+  const displayWeeksSet = new Set([playoffStartWeek, playoffStartWeek + 1, champWeek, finalWeek]);
+  // Only include finalWeek when it's actually used (seasons 8-10 have week-17 consolation finals)
+  const useFinalWeek = seasonNumber >= 8 && seasonNumber <= 10;
+  const displayWeeks = useFinalWeek
+    ? [playoffStartWeek, champWeek, finalWeek]
+    : [...new Set([playoffStartWeek, playoffStartWeek + 1, champWeek])];
+
   return {
     playoffStartWeek,
     champWeek,
     finalWeek,
-    // Display the three playoff week numbers in the header
-    displayWeeks: [playoffStartWeek, playoffStartWeek + 1, champWeek],
-    // Determine if this season should use the loser advances format for consolation brackets
-    isLoserAdvancesFormat: seasonNumber >= 8 && seasonNumber <= 12
+    displayWeeks,
+    // Loser-advances consolation format was only used in seasons 8-10
+    isLoserAdvancesFormat: seasonNumber >= 8 && seasonNumber <= 10
   };
 };

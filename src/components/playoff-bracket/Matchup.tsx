@@ -14,9 +14,11 @@ import { cn } from "@/lib/utils";
 interface MatchupProps {
   homeTeam?: string;
   homeTeamId?: number;
+  homeSeed?: number;
   homeScore?: number | null;
   awayTeam?: string;
   awayTeamId?: number;
+  awaySeed?: number;
   awayScore?: number | null;
   matchupId?: number;
   isConsolation?: boolean;
@@ -29,9 +31,11 @@ interface MatchupProps {
 const Matchup: React.FC<MatchupProps> = ({
   homeTeam = "",
   homeTeamId,
+  homeSeed,
   homeScore,
   awayTeam = "",
   awayTeamId,
+  awaySeed,
   awayScore,
   matchupId = 0,
   isConsolation = false,
@@ -97,7 +101,10 @@ const Matchup: React.FC<MatchupProps> = ({
             </Select>
           </div>
         ) : (
-          <div className={cn("font-medium text-sm", isConsolation ? "text-yellow-900 dark:text-yellow-200" : "")}>
+          <div className={cn("font-medium text-sm truncate", isConsolation ? "text-yellow-900 dark:text-yellow-200" : "")}>
+            {homeSeed !== undefined && (
+              <span className="text-muted-foreground font-normal mr-1">({homeSeed})</span>
+            )}
             {homeTeam || "TBD"}
           </div>
         )}
@@ -134,7 +141,10 @@ const Matchup: React.FC<MatchupProps> = ({
             </Select>
           </div>
         ) : (
-          <div className={cn("font-medium text-sm", isConsolation ? "text-yellow-900 dark:text-yellow-200" : "")}>
+          <div className={cn("font-medium text-sm truncate", isConsolation ? "text-yellow-900 dark:text-yellow-200" : "")}>
+            {awaySeed !== undefined && (
+              <span className="text-muted-foreground font-normal mr-1">({awaySeed})</span>
+            )}
             {awayTeam || "TBD"}
           </div>
         )}
