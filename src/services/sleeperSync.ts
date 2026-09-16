@@ -173,15 +173,18 @@ export async function syncScoresAndSchedules(
   const lastScoredWeek = league.settings.last_scored_leg || league.settings.leg || 0;
   const totalWeeks = Math.max(lastScoredWeek, playoffStart > 0 ? playoffStart + 3 : 0);
 
-  // `last_scored_leg` turned out not to be a reliable "this week is fully
-  // final" signal on its own — Sleeper can advance it as soon as the first
-  // game of a leg reports stats, not once every game in that leg has ended.
-  // A week strictly before the currently-active leg is unambiguously over
-  // (the season can't be playing week N+1 while week N is still live), so
-  // that's the safe primary gate. Once the season is marked complete, `leg`
-  // may freeze below the final week number, so fall back to syncing
-  // everything in that case instead of permanently stranding the last week.
-  const currentLeg = league.settings.leg || 0;
+  // `settings.leg` (the league's own "currently active leg") lags real-world
+  // completion by up to a day after the last game of a week ends — Sleeper
+  // doesn't roll it to the next leg until waivers process, typically
+  // overnight Tue/Wed. Gating on `week < leg` therefore withholds an
+  // already-final week's scores for that entire lag window. `last_scored_leg`
+  // is Sleeper's own dedicated "this leg is fully scored" signal and is the
+  // more reliable primary gate; `leg` is kept only as a fallback for the
+  // preseason case where `last_scored_leg` is still 0. Once the season is
+  // marked complete, both fields may freeze below the final week number, so
+  // fall back to syncing everything in that case instead of permanently
+  // stranding the last week.
+  const currentLeg = league.settings.last_scored_leg || league.settings.leg || 0;
   const seasonComplete = league.status === 'complete';
 
   if (totalWeeks === 0) {
@@ -212,16 +215,14 @@ export async function syncScoresAndSchedules(
 
       // Sleeper returns a literal 0 (not null) for points in weeks that
       // haven't been played yet, so `points` alone can't distinguish "really
-      // scored 0" from "hasn't happened". Gate on `week < currentLeg` (see
-      // above) rather than `last_scored_leg` — a week strictly before the
-      // active one is guaranteed fully final, which avoids writing a real
-      // `0` for a team whose game just hasn't kicked off yet this leg (that
-      // 0-0 would otherwise read back as a genuine tie). Skipping the row
-      // entirely (rather than writing a 0) lets matchup_scores_view's join
-      // return a true null for unplayed games, which every "is this game in
-      // the future" check across the app relies on — the `scores` table
-      // itself is NOT NULL, so 0 can't mean "unknown".
-      const weekIsScored = seasonComplete ? week <= totalWeeks : week < currentLeg;
+      // scored 0" from "hasn't happened". Gate on `week <= currentLeg` (see
+      // above) — `currentLeg` is `last_scored_leg`, which names the last
+      // week that IS fully scored, so the comparison is inclusive. Skipping
+      // the row entirely (rather than writing a 0) lets matchup_scores_view's
+      // join return a true null for unplayed games, which every "is this
+      // game in the future" check across the app relies on — the `scores`
+      // table itself is NOT NULL, so 0 can't mean "unknown".
+      const weekIsScored = seasonComplete ? week <= totalWeeks : week <= currentLeg;
       const scoreRows = matchups
         .map((m) => {
           const teamId = rosterMap.get(m.roster_id);
