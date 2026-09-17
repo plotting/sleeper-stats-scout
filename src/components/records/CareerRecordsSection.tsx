@@ -91,7 +91,7 @@ export const CareerRecordsSection = ({ careerStats }: CareerRecordsSectionProps)
 
   return (
     <div className="space-y-6">
-      <Card className="p-6 overflow-x-auto">
+      <Card className="p-6 overflow-x-auto border-white/10 bg-[#1a1a2e]">
         <h2 className="text-xl font-semibold mb-4">Career Records</h2>
         <Table>
           <TableHeader>

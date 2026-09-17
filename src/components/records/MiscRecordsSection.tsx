@@ -36,7 +36,7 @@ export const MiscRecordsSection = ({
         </Link>
         .
       </p>
-      <Card className="p-6">
+      <Card className="p-6 border-white/10 bg-[#1a1a2e]">
         <h2 className="text-xl font-semibold mb-4">Best Seasons vs All Teams</h2>
         <Table>
           <TableHeader>
@@ -60,7 +60,7 @@ export const MiscRecordsSection = ({
         </Table>
       </Card>
 
-      <Card className="p-6">
+      <Card className="p-6 border-white/10 bg-[#1a1a2e]">
         <h2 className="text-xl font-semibold mb-4">Worst Seasons vs All Teams</h2>
         <Table>
           <TableHeader>

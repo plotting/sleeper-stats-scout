@@ -33,7 +33,16 @@ export const getTeamFinalPlacements = (
   teamSeeds?: Map<number, number>,
   seasonNumber?: number
 ): Map<number, number> => {
-  if (!playoffMatchups || playoffMatchups.length === 0) return new Map();
+  // Schedule rows for future playoff weeks exist with null scores as soon as
+  // the season's schedule is generated, long before those games are played.
+  // Without this filter, the mop-up pass below (which fills in placements
+  // for any team appearing in `playoffMatchups`) would seed-rank the entire
+  // bracket off an unplayed schedule the moment week 15+ rows exist.
+  const playedMatchups = (playoffMatchups ?? []).filter(
+    (m) => m.home_score != null && m.away_score != null
+  );
+  if (playedMatchups.length === 0) return new Map();
+  playoffMatchups = playedMatchups;
 
   const teamPlacements = new Map<number, number>();
 
