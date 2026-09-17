@@ -9,7 +9,11 @@ const Card = React.forwardRef<
   <div
     ref={ref}
     className={cn(
-      "rounded-lg border bg-card text-card-foreground shadow-sm",
+      // min-w-0 lets a Card shrink below its content's intrinsic width when
+      // it's a grid/flex child (the default CSS "min-width: auto" behavior
+      // otherwise stretches the grid track to fit wide content like tables,
+      // instead of letting the table's own overflow-x scrolling kick in).
+      "min-w-0 rounded-lg border border-white/10 bg-[#1a1a2e] text-card-foreground shadow-sm",
       className
     )}
     {...props}
