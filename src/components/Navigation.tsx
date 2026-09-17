@@ -29,8 +29,6 @@ import {
   Flame,
   GraduationCap,
   MoreHorizontal,
-  Rss,
-  UserSearch,
   Landmark,
 } from 'lucide-react';
 import { useIsMobile } from '@/hooks/use-mobile';
@@ -55,14 +53,14 @@ const links = [
 // Recaps and Rookies are intentionally absent: Recaps now lives as a sub-tab
 // under Season14, and Rookies' functionality was absorbed into Draft Grades'
 // ADP/Pick Value tabs — both dropped from the nav upstream on main.
+// Dynasty Digest and GM Scouting are also hidden for now (routes still exist,
+// just not linked) while those pages are held back.
 const moreLinks = [
   { to: '/hall', label: 'The Hall', icon: Landmark },
   { to: '/weekly-records', label: 'By Week', icon: BarChart2 },
   { to: '/head-to-head', label: 'H2H', icon: Swords },
   { to: '/analytics', label: 'Analytics', icon: LineChart },
   { to: '/draft-grades', label: 'Grades', icon: GraduationCap },
-  { to: '/dynasty-digest', label: 'Digest', icon: Rss },
-  { to: '/gm-scouting', label: 'GM Scout', icon: UserSearch },
 ];
 
 const Navigation = () => {
