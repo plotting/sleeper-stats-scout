@@ -68,6 +68,50 @@ import {
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 
+// ─── PIN gate ────────────────────────────────────────────────────────────────
+// Client-side deterrent only, not real auth — the anon key already has no
+// write access to anything sensitive. Keeps casual visitors from tripping
+// over the sync buttons on the now-public site. Set VITE_ADMIN_PIN to
+// override the default.
+const ADMIN_PIN = import.meta.env.VITE_ADMIN_PIN || '1975';
+const ADMIN_UNLOCK_KEY = 'admin-unlocked';
+
+function PinGate({ onUnlock }: { onUnlock: () => void }) {
+  const [pin, setPin] = useState('');
+  const [error, setError] = useState(false);
+
+  function submit() {
+    if (pin === ADMIN_PIN) {
+      localStorage.setItem(ADMIN_UNLOCK_KEY, 'true');
+      onUnlock();
+    } else {
+      setError(true);
+    }
+  }
+
+  return (
+    <div className="max-w-sm mx-auto mt-24 space-y-4 text-center">
+      <h1 className="text-xl font-bold flex items-center justify-center gap-2">
+        <Zap className="h-5 w-5 text-blue-400" />
+        Admin Access
+      </h1>
+      <p className="text-slate-400 text-sm">Enter the PIN to access data sync.</p>
+      <Input
+        type="password"
+        inputMode="numeric"
+        value={pin}
+        onChange={(e) => { setPin(e.target.value); setError(false); }}
+        onKeyDown={(e) => e.key === 'Enter' && submit()}
+        placeholder="PIN"
+        className="text-center"
+        autoFocus
+      />
+      {error && <p className="text-red-400 text-xs">Incorrect PIN</p>}
+      <Button onClick={submit} className="w-full">Unlock</Button>
+    </div>
+  );
+}
+
 // ─── Log entry ─────────────────────────────────────────────────────────────
 
 interface LogEntry {
@@ -173,6 +217,7 @@ function SyncCard({
 // ─── Main page ───────────────────────────────────────────────────────────────
 
 const Admin = () => {
+  const [unlocked, setUnlocked] = useState(() => localStorage.getItem(ADMIN_UNLOCK_KEY) === 'true');
   const { entries, log, clear } = useLog();
   const queryClient = useQueryClient();
   const [progress, setProgress] = useState(0);
@@ -458,6 +503,10 @@ const Admin = () => {
       }
       log('All seasons done — draft slots + trade descriptions rebuilt.', 'success');
     });
+  }
+
+  if (!unlocked) {
+    return <PinGate onUnlock={() => setUnlocked(true)} />;
   }
 
   return (
