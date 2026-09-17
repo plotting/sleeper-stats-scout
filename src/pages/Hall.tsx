@@ -134,10 +134,10 @@ function AskTheHistorian({ allStats, careerLines }: { allStats: SeasonStats[]; c
   ];
 
   return (
-    <Card className="border-white/10 bg-gradient-to-br from-violet-500/[0.06] to-transparent overflow-hidden">
+    <Card className="border-white/10 bg-gradient-to-br from-blue-500/[0.06] to-transparent overflow-hidden">
       <CardContent className="pt-6">
         <div className="flex items-center gap-2 mb-1">
-          <Sparkles className="h-4 w-4 text-violet-400" />
+          <Sparkles className="h-4 w-4 text-blue-400" />
           <h2 className="text-lg font-bold text-white">Ask the Historian</h2>
         </div>
         <p className="text-sm text-slate-400 mb-4">Ask a plain-language question about this league's history — champions, streaks, rivalries, turning points.</p>
@@ -150,12 +150,12 @@ function AskTheHistorian({ allStats, careerLines }: { allStats: SeasonStats[]; c
             value={question}
             onChange={(e) => setQuestion(e.target.value)}
             placeholder="Who choked the hardest in a championship game?"
-            className="flex-1 bg-white/5 border border-white/10 rounded-md px-3 py-2 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:border-violet-500/50"
+            className="flex-1 bg-white/5 border border-white/10 rounded-md px-3 py-2 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:border-blue-500/50"
           />
           <button
             type="submit"
             disabled={loading || !question.trim()}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-md bg-violet-600 hover:bg-violet-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-medium transition-colors"
+            className="flex items-center gap-1.5 px-4 py-2 rounded-md bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-medium transition-colors"
           >
             {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
             Ask
@@ -384,7 +384,7 @@ function AwardCard({ icon: Icon, label, accent, children }: {
     red: "text-red-400 bg-red-400/10 border-red-400/20",
   }[accent];
   return (
-    <Card className="border-white/10 bg-[#1a1a2e]">
+    <Card className="border-white/10 bg-[#0f172a]">
       <CardContent className="pt-5 pb-5">
         <div className={cn("inline-flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide rounded-full border px-2 py-1 mb-3", accentClass)}>
           <Icon className="h-3 w-3" />

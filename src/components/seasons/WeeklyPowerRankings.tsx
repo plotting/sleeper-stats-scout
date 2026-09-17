@@ -106,7 +106,7 @@ const CustomTooltip = ({
     .sort((a, b) => a.value - b.value);
 
   return (
-    <div className="rounded-lg border border-white/10 bg-[#1a1a2e]/90 px-3 py-2 text-xs shadow-lg min-w-[200px]">
+    <div className="rounded-lg border border-white/10 bg-[#0f172a]/90 px-3 py-2 text-xs shadow-lg min-w-[200px]">
       <p className="text-slate-400 mb-2 font-semibold">{label}</p>
       {sorted.map((entry) => {
         const teamKey = entry.dataKey;

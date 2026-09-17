@@ -116,7 +116,7 @@ const Navigation = () => {
   );
 
   return (
-    <nav className="sticky top-0 z-50 border-b border-white/8 bg-[#13131f]/80 backdrop-blur-md">
+    <nav className="sticky top-0 z-50 border-b border-white/8 bg-[#020617]/80 backdrop-blur-md">
       <div className="container mx-auto px-4 h-14 flex items-center justify-between">
         {/* Brand */}
         <Link to="/" className="flex items-center gap-2 shrink-0">
@@ -135,7 +135,7 @@ const Navigation = () => {
                 <Menu className="h-5 w-5" />
               </Button>
             </SheetTrigger>
-            <SheetContent className="bg-[#13131f] border-white/10">
+            <SheetContent className="bg-[#020617] border-white/10">
               <SheetHeader>
                 <SheetTitle className="gradient-text text-left">Matzie's Dynasty</SheetTitle>
               </SheetHeader>
@@ -242,7 +242,7 @@ const Navigation = () => {
                   <ChevronDown className="h-3 w-3 opacity-60" />
                 </button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="bg-[#1a1a2e] border-white/10 min-w-[160px]">
+              <DropdownMenuContent align="end" className="bg-[#0f172a] border-white/10 min-w-[160px]">
                 {moreLinks.map((link) => (
                   <DropdownMenuItem key={link.to} asChild>
                     <Link
@@ -277,7 +277,7 @@ const Navigation = () => {
               </DropdownMenuTrigger>
               <DropdownMenuContent
                 align="end"
-                className="bg-[#1a1a2e] border-white/10 min-w-[160px]"
+                className="bg-[#0f172a] border-white/10 min-w-[160px]"
               >
                 {isLoading ? (
                   <DropdownMenuItem disabled className="text-slate-500">

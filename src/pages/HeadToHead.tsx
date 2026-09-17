@@ -163,7 +163,7 @@ function MatrixView({ teams, matchups, filter }: MatrixViewProps) {
         <thead>
           <tr>
             {/* top-left corner */}
-            <th className="w-28 min-w-[112px] sticky left-0 z-10 bg-[#13131f] border-b border-white/10 pb-2 pr-3 text-left">
+            <th className="w-28 min-w-[112px] sticky left-0 z-10 bg-[#020617] border-b border-white/10 pb-2 pr-3 text-left">
               <span className="text-slate-500 font-normal">vs →</span>
             </th>
             {sortedTeams.map((t) => (

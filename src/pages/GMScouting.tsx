@@ -311,7 +311,7 @@ const GMScouting = () => {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
           {profiles.map((p) => (
-            <Card key={p.teamId} className="border-white/10 bg-[#1a1a2e] overflow-hidden">
+            <Card key={p.teamId} className="border-white/10 bg-[#0f172a] overflow-hidden">
               <div className="px-5 pt-5 pb-3 border-b border-white/10 flex items-center justify-between gap-2">
                 <div>
                   <h2 className="text-xl font-bold text-white">{p.teamName}</h2>

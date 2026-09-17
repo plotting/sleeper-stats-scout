@@ -33,7 +33,7 @@ export default {
           foreground: "#FFFFFF",
         },
         card: {
-          DEFAULT: "#2D2D3D",
+          DEFAULT: "hsl(var(--card))",
           foreground: "#FFFFFF",
         },
         destructive: {
