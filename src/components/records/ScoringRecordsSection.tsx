@@ -118,25 +118,25 @@ export const ScoringRecordsSection = ({
 }: ScoringRecordsSectionProps) => {
   return (
     <div className="grid gap-6 md:grid-cols-2">
-      <Card className="p-6 border-white/10 bg-[#1a1a2e]">
+      <Card className="p-6 border-white/10 bg-[#0f172a]">
         <h2 className="text-xl font-semibold mb-4">Highest Regular Season Scores</h2>
         <ScoreTable records={regularSeasonHigh} variant="high" />
       </Card>
-      <Card className="p-6 border-white/10 bg-[#1a1a2e]">
+      <Card className="p-6 border-white/10 bg-[#0f172a]">
         <h2 className="text-xl font-semibold mb-4">Lowest Regular Season Scores</h2>
         <ScoreTable records={regularSeasonLow} variant="low" />
       </Card>
 
-      <Card className="p-6 border-white/10 bg-[#1a1a2e]">
+      <Card className="p-6 border-white/10 bg-[#0f172a]">
         <h2 className="text-xl font-semibold mb-4">Highest Playoff Scores</h2>
         <ScoreTable records={playoffHigh} variant="high" />
       </Card>
-      <Card className="p-6 border-white/10 bg-[#1a1a2e]">
+      <Card className="p-6 border-white/10 bg-[#0f172a]">
         <h2 className="text-xl font-semibold mb-4">Lowest Playoff Scores</h2>
         <ScoreTable records={playoffLow} variant="low" />
       </Card>
 
-      <Card className="p-6 border-white/10 bg-[#1a1a2e]">
+      <Card className="p-6 border-white/10 bg-[#0f172a]">
         <h2 className="text-xl font-semibold mb-4">Largest Margins of Victory</h2>
         <Table>
           <TableHeader>
@@ -160,7 +160,7 @@ export const ScoringRecordsSection = ({
         </Table>
       </Card>
 
-      <Card className="p-6 border-white/10 bg-[#1a1a2e]">
+      <Card className="p-6 border-white/10 bg-[#0f172a]">
         <h2 className="text-xl font-semibold mb-4">Highest Combined Scores</h2>
         <Table>
           <TableHeader>
@@ -184,12 +184,12 @@ export const ScoringRecordsSection = ({
         </Table>
       </Card>
 
-      <Card className="p-6 border-white/10 bg-[#1a1a2e]">
+      <Card className="p-6 border-white/10 bg-[#0f172a]">
         <h2 className="text-xl font-semibold mb-4">Highest Single-Season PPG</h2>
         <p className="text-xs text-muted-foreground -mt-3 mb-4">Regular season, minimum 5 games played</p>
         <PpgTable records={highestSeasonPpg} variant="high" />
       </Card>
-      <Card className="p-6 border-white/10 bg-[#1a1a2e]">
+      <Card className="p-6 border-white/10 bg-[#0f172a]">
         <h2 className="text-xl font-semibold mb-4">Lowest Single-Season PPG</h2>
         <p className="text-xs text-muted-foreground -mt-3 mb-4">Regular season, minimum 5 games played</p>
         <PpgTable records={lowestSeasonPpg} variant="low" />

@@ -46,7 +46,7 @@ const CustomTooltip = ({ active, payload, label }: any) => {
   const d: ChartPoint = payload[0]?.payload;
   if (!d) return null;
   return (
-    <div className="rounded-lg border border-white/10 bg-[#1a1a2e]/90 px-3 py-2 text-xs shadow-lg">
+    <div className="rounded-lg border border-white/10 bg-[#0f172a]/90 px-3 py-2 text-xs shadow-lg">
       <p className="text-slate-400 mb-1">Week {label}</p>
       <p className="font-mono font-semibold" style={{ color: d.result ? DOT_COLOR[d.result] : "#94a3b8" }}>
         {d.score?.toFixed(1) ?? "—"}{d.result ? ` (${d.result})` : ""}

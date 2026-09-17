@@ -554,7 +554,7 @@ const DynastyDigest = () => {
         <p className="text-slate-500 text-sm animate-pulse py-12 text-center">Loading the digest…</p>
       ) : (
         <div className="max-w-3xl">
-          <Card className="border-white/10 bg-[#1a1a2e] overflow-hidden">
+          <Card className="border-white/10 bg-[#0f172a] overflow-hidden">
             <div className="px-6 pt-6 pb-4 border-b border-white/10 bg-gradient-to-br from-amber-500/10 to-transparent">
               <p className="text-xs font-medium text-amber-400 uppercase tracking-wider flex items-center gap-1.5">
                 <Sparkles className="h-3.5 w-3.5" /> Season {seasonNumber} Recap

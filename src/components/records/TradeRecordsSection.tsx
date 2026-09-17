@@ -120,7 +120,7 @@ export function TradeRecordsSection() {
 
   return (
     <div className="grid gap-6 md:grid-cols-3">
-      <Card className="p-6 border-white/10 bg-[#1a1a2e]">
+      <Card className="p-6 border-white/10 bg-[#0f172a]">
         <h2 className="text-xl font-semibold mb-4">Most Trades by Team</h2>
         <Table>
           <TableHeader>
@@ -140,7 +140,7 @@ export function TradeRecordsSection() {
         </Table>
       </Card>
 
-      <Card className="p-6 border-white/10 bg-[#1a1a2e]">
+      <Card className="p-6 border-white/10 bg-[#0f172a]">
         <h2 className="text-xl font-semibold mb-4">Most Traded Players</h2>
         <Table>
           <TableHeader>
@@ -160,7 +160,7 @@ export function TradeRecordsSection() {
         </Table>
       </Card>
 
-      <Card className="p-6 border-white/10 bg-[#1a1a2e]">
+      <Card className="p-6 border-white/10 bg-[#0f172a]">
         <h2 className="text-xl font-semibold mb-4">Most Traded Pick Slots</h2>
         <Table>
           <TableHeader>

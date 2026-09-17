@@ -296,7 +296,7 @@ export function computeSeasonStats(
 
 function RecapCardSkeleton() {
   return (
-    <div className="bg-[#1a1a2e] border border-white/10 rounded-xl p-5 space-y-4">
+    <div className="bg-[#0f172a] border border-white/10 rounded-xl p-5 space-y-4">
       <Skeleton className="h-6 w-32 bg-white/10" />
       <Skeleton className="h-8 w-48 bg-white/10" />
       <div className="space-y-2">
@@ -314,7 +314,7 @@ function RecapCard({ stats }: { stats: SeasonStats }) {
   const { seasonNumber, year, champion, runnerUp, bestRegularRecord, highestPpg, highestSingleGame, biggestUpset, totalPointsScored } = stats;
 
   return (
-    <div className="bg-[#1a1a2e] border border-white/10 rounded-xl overflow-hidden">
+    <div className="bg-[#0f172a] border border-white/10 rounded-xl overflow-hidden">
       {/* Card header */}
       <div className="px-5 pt-5 pb-3 border-b border-white/10">
         <div className="flex items-center justify-between gap-2">

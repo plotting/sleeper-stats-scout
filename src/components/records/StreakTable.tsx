@@ -29,7 +29,7 @@ export const StreakTable = ({ title, allRecords, matchups }: StreakTableProps) =
   const otherRecords = getAllOtherTeams(allRecords, top10Teams, matchups);
   
   return (
-    <Card className="p-6 border-white/10 bg-[#1a1a2e]">
+    <Card className="p-6 border-white/10 bg-[#0f172a]">
       <h2 className="text-xl font-semibold mb-4">{title}</h2>
       <Table>
         <TableHeader>
