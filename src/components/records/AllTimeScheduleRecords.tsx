@@ -128,7 +128,7 @@ export const AllTimeScheduleRecords = ({ matchups }: AllTimeScheduleRecordsProps
 
   return (
     <div className="grid gap-6 md:grid-cols-2">
-      <Card className="p-6">
+      <Card className="p-6 border-white/10 bg-[#1a1a2e]">
         <h2 className="text-xl font-semibold mb-4">Hardest Schedules of All Time</h2>
         <Table>
           <TableHeader>
@@ -150,7 +150,7 @@ export const AllTimeScheduleRecords = ({ matchups }: AllTimeScheduleRecordsProps
         </Table>
       </Card>
 
-      <Card className="p-6">
+      <Card className="p-6 border-white/10 bg-[#1a1a2e]">
         <h2 className="text-xl font-semibold mb-4">Easiest Schedules of All Time</h2>
         <Table>
           <TableHeader>

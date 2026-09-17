@@ -8,6 +8,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { cn } from "@/lib/utils";
 
 interface ScoringRecord {
   score: number;
@@ -53,7 +54,8 @@ interface ScoringRecordsSectionProps {
   lowestSeasonPpg: SeasonPpgRecord[];
 }
 
-function ScoreTable({ records }: { records: ScoringRecord[] }) {
+function ScoreTable({ records, variant }: { records: ScoringRecord[]; variant: "high" | "low" }) {
+  const scoreColor = variant === "high" ? "text-emerald-400" : "text-red-400";
   return (
     <Table>
       <TableHeader>
@@ -67,7 +69,7 @@ function ScoreTable({ records }: { records: ScoringRecord[] }) {
       <TableBody>
         {records.map((record, index) => (
           <TableRow key={index}>
-            <TableCell className="font-medium">{record.score.toFixed(1)}</TableCell>
+            <TableCell className={cn("font-semibold", scoreColor)}>{record.score.toFixed(1)}</TableCell>
             <TableCell>{record.team}</TableCell>
             <TableCell>{record.opponent}</TableCell>
             <TableCell>{`S${record.season}/W${record.week}`}</TableCell>
@@ -78,7 +80,8 @@ function ScoreTable({ records }: { records: ScoringRecord[] }) {
   );
 }
 
-function PpgTable({ records }: { records: SeasonPpgRecord[] }) {
+function PpgTable({ records, variant }: { records: SeasonPpgRecord[]; variant: "high" | "low" }) {
+  const scoreColor = variant === "high" ? "text-emerald-400" : "text-red-400";
   return (
     <Table>
       <TableHeader>
@@ -92,7 +95,7 @@ function PpgTable({ records }: { records: SeasonPpgRecord[] }) {
       <TableBody>
         {records.map((record, index) => (
           <TableRow key={index}>
-            <TableCell className="font-medium">{record.ppg.toFixed(1)}</TableCell>
+            <TableCell className={cn("font-semibold", scoreColor)}>{record.ppg.toFixed(1)}</TableCell>
             <TableCell>{record.team}</TableCell>
             <TableCell>{`S${record.season}`}</TableCell>
             <TableCell>{record.games}</TableCell>
@@ -115,25 +118,25 @@ export const ScoringRecordsSection = ({
 }: ScoringRecordsSectionProps) => {
   return (
     <div className="grid gap-6 md:grid-cols-2">
-      <Card className="p-6">
+      <Card className="p-6 border-white/10 bg-[#1a1a2e]">
         <h2 className="text-xl font-semibold mb-4">Highest Regular Season Scores</h2>
-        <ScoreTable records={regularSeasonHigh} />
+        <ScoreTable records={regularSeasonHigh} variant="high" />
       </Card>
-      <Card className="p-6">
+      <Card className="p-6 border-white/10 bg-[#1a1a2e]">
         <h2 className="text-xl font-semibold mb-4">Lowest Regular Season Scores</h2>
-        <ScoreTable records={regularSeasonLow} />
+        <ScoreTable records={regularSeasonLow} variant="low" />
       </Card>
 
-      <Card className="p-6">
+      <Card className="p-6 border-white/10 bg-[#1a1a2e]">
         <h2 className="text-xl font-semibold mb-4">Highest Playoff Scores</h2>
-        <ScoreTable records={playoffHigh} />
+        <ScoreTable records={playoffHigh} variant="high" />
       </Card>
-      <Card className="p-6">
+      <Card className="p-6 border-white/10 bg-[#1a1a2e]">
         <h2 className="text-xl font-semibold mb-4">Lowest Playoff Scores</h2>
-        <ScoreTable records={playoffLow} />
+        <ScoreTable records={playoffLow} variant="low" />
       </Card>
 
-      <Card className="p-6">
+      <Card className="p-6 border-white/10 bg-[#1a1a2e]">
         <h2 className="text-xl font-semibold mb-4">Largest Margins of Victory</h2>
         <Table>
           <TableHeader>
@@ -157,7 +160,7 @@ export const ScoringRecordsSection = ({
         </Table>
       </Card>
 
-      <Card className="p-6">
+      <Card className="p-6 border-white/10 bg-[#1a1a2e]">
         <h2 className="text-xl font-semibold mb-4">Highest Combined Scores</h2>
         <Table>
           <TableHeader>
@@ -181,15 +184,15 @@ export const ScoringRecordsSection = ({
         </Table>
       </Card>
 
-      <Card className="p-6">
+      <Card className="p-6 border-white/10 bg-[#1a1a2e]">
         <h2 className="text-xl font-semibold mb-4">Highest Single-Season PPG</h2>
         <p className="text-xs text-muted-foreground -mt-3 mb-4">Regular season, minimum 5 games played</p>
-        <PpgTable records={highestSeasonPpg} />
+        <PpgTable records={highestSeasonPpg} variant="high" />
       </Card>
-      <Card className="p-6">
+      <Card className="p-6 border-white/10 bg-[#1a1a2e]">
         <h2 className="text-xl font-semibold mb-4">Lowest Single-Season PPG</h2>
         <p className="text-xs text-muted-foreground -mt-3 mb-4">Regular season, minimum 5 games played</p>
-        <PpgTable records={lowestSeasonPpg} />
+        <PpgTable records={lowestSeasonPpg} variant="low" />
       </Card>
     </div>
   );
