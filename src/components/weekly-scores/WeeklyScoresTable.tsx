@@ -10,10 +10,11 @@ import {
 } from "@/components/ui/table";
 import type { Team } from "@/types/database";
 import { Card } from "@/components/ui/card";
+import { ScoreHover } from "@/components/shared/ScoreHover";
 
 type WeeklyScoresTableProps = {
   teams?: Team[];
-  teamData: Record<number, { scores: string[] }>;
+  teamData: Record<number, { scores: { display: string; value: number | null; isPlayoff: boolean }[] }>;
   weekCount: number;
   regularSeasonWeeks: number;
   selectedSeason: string;
@@ -52,11 +53,20 @@ const WeeklyScoresTable = ({
                   {team.name}
                 </Link>
               </TableCell>
-              {Array.from({ length: weekCount }, (_, weekIndex) => (
-                <TableCell key={weekIndex} className="text-center">
-                  {teamData[team.id]?.scores[weekIndex] || "-"}
-                </TableCell>
-              ))}
+              {Array.from({ length: weekCount }, (_, weekIndex) => {
+                const cell = teamData[team.id]?.scores[weekIndex];
+                return (
+                  <TableCell key={weekIndex} className="text-center">
+                    {cell?.value != null ? (
+                      <ScoreHover score={cell.value} excludeSelf={!cell.isPlayoff}>
+                        {cell.display}
+                      </ScoreHover>
+                    ) : (
+                      cell?.display ?? "-"
+                    )}
+                  </TableCell>
+                );
+              })}
             </TableRow>
           ))}
         </TableBody>

@@ -71,9 +71,13 @@ export const AllTimeScheduleRecords = ({ matchups }: AllTimeScheduleRecordsProps
     const records = Array.from(scheduleRecords.values());
     records.sort((a, b) => b.percentage - a.percentage);
 
+    // percentage = how often everyone ELSE would have won playing this
+    // team's schedule. High percentage means the schedule's opponents were
+    // easy to beat (an easy schedule); low percentage means few teams could
+    // beat those opponents (a hard schedule).
     return {
-      hardest: records.slice(0, 10),
-      easiest: records.slice(-10).reverse()
+      hardest: records.slice(-10).reverse(),
+      easiest: records.slice(0, 10)
     };
   };
 

@@ -54,6 +54,30 @@ const Records = () => {
     },
   });
 
+  // Manual corrections (e.g. illegal-lineup penalties) applied to a team's
+  // recorded score for a given week. `scores.score` is the post-penalty value
+  // used for standings/wins — correct as the official result — but the
+  // record book should show what the team actually scored on the field, so
+  // record-book displays reverse the adjustment and mark it with an asterisk.
+  const { data: adjustments } = useQuery({
+    queryKey: ['score-adjustments-all'],
+    queryFn: async () => {
+      const { data, error } = await (supabase as any)
+        .from('score_adjustments')
+        .select('season_id, week_number, team_id, adjustment, reason');
+      if (error) throw error;
+      return data as { season_id: number; week_number: number; team_id: number; adjustment: number; reason: string }[];
+    },
+  });
+
+  const adjustmentMap = useMemo(() => {
+    const m = new Map<string, { adjustment: number; reason: string }>();
+    for (const a of adjustments ?? []) {
+      m.set(`${a.season_id}-${a.week_number}-${a.team_id}`, { adjustment: a.adjustment, reason: a.reason });
+    }
+    return m;
+  }, [adjustments]);
+
   const yearMap = useMemo(() => {
     const m = new Map<number, number>();
     if (!seasons) return m;
@@ -236,6 +260,16 @@ const Records = () => {
     const regularGames = matchups.filter(m => !m.is_playoff && m.home_score !== null && m.away_score !== null);
     const playoffGames = matchups.filter(m => m.is_playoff && m.home_score !== null && m.away_score !== null);
 
+    // Reverse a manual score adjustment (e.g. an illegal-lineup penalty) to
+    // recover what the team actually scored on the field, for record-book
+    // display purposes only — standings/wins still use the official
+    // (penalized) score stored in `scores`.
+    const rawScoreFor = (teamId: number | null, seasonId: number, week: number, officialScore: number) => {
+      const adj = teamId != null ? adjustmentMap.get(`${seasonId}-${week}-${teamId}`) : undefined;
+      if (!adj) return { score: officialScore, isAdjusted: false as const, adjustmentReason: undefined };
+      return { score: officialScore - adj.adjustment, isAdjusted: true as const, adjustmentReason: adj.reason };
+    };
+
     const getAllScores = (games: typeof matchups) => {
       const scores: Array<{
         score: number,
@@ -243,25 +277,33 @@ const Records = () => {
         season: number,
         week: number,
         opponent: string,
-        gameScore: string
+        gameScore: string,
+        isAdjusted: boolean,
+        adjustmentReason?: string,
       }> = [];
 
       games.forEach(game => {
+        const home = rawScoreFor(game.home_team_id, game.season_id, game.week_number!, game.home_score!);
+        const away = rawScoreFor(game.away_team_id, game.season_id, game.week_number!, game.away_score!);
         scores.push({
-          score: game.home_score!,
+          score: home.score,
           team: game.home_team_name!,
           opponent: game.away_team_name!,
           season: game.season_id,
           week: game.week_number!,
-          gameScore: `${game.home_score!.toFixed(1)}-${game.away_score!.toFixed(1)}`
+          gameScore: `${game.home_score!.toFixed(1)}-${game.away_score!.toFixed(1)}`,
+          isAdjusted: home.isAdjusted,
+          adjustmentReason: home.adjustmentReason,
         });
         scores.push({
-          score: game.away_score!,
+          score: away.score,
           team: game.away_team_name!,
           opponent: game.home_team_name!,
           season: game.season_id,
           week: game.week_number!,
-          gameScore: `${game.away_score!.toFixed(1)}-${game.home_score!.toFixed(1)}`
+          gameScore: `${game.away_score!.toFixed(1)}-${game.home_score!.toFixed(1)}`,
+          isAdjusted: away.isAdjusted,
+          adjustmentReason: away.adjustmentReason,
         });
       });
 
@@ -302,7 +344,7 @@ const Records = () => {
       playoffHigh: playoffScores.sort((a, b) => b.score - a.score).slice(0, 10),
       playoffLow: playoffScores.sort((a, b) => a.score - b.score).slice(0, 10),
       largestMargins: margins.slice(0, 10),
-      highestCombined: combined.slice(0, 10)
+      highestCombined: combined.slice(0, 10),
     };
   };
 

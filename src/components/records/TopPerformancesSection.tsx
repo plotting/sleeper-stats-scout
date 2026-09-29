@@ -20,6 +20,7 @@ import {
 import { Flame, Snowflake } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { MatchupScoresView } from "@/types/database";
+import { ScoreHover } from "@/components/shared/ScoreHover";
 
 interface PerformanceRow {
   teamId: number | null;
@@ -161,7 +162,9 @@ export function TopPerformancesSection({ allMatchups, yearMap }: Props) {
                   mode === "top" ? "text-emerald-400" : "text-red-400",
                 )}
               >
-                {r.score.toFixed(1)}
+                <ScoreHover score={r.score} excludeSelf={!r.isPlayoff}>
+                  {r.score.toFixed(1)}
+                </ScoreHover>
               </TableCell>
               <TableCell className="text-slate-400 text-sm">{r.opponentName}</TableCell>
               <TableCell className="text-right font-mono text-sm text-slate-400">

@@ -1,13 +1,15 @@
 import { useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent } from "@/components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import type { MatchupScoresView } from "@/types/database";
 import { computeSeasonStats, type SeasonStats } from "./Recaps";
 import { getSeasonYear } from "@/utils/seasonUtils";
 import { askHistorian, buildHistorianContext } from "@/services/historian";
+import Records from "./Records";
 import {
   Landmark, Trophy, Flame, Swords, Newspaper, UserSearch, GraduationCap,
   Send, Loader2, Sparkles,
@@ -197,6 +199,15 @@ function AskTheHistorian({ allStats, careerLines }: { allStats: SeasonStats[]; c
 // ── Page ─────────────────────────────────────────────────────────────────────
 
 const Hall = () => {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const initialTab = searchParams.get("tab") === "records" ? "records" : "overview";
+  const [tab, setTab] = useState(initialTab);
+
+  const handleTabChange = (value: string) => {
+    setTab(value);
+    setSearchParams(value === "records" ? { tab: "records" } : {}, { replace: true });
+  };
+
   const { data: seasons } = useQuery({
     queryKey: ["hall-seasons"],
     queryFn: async () => {
@@ -295,7 +306,17 @@ const Hall = () => {
       {isLoading ? (
         <p className="text-slate-500 text-sm animate-pulse py-12 text-center">Opening the doors…</p>
       ) : (
-        <>
+        <Tabs value={tab} onValueChange={handleTabChange} className="space-y-8">
+          <TabsList className="mx-auto">
+            <TabsTrigger value="overview">Overview</TabsTrigger>
+            <TabsTrigger value="records">Records</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="records">
+            <Records />
+          </TabsContent>
+
+          <TabsContent value="overview" className="space-y-8">
           {/* Championship banner timeline */}
           <div>
             <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-widest mb-3 text-center">Champions</h2>
@@ -356,15 +377,15 @@ const Hall = () => {
           {/* Explore the Hall */}
           <div>
             <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-widest mb-3 text-center">Explore the Hall</h2>
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-              <HallLink to="/records" icon={Trophy} label="Record Book" />
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
               <HallLink to="/head-to-head" icon={Swords} label="Rivalries" />
               <HallLink to="/draft-grades" icon={GraduationCap} label="Draft Grades" />
               <HallLink to="/gm-scouting" icon={UserSearch} label="GM Scouting" />
               <HallLink to="/dynasty-digest" icon={Newspaper} label="Dynasty Digest" />
             </div>
           </div>
-        </>
+          </TabsContent>
+        </Tabs>
       )}
     </div>
   );

@@ -5,6 +5,7 @@ import { Card } from "@/components/ui/card";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import type { MatchupScoresView } from "@/types/database";
+import { ScoreHover } from "@/components/shared/ScoreHover";
 
 interface TeamMatchupsProps {
   teamId: number;
@@ -90,7 +91,9 @@ const TeamMatchups = ({ teamId, selectedSeason }: TeamMatchupsProps) => {
                             ? 'text-red-500'
                             : 'text-yellow-500'
                       }>
-                        {teamScore.toFixed(2)} - {opponentScore.toFixed(2)}
+                        <ScoreHover score={teamScore} excludeSelf={!matchup.is_playoff}>{teamScore.toFixed(2)}</ScoreHover>
+                        {" - "}
+                        <ScoreHover score={opponentScore} excludeSelf={!matchup.is_playoff}>{opponentScore.toFixed(2)}</ScoreHover>
                       </span>
                     ) : (
                       'TBD'
