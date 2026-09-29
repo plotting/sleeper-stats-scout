@@ -17,12 +17,8 @@ import {
 import {
   Menu,
   Trophy,
-  BarChart2,
-  Calendar,
   BookOpen,
   ArrowLeftRight,
-  Swords,
-  Star,
   ChevronDown,
   Zap,
   LineChart,
@@ -42,10 +38,9 @@ import { formatDistanceToNowStrict } from 'date-fns';
 const links = [
   { to: '/season14', label: 'S14 \'26', icon: Flame },
   { to: '/', label: 'Seasons', icon: Trophy },
-  { to: '/weekly-scores', label: 'Scores', icon: Calendar },
   { to: '/draft', label: 'Draft', icon: BookOpen },
   { to: '/trades', label: 'Trades', icon: ArrowLeftRight },
-  { to: '/records', label: 'Records', icon: Star },
+  { to: '/hall', label: 'The Hall', icon: Landmark },
 ];
 
 // Everything else lives behind "More" so the primary bar stays short —
@@ -53,12 +48,11 @@ const links = [
 // Recaps and Rookies are intentionally absent: Recaps now lives as a sub-tab
 // under Season14, and Rookies' functionality was absorbed into Draft Grades'
 // ADP/Pick Value tabs — both dropped from the nav upstream on main.
-// Dynasty Digest and GM Scouting are also hidden for now (routes still exist,
-// just not linked) while those pages are held back.
+// Weekly Scores, By Week, and H2H are also absent: all three now live as
+// sub-tabs on the Seasons page. Dynasty Digest and GM Scouting are hidden
+// for now (routes still exist, just not linked) while those pages are held
+// back. Records is folded into The Hall as its "Records" tab.
 const moreLinks = [
-  { to: '/hall', label: 'The Hall', icon: Landmark },
-  { to: '/weekly-records', label: 'By Week', icon: BarChart2 },
-  { to: '/head-to-head', label: 'H2H', icon: Swords },
   { to: '/analytics', label: 'Analytics', icon: LineChart },
   { to: '/draft-grades', label: 'Grades', icon: GraduationCap },
 ];

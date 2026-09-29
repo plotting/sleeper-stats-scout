@@ -10,6 +10,9 @@ import ScheduleSwapTable from "@/components/schedule/ScheduleSwapTable";
 import TeamComparison from "@/components/seasons/TeamComparison";
 import StrengthOfSchedule from "@/components/seasons/StrengthOfSchedule";
 import WeeklyPowerRankings from "@/components/seasons/WeeklyPowerRankings";
+import WeeklyScores from "./WeeklyScores";
+import WeeklyRecords from "./WeeklyRecords";
+import HeadToHead from "./HeadToHead";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 const Seasons = () => {
@@ -48,6 +51,9 @@ const Seasons = () => {
           <TabsTrigger value="comparison">Team Comparison</TabsTrigger>
           <TabsTrigger value="playoffs">Playoff Bracket</TabsTrigger>
           <TabsTrigger value="schedule">Schedule Analysis</TabsTrigger>
+          <TabsTrigger value="scores">Weekly Scores</TabsTrigger>
+          <TabsTrigger value="by-week">By Week</TabsTrigger>
+          <TabsTrigger value="h2h">Head-to-Head</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview">
@@ -93,6 +99,18 @@ const Seasons = () => {
               </div>
             </Card>
           </div>
+        </TabsContent>
+
+        <TabsContent value="scores">
+          <WeeklyScores />
+        </TabsContent>
+
+        <TabsContent value="by-week">
+          <WeeklyRecords />
+        </TabsContent>
+
+        <TabsContent value="h2h">
+          <HeadToHead />
         </TabsContent>
       </Tabs>
     </div>

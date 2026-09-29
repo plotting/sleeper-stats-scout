@@ -95,19 +95,22 @@ const WeeklyScores = () => {
       }),
       scores: Array.from({ length: weekCount }, (_, weekIndex) => {
         const weekNumber = weekIndex + 1;
-        const matchup = matchupScores?.find(m => 
-          (m.home_team_id === team.id || m.away_team_id === team.id) && 
+        const matchup = matchupScores?.find(m =>
+          (m.home_team_id === team.id || m.away_team_id === team.id) &&
           m.week_number === weekNumber
         );
 
-        if (!matchup) return "-";
-        return matchup.home_team_id === team.id ? 
-          matchup.home_score?.toFixed(2) || "-" : 
-          matchup.away_score?.toFixed(2) || "-";
+        if (!matchup) return { display: "-", value: null, isPlayoff: false };
+        const value = matchup.home_team_id === team.id ? matchup.home_score : matchup.away_score;
+        return {
+          display: value != null ? value.toFixed(2) : "-",
+          value,
+          isPlayoff: !!matchup.is_playoff,
+        };
       }),
     };
     return acc;
-  }, {} as Record<number, { records: string[], scores: string[] }>) || {};
+  }, {} as Record<number, { records: string[], scores: { display: string; value: number | null; isPlayoff: boolean }[] }>) || {};
 
   return (
     <div className="min-h-screen">

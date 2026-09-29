@@ -1,5 +1,7 @@
 
+import { useState, useMemo } from "react";
 import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import {
   Table,
   TableBody,
@@ -9,6 +11,9 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
+import { ScoreHover } from "@/components/shared/ScoreHover";
+import { useAllTimeScorePool } from "@/hooks/useAllTimeScorePool";
+import { computeWinPct } from "@/utils/scorePercentile";
 
 interface ScoringRecord {
   score: number;
@@ -17,6 +22,8 @@ interface ScoringRecord {
   season: number;
   week: number;
   gameScore: string;
+  isAdjusted?: boolean;
+  adjustmentReason?: string;
 }
 
 interface MarginRecord {
@@ -69,7 +76,19 @@ function ScoreTable({ records, variant }: { records: ScoringRecord[]; variant: "
       <TableBody>
         {records.map((record, index) => (
           <TableRow key={index}>
-            <TableCell className={cn("font-semibold", scoreColor)}>{record.score.toFixed(1)}</TableCell>
+            <TableCell className={cn("font-semibold", scoreColor)}>
+              <ScoreHover score={record.score} excludeSelf>
+                {record.score.toFixed(1)}
+              </ScoreHover>
+              {record.isAdjusted && (
+                <span
+                  className="ml-0.5 text-amber-400 cursor-help"
+                  title={`Official score reflects a penalty: ${record.adjustmentReason ?? "adjustment applied"}`}
+                >
+                  *
+                </span>
+              )}
+            </TableCell>
             <TableCell>{record.team}</TableCell>
             <TableCell>{record.opponent}</TableCell>
             <TableCell>{`S${record.season}/W${record.week}`}</TableCell>
@@ -106,6 +125,49 @@ function PpgTable({ records, variant }: { records: SeasonPpgRecord[]; variant: "
   );
 }
 
+function ScoreComparator() {
+  const { pool, isLoading } = useAllTimeScorePool();
+  const [value, setValue] = useState("");
+
+  const result = useMemo(() => {
+    const score = parseFloat(value);
+    if (Number.isNaN(score) || pool.length === 0) return null;
+    return computeWinPct(score, pool);
+  }, [value, pool]);
+
+  return (
+    <Card className="p-6 border-white/10 bg-[#0f172a] md:col-span-2">
+      <h2 className="text-xl font-semibold mb-1">Score Comparator</h2>
+      <p className="text-xs text-muted-foreground mb-4">
+        See how any score stacks up against every regular-season score ever recorded in the league —
+        updates automatically as new games are played. (Individual scores throughout the site show this
+        on hover too.)
+      </p>
+      <div className="flex items-center gap-3 flex-wrap">
+        <Input
+          type="number"
+          step="0.1"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          placeholder="Enter a score, e.g. 150.5"
+          className="w-48"
+          disabled={isLoading}
+        />
+        {result && (
+          <p className="text-sm">
+            Would have beaten{" "}
+            <span className="font-semibold text-emerald-400">
+              {result.wins}{result.ties > 0 ? ` (+${result.ties} tied)` : ""}
+            </span>{" "}
+            of {result.total} games ever played —{" "}
+            <span className="font-semibold text-white">{result.pct.toFixed(1)}%</span>
+          </p>
+        )}
+      </div>
+    </Card>
+  );
+}
+
 export const ScoringRecordsSection = ({
   regularSeasonHigh,
   regularSeasonLow,
@@ -118,6 +180,8 @@ export const ScoringRecordsSection = ({
 }: ScoringRecordsSectionProps) => {
   return (
     <div className="grid gap-6 md:grid-cols-2">
+      <ScoreComparator />
+
       <Card className="p-6 border-white/10 bg-[#0f172a]">
         <h2 className="text-xl font-semibold mb-4">Highest Regular Season Scores</h2>
         <ScoreTable records={regularSeasonHigh} variant="high" />

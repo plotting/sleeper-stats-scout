@@ -1,5 +1,6 @@
 import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import Navigation from "./components/Navigation";
 import Seasons from "./pages/Seasons";
 import TeamPage from "./pages/TeamPage";
@@ -34,6 +35,7 @@ const queryClient = new QueryClient({
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
+      <TooltipProvider>
       <Router>
         <div className="min-h-screen bg-background">
           <Navigation />
@@ -61,6 +63,7 @@ function App() {
           </main>
         </div>
       </Router>
+      </TooltipProvider>
     </QueryClientProvider>
   );
 }

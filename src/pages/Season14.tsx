@@ -16,6 +16,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import type { MatchupScoresView } from "@/types/database";
+import { ScoreHover } from "@/components/shared/ScoreHover";
 
 const SEASON_ID = 14;
 const SEASON_YEAR = 2026;
@@ -198,13 +199,13 @@ function RecentResults({ matchups }: { matchups: MatchupScoresView[] }) {
                       {m.home_team_name}
                     </Link>
                     <span className={cn("font-mono font-semibold shrink-0", homeWon ? "text-emerald-400" : "text-red-400")}>
-                      {m.home_score!.toFixed(1)}
+                      <ScoreHover score={m.home_score!} excludeSelf>{m.home_score!.toFixed(1)}</ScoreHover>
                     </span>
                   </div>
                   <span className="text-slate-600 text-xs shrink-0">vs</span>
                   <div className="flex-1 flex items-center gap-2">
                     <span className={cn("font-mono font-semibold shrink-0", awayWon ? "text-emerald-400" : "text-red-400")}>
-                      {m.away_score!.toFixed(1)}
+                      <ScoreHover score={m.away_score!} excludeSelf>{m.away_score!.toFixed(1)}</ScoreHover>
                     </span>
                     <Link
                       to={`/team/${m.away_team_id}?season=${SEASON_ID}`}
@@ -260,7 +261,9 @@ function TopScorers({ matchups }: { matchups: MatchupScoresView[] }) {
                 {r.teamName}
               </Link>
             </TableCell>
-            <TableCell className="text-right font-mono font-semibold text-emerald-400">{r.score.toFixed(1)}</TableCell>
+            <TableCell className="text-right font-mono font-semibold text-emerald-400">
+              <ScoreHover score={r.score} excludeSelf>{r.score.toFixed(1)}</ScoreHover>
+            </TableCell>
             <TableCell className="text-sm text-slate-400">{r.opponent}</TableCell>
             <TableCell className="text-right text-sm text-slate-400">Wk {r.week}</TableCell>
             <TableCell>
