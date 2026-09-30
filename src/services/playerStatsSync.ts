@@ -1,5 +1,6 @@
 import { supabase } from '@/integrations/supabase/client';
 import { fetchWeekStats, getFantasyPlayers, type FantasyPosition, type SleeperLeague } from './sleeperApi';
+import type { Database } from '@/integrations/supabase/types';
 import type { LogFn } from './sleeperSync';
 
 const POSITIONS: FantasyPosition[] = ['QB', 'RB', 'WR', 'TE'];
@@ -34,6 +35,8 @@ function scoreLine(stats: Record<string, number>, scoring: Record<string, number
   }
   return pts;
 }
+
+type SeasonRow = Database['public']['Tables']['player_seasons']['Row'];
 
 interface PlayerSeason {
   player_name: string;
@@ -118,7 +121,6 @@ export async function syncPlayerStats(
       year,
       total_points: total,
       games_played: p.games_played,
-      ppg: Math.round((total / p.games_played) * 100) / 100,
     };
   });
 
@@ -130,6 +132,22 @@ export async function syncPlayerStats(
   }
   const replaced = keepDst ? POSITIONS : SYNCED_POSITIONS;
   const toSave = keepDst ? rows.filter((r) => r.position !== 'DST') : rows;
+  // `ppg` is a generated column, so it is never written. Keep a copy of the
+  // old rows so a failed insert can put them back instead of leaving the year empty.
+  const backup: Array<Pick<SeasonRow, 'player_name' | 'position' | 'year' | 'total_points' | 'games_played'>> = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await supabase
+      .from('player_seasons')
+      .select('player_name, position, year, total_points, games_played')
+      .eq('year', year)
+      .in('position', replaced)
+      .order('id')
+      .range(from, from + 999);
+    if (error) throw new Error(`Failed to read ${year} player stats: ${error.message}`);
+    backup.push(...(data ?? []));
+    if (!data || data.length < 1000) break;
+  }
+
   const { error: delErr } = await supabase
     .from('player_seasons')
     .delete()
@@ -138,10 +156,19 @@ export async function syncPlayerStats(
   if (delErr) throw new Error(`Failed to clear ${year} player stats: ${delErr.message}`);
 
   const BATCH = 400;
-  for (let i = 0; i < toSave.length; i += BATCH) {
-    const { error } = await supabase.from('player_seasons').insert(toSave.slice(i, i + BATCH));
-    if (error) throw new Error(`Failed to save player stats: ${error.message}`);
-    onProgress?.(80 + (Math.min(i + BATCH, toSave.length) / toSave.length) * 20);
+  try {
+    for (let i = 0; i < toSave.length; i += BATCH) {
+      const { error } = await supabase.from('player_seasons').insert(toSave.slice(i, i + BATCH));
+      if (error) throw new Error(error.message);
+      onProgress?.(80 + (Math.min(i + BATCH, toSave.length) / toSave.length) * 20);
+    }
+  } catch (err) {
+    // Roll back: clear any partial insert and restore the previous rows.
+    await supabase.from('player_seasons').delete().eq('year', year).in('position', replaced);
+    for (let i = 0; i < backup.length; i += BATCH) {
+      await supabase.from('player_seasons').insert(backup.slice(i, i + BATCH));
+    }
+    throw new Error(`Failed to save player stats (${err instanceof Error ? err.message : String(err)}); restored ${backup.length} previous rows`);
   }
   log(`Saved ${toSave.length} player seasons for ${year}${keepDst ? '' : ` (${dstCount} D/ST)`}`, 'success');
   return { total: toSave.length, weeksFetched, excludedWeek };
