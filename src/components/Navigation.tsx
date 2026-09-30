@@ -70,7 +70,11 @@ const Navigation = () => {
         .select('id, name, owner_id, created_at, updated_at')
         .order('id');
       if (error) throw error;
-      return data as Team[];
+      // Only list teams that have actually played a season (mapping mistakes
+      // or unused teams would otherwise clutter the dropdown).
+      const { data: played } = await supabase.from('team_records_view').select('team_id');
+      const playedIds = new Set((played ?? []).map((r) => r.team_id));
+      return (playedIds.size ? data.filter((t) => playedIds.has(t.id)) : data) as Team[];
     },
   });
 

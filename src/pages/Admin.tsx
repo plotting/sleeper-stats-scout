@@ -1,4 +1,4 @@
-import { useState, useCallback, Component, type ReactNode } from 'react';
+import { useState, useCallback, useRef, Component, type ReactNode } from 'react';
 import { SEASON_COUNT, FIRST_SEASON_YEAR, CURRENT_SEASON_YEAR } from '@/utils/seasonUtils';
 import { useQueryClient } from '@tanstack/react-query';
 
@@ -115,19 +115,29 @@ function PinGate({ onUnlock }: { onUnlock: () => void }) {
 
 // ─── Log entry ─────────────────────────────────────────────────────────────
 
+type LogSection = 'mapping' | 'scores' | 'drafts' | 'trades' | 'all';
+
 interface LogEntry {
   msg: string;
   level: 'info' | 'success' | 'warn' | 'error';
   ts: number;
+  section?: LogSection;
 }
 
+// Entries are tagged with the section of the action that's running, so each
+// card's log shows only its own output. `setSection` is called by run().
 function useLog() {
   const [entries, setEntries] = useState<LogEntry[]>([]);
+  const sectionRef = useRef<LogSection>('all');
+  const setSection = useCallback((section: LogSection) => { sectionRef.current = section; }, []);
   const log = useCallback((msg: string, level: LogEntry['level'] = 'info') => {
-    setEntries((prev) => [...prev, { msg, level, ts: Date.now() }]);
+    const section = sectionRef.current;
+    setEntries((prev) => [...prev, { msg, level, ts: Date.now(), section }]);
   }, []);
-  const clear = useCallback(() => setEntries([]), []);
-  return { entries, log, clear };
+  const clear = useCallback((section?: LogSection) => {
+    setEntries((prev) => (section ? prev.filter((e) => e.section !== section) : []));
+  }, []);
+  return { entries, log, clear, setSection };
 }
 
 // ─── Status badge ───────────────────────────────────────────────────────────
@@ -145,7 +155,8 @@ function LeagueBadge({ status }: { status: SleeperLeague['status'] }) {
 
 // ─── Log panel ──────────────────────────────────────────────────────────────
 
-function LogPanel({ entries, onClear }: { entries: LogEntry[]; onClear: () => void }) {
+function LogPanel({ section, entries: allEntries, onClear }: { section: LogSection; entries: LogEntry[]; onClear: (section?: LogSection) => void }) {
+  const entries = allEntries.filter((e) => e.section === section);
   const colorMap = {
     info: 'text-slate-300',
     success: 'text-emerald-400',
@@ -219,7 +230,7 @@ function SyncCard({
 
 const Admin = () => {
   const [unlocked, setUnlocked] = useState(() => localStorage.getItem(ADMIN_UNLOCK_KEY) === 'true');
-  const { entries, log, clear } = useLog();
+  const { entries, log, clear, setSection } = useLog();
   const queryClient = useQueryClient();
   const [progress, setProgress] = useState(0);
   const [running, setRunning] = useState(false);
@@ -311,10 +322,11 @@ const Admin = () => {
   const selectedLeague = allLeagues?.find((l) => l.league_id === selectedLeagueId) ?? currentLeague;
 
   // ── Run helper ──
-  async function run(fn: () => Promise<void>) {
+  async function run(section: LogSection, fn: () => Promise<void>) {
     setRunning(true);
     setProgress(0);
-    clear();
+    setSection(section);
+    clear(section);
     try {
       await fn();
       // Bust the cache so all pages show fresh data immediately
@@ -329,7 +341,7 @@ const Admin = () => {
 
   // ── Team mapping ──
   async function handleLoadMappings() {
-    await run(async () => {
+    await run('mapping', async () => {
       const leagueId = selectedLeague?.league_id ?? LEAGUE_ID;
       log(`Fetching users for league ${leagueId}…`);
       const result = await buildTeamMappings(leagueId, log);
@@ -356,7 +368,7 @@ const Admin = () => {
       log('Cannot save — two or more Sleeper users are mapped to the same team. Fix the duplicates highlighted in red first.', 'error');
       return;
     }
-    await run(async () => {
+    await run('mapping', async () => {
       const updated: TeamMapping[] = mappings.map((m) => ({
         ...m,
         dbTeamId: mappingEdits[m.sleeperUserId] ?? null,
@@ -372,47 +384,47 @@ const Admin = () => {
   // ── Sync actions ──
   async function handleSyncScores() {
     if (!selectedLeague) return;
-    await run(async () => {
+    await run('scores', async () => {
       await syncScoresAndSchedules(selectedLeague, log, setProgress);
     });
   }
 
   async function handleSyncDrafts() {
     if (!selectedLeague) return;
-    await run(async () => {
+    await run('drafts', async () => {
       await syncDraftPicks(selectedLeague, log, setProgress);
     });
   }
 
   async function handleSyncTrades() {
     if (!selectedLeague) return;
-    await run(async () => {
+    await run('trades', async () => {
       await syncTrades(selectedLeague, log, setProgress);
     });
   }
 
   async function handleRepairTradeDescriptions() {
-    await run(async () => {
+    await run('trades', async () => {
       await repairTradeDescriptions(log);
     });
   }
 
   async function handleRepairPickDescriptions() {
-    await run(async () => {
+    await run('trades', async () => {
       await repairPickDescriptions(log);
     });
   }
 
   async function handleClearAndResyncTrades() {
     if (!selectedLeague) return;
-    await run(async () => {
+    await run('trades', async () => {
       await clearAndResyncTrades(selectedLeague, log, setProgress);
     });
   }
 
   async function handleSyncAll() {
     if (!selectedLeague) return;
-    await run(async () => {
+    await run('all', async () => {
       await syncAll(selectedLeague, log, (_label, p) => setProgress(p));
     });
   }
@@ -472,7 +484,7 @@ const Admin = () => {
 
   async function handleSyncAllSeasons() {
     if (!allLeagues) return;
-    await run(async () => {
+    await run('all', async () => {
       for (let i = 0; i < allLeagues.length; i++) {
         const league = allLeagues[i];
         await syncAll(league, log, (_label, p) =>
@@ -486,7 +498,7 @@ const Admin = () => {
   // Run this once after the draft_slot migration to fix pick slot resolution in trade history.
   async function handleResyncAllDraftsAndTrades() {
     if (!allLeagues) return;
-    await run(async () => {
+    await run('trades', async () => {
       const total = allLeagues.length * 2; // 2 passes per season
       for (let i = 0; i < allLeagues.length; i++) {
         const league = allLeagues[i];
@@ -705,7 +717,7 @@ const Admin = () => {
           </>
         )}
 
-        <LogPanel entries={entries} onClear={clear} />
+        <LogPanel section="mapping" entries={entries} onClear={clear} />
       </SyncCard>
 
       {/* Scores & Schedules */}
@@ -726,7 +738,7 @@ const Admin = () => {
             Sync {selectedLeague?.season ?? '…'}
           </Button>
         </div>
-        <LogPanel entries={entries} onClear={clear} />
+        <LogPanel section="scores" entries={entries} onClear={clear} />
       </SyncCard>
 
       {/* Draft picks */}
@@ -746,7 +758,7 @@ const Admin = () => {
           <RefreshCw className={cn('h-3 w-3 mr-1', running && 'animate-spin')} />
           Sync Drafts for {selectedLeague?.season ?? '…'}
         </Button>
-        <LogPanel entries={entries} onClear={clear} />
+        <LogPanel section="drafts" entries={entries} onClear={clear} />
       </SyncCard>
 
       {/* Trades */}
@@ -812,7 +824,7 @@ const Admin = () => {
             Rebuild All Draft Slots + Trades (All Seasons)
           </Button>
         </div>
-        <LogPanel entries={entries} onClear={clear} />
+        <LogPanel section="trades" entries={entries} onClear={clear} />
       </SyncCard>
 
       {/* Player Stats */}
@@ -987,7 +999,7 @@ const Admin = () => {
       </Card>
 
       {/* Global log */}
-      <LogPanel entries={entries} onClear={clear} />
+      <LogPanel section="all" entries={entries} onClear={clear} />
     </div>
     </ErrorBoundary>
   );
