@@ -1,4 +1,5 @@
 
+import { SEASON_COUNT, FIRST_SEASON_YEAR, CURRENT_SEASON_YEAR } from "@/utils/seasonUtils";
 import { useState, useMemo, Fragment } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -249,8 +250,13 @@ function VorpBreakdown({
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const DRAFT_YEARS     = [2026, 2025, 2024, 2023, 2022, 2021, 2020, 2019, 2018, 2017, 2016, 2015, 2014];
-const ADP_YEARS       = [2026, 2025, 2024, 2023, 2022, 2021, 2020, 2019, 2018, 2017, 2016, 2015, 2014];
+// Seasons this league has existed, newest first.
+const DRAFT_YEARS     = Array.from({ length: SEASON_COUNT }, (_, i) => CURRENT_SEASON_YEAR - i);
+const ADP_YEARS       = DRAFT_YEARS;
+// Expected-VORP baseline = drafts whose full 5-season window has been played.
+const BASELINE_FIRST  = FIRST_SEASON_YEAR;
+const BASELINE_LAST   = CURRENT_SEASON_YEAR - 5;
+const BASELINE_LABEL  = `${BASELINE_FIRST}–${BASELINE_LAST}`;
 const GRADABLE_POS    = ["QB", "RB", "WR", "TE"];
 
 const PAGE_TABS: { key: PageTab; label: string }[] = [
@@ -276,7 +282,7 @@ function AllTimeTabContent({ expectedVorpCurve, curveReady }: {
       const { data, error } = await supabase
         .from("rookie_draft_grades" as never)
         .select("*")
-        .gte("draft_year", 2014)
+        .gte("draft_year", FIRST_SEASON_YEAR)
         .in("position", GRADABLE_POS)
         .order("draft_year")
         .order("overall_pick");
@@ -608,7 +614,7 @@ function AllTimeTabContent({ expectedVorpCurve, curveReady }: {
               <p className="font-medium text-slate-300">How these are calculated</p>
               <p className="leading-relaxed">
                 <span className="text-slate-400 font-mono">Total VORP</span> — sum of every player's 5-year VORP from their draft year.{" "}
-                <span className="text-slate-400 font-mono">Pick Efficiency</span> — avg of (actual VORP − expected VORP for that slot) across all picks. Historical baseline: 2014–2021.
+                <span className="text-slate-400 font-mono">Pick Efficiency</span> — avg of (actual VORP − expected VORP for that slot) across all picks. Historical baseline: {BASELINE_LABEL}.
               </p>
             </div>
           </CardContent>
@@ -621,8 +627,8 @@ function AllTimeTabContent({ expectedVorpCurve, curveReady }: {
 // ── Main component ────────────────────────────────────────────────────────────
 
 const DraftGrades = () => {
-  const [year, setYear]               = useState(2025);
-  const [adpYear, setAdpYear]         = useState(2025);
+  const [year, setYear]               = useState(CURRENT_SEASON_YEAR - 1);
+  const [adpYear, setAdpYear]         = useState(CURRENT_SEASON_YEAR - 1);
   const [pageTab, setPageTab]         = useState<PageTab>("grades");
   const [viewMode, setViewMode]       = useState<ViewMode>("picks");
   const [adpSearch, setAdpSearch]     = useState("");
@@ -656,7 +662,7 @@ const DraftGrades = () => {
       const { data, error } = await supabase
         .from("rookie_draft_grades" as never)
         .select("overall_pick, round, pick_number, five_yr_vorp, seasons_with_data, position, draft_year, player_name")
-        .gte("draft_year", 2014)
+        .gte("draft_year", FIRST_SEASON_YEAR)
         .in("position", GRADABLE_POS);
       if (error) throw error;
       return data as HistoricalPick[];
@@ -685,7 +691,7 @@ const DraftGrades = () => {
     if (historicalPicks.length === 0) return new Map<number, number>();
     const slotMap = new Map<number, number[]>();
     for (const p of historicalPicks) {
-      if (p.draft_year < 2014 || p.draft_year > 2021) continue; // complete 5yr baseline only
+      if (p.draft_year < BASELINE_FIRST || p.draft_year > BASELINE_LAST) continue; // complete 5yr baseline only
       if (!slotMap.has(p.overall_pick)) slotMap.set(p.overall_pick, []);
       slotMap.get(p.overall_pick)!.push(Number(p.five_yr_vorp));
     }
@@ -825,8 +831,8 @@ const DraftGrades = () => {
 
   const dataNote = year > 2023
     ? "⚠️ Career data incomplete — VORP will update as seasons play out"
-    : year > 2021
-    ? "⚠️ 5-year window may be incomplete — Pick Value uses 2013–2021 baseline"
+    : year > BASELINE_LAST
+    ? `⚠️ 5-year window may be incomplete — Pick Value uses ${BASELINE_LABEL} baseline`
     : null;
 
   // ── Render helpers ─────────────────────────────────────────────────────────
@@ -1195,7 +1201,7 @@ const DraftGrades = () => {
                   <CardTitle className="text-base">{year} — Pick Value vs. Slot Expectation</CardTitle>
                   <p className="text-xs text-slate-500 mt-1">
                     <span className="font-mono text-slate-400">Pick Value = Actual 5yr VORP − Expected VORP for that slot</span>
-                    {" "}· Expected = avg of all players taken at that pick historically (2013–2021)
+                    {" "}· Expected = avg of all players taken at that pick historically ({BASELINE_LABEL})
                     {" "}· Positive = outperformed · Negative = underperformed
                   </p>
                 </CardHeader>
@@ -1251,7 +1257,7 @@ const DraftGrades = () => {
                     <p className="font-medium text-slate-300">How Pick Value is calculated</p>
                     <p className="text-slate-500 leading-relaxed">
                       For each slot (e.g. 1.01), we average the 5-year VORP of every player ever taken
-                      there from 2013–2021. That becomes the slot's expected VORP. Pick Value is how far
+                      there from {BASELINE_LABEL}. That becomes the slot's expected VORP. Pick Value is how far
                       above or below that baseline the actual player landed. See the <strong className="text-slate-400">Slot Curve</strong> tab
                       to inspect the historical players behind each slot's expected VORP.
                     </p>

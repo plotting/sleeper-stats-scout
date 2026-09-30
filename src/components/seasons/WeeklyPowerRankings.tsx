@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { getPlayoffStartWeek } from "@/utils/playoffRegistry";
 import {
   LineChart,
   Line,
@@ -45,7 +46,6 @@ const PALETTE = [
   "#6366f1",
 ];
 
-const REGULAR_SEASON_MAX_WEEK = 14;
 
 const RankedDot = (props: {
   cx?: number;
@@ -166,7 +166,7 @@ const WeeklyPowerRankings = ({ seasonId }: Props) => {
       (r) =>
         r.week_number != null &&
         r.week_number >= 1 &&
-        r.week_number <= REGULAR_SEASON_MAX_WEEK
+        r.week_number < getPlayoffStartWeek(seasonId)
     );
 
     const nameById: Record<number, string> = {};

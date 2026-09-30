@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { TeamRecordsView, MatchupScoresView } from "@/types/database";
 import { getTeamFinalPlacements } from "../playoff-bracket/utils/bracketUtils";
+import { getPlayoffBracketSize, getPlayoffStartWeek } from "@/utils/playoffRegistry";
 
 /** Per-team computed record derived directly from matchup_scores_view */
 export interface ComputedTeamRecord {
@@ -17,13 +18,6 @@ export interface ComputedTeamRecord {
   poWins: number;
   poLosses: number;
   poTies: number;
-}
-
-/** Return the number of teams in the playoff bracket for a given season */
-function getPlayoffBracketSize(seasonNumber: number): number {
-  if (seasonNumber >= 11 && seasonNumber <= 12) return 6; // SixTeamPlayoffs (confirmed via Sleeper playoff_teams=6)
-  if (seasonNumber >= 13) return 5;                       // FiveTeamPlayoffs (confirmed via Sleeper playoff_teams=5)
-  return 4;                                               // Seasons 1-10: FourTeam / Modified
 }
 
 export const useStandingsData = (seasonId: number) => {
@@ -60,8 +54,8 @@ export const useStandingsData = (seasonId: number) => {
     },
   });
 
-  // All seasons have exactly 14 regular season weeks; playoffs start week 15.
-  const PLAYOFF_START_WEEK = 15;
+  // The season's real playoff start week (synced from Sleeper; 15 until synced).
+  const PLAYOFF_START_WEEK = getPlayoffStartWeek(seasonId);
 
   const isLoading = recordsLoading || allMatchupsLoading;
 

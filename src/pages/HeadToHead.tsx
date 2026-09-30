@@ -1,4 +1,5 @@
 
+import { getPlayoffStartWeek } from "@/utils/playoffRegistry";
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
@@ -51,7 +52,7 @@ function computeH2H(
 
   for (const m of matchups) {
     if (m.home_score == null || m.away_score == null) continue;
-    const isPlayoff = (m.week_number ?? 0) >= 15;
+    const isPlayoff = (m.week_number ?? 0) >= getPlayoffStartWeek(m.season_id ?? 0);
     if (filter === "regular" && isPlayoff) continue;
     if (filter === "playoff" && !isPlayoff) continue;
 
@@ -113,7 +114,7 @@ function buildMatrix(
   for (const mu of matchups) {
     if (mu.home_score == null || mu.away_score == null) continue;
     if (!mu.home_team_id || !mu.away_team_id) continue;
-    const isPlayoff = (mu.week_number ?? 0) >= 15;
+    const isPlayoff = (mu.week_number ?? 0) >= getPlayoffStartWeek(mu.season_id ?? 0);
     if (filter === "regular" && isPlayoff) continue;
     if (filter === "playoff" && !isPlayoff) continue;
 

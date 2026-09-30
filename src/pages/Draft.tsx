@@ -19,10 +19,10 @@ import {
 } from "@/components/ui/select";
 import { Card } from "@/components/ui/card";
 import { Link } from "react-router-dom";
-import { getAllSeasons, getSeasonLabel } from "@/utils/seasonUtils";
+import { getAllSeasons, CURRENT_SEASON_NUMBER, getSeasonLabel } from "@/utils/seasonUtils";
 
 const Draft = () => {
-  const [selectedSeason, setSelectedSeason] = useState("14");
+  const [selectedSeason, setSelectedSeason] = useState(String(CURRENT_SEASON_NUMBER));
 
   const { data: draftPicks, isLoading } = useQuery({
     queryKey: ['draft', selectedSeason],

@@ -1,4 +1,5 @@
-import { useState, useCallback, Component, type ReactNode } from 'react';
+import { useState, useCallback, useRef, Component, type ReactNode } from 'react';
+import { SEASON_COUNT, FIRST_SEASON_YEAR, CURRENT_SEASON_YEAR } from '@/utils/seasonUtils';
 import { useQueryClient } from '@tanstack/react-query';
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
@@ -38,7 +39,9 @@ import {
   repairPickDescriptions,
   clearAndResyncTrades,
   type TeamMapping,
+  type LogFn,
 } from '@/services/sleeperSync';
+import { syncPlayerStats } from '@/services/playerStatsSync';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -114,19 +117,29 @@ function PinGate({ onUnlock }: { onUnlock: () => void }) {
 
 // ─── Log entry ─────────────────────────────────────────────────────────────
 
+type LogSection = 'mapping' | 'scores' | 'drafts' | 'trades' | 'all';
+
 interface LogEntry {
   msg: string;
   level: 'info' | 'success' | 'warn' | 'error';
   ts: number;
+  section?: LogSection;
 }
 
+// Entries are tagged with the section of the action that's running, so each
+// card's log shows only its own output. `setSection` is called by run().
 function useLog() {
   const [entries, setEntries] = useState<LogEntry[]>([]);
+  const sectionRef = useRef<LogSection>('all');
+  const setSection = useCallback((section: LogSection) => { sectionRef.current = section; }, []);
   const log = useCallback((msg: string, level: LogEntry['level'] = 'info') => {
-    setEntries((prev) => [...prev, { msg, level, ts: Date.now() }]);
+    const section = sectionRef.current;
+    setEntries((prev) => [...prev, { msg, level, ts: Date.now(), section }]);
   }, []);
-  const clear = useCallback(() => setEntries([]), []);
-  return { entries, log, clear };
+  const clear = useCallback((section?: LogSection) => {
+    setEntries((prev) => (section ? prev.filter((e) => e.section !== section) : []));
+  }, []);
+  return { entries, log, clear, setSection };
 }
 
 // ─── Status badge ───────────────────────────────────────────────────────────
@@ -144,7 +157,8 @@ function LeagueBadge({ status }: { status: SleeperLeague['status'] }) {
 
 // ─── Log panel ──────────────────────────────────────────────────────────────
 
-function LogPanel({ entries, onClear }: { entries: LogEntry[]; onClear: () => void }) {
+function LogPanel({ section, entries: allEntries, onClear }: { section: LogSection; entries: LogEntry[]; onClear: (section?: LogSection) => void }) {
+  const entries = allEntries.filter((e) => e.section === section);
   const colorMap = {
     info: 'text-slate-300',
     success: 'text-emerald-400',
@@ -162,7 +176,7 @@ function LogPanel({ entries, onClear }: { entries: LogEntry[]; onClear: () => vo
     <div className="mt-4 rounded-lg border border-white/10 bg-black/30 p-3 font-mono text-xs max-h-56 overflow-y-auto">
       <div className="flex justify-between items-center mb-2">
         <span className="text-slate-500">Sync log</span>
-        <button onClick={onClear} className="text-slate-500 hover:text-slate-300 text-xs">clear</button>
+        <button onClick={() => onClear(section)} className="text-slate-500 hover:text-slate-300 text-xs">clear</button>
       </div>
       {entries.map((e, i) => (
         <div key={i} className={cn('leading-5', colorMap[e.level])}>
@@ -218,14 +232,14 @@ function SyncCard({
 
 const Admin = () => {
   const [unlocked, setUnlocked] = useState(() => localStorage.getItem(ADMIN_UNLOCK_KEY) === 'true');
-  const { entries, log, clear } = useLog();
+  const { entries, log, clear, setSection } = useLog();
   const queryClient = useQueryClient();
   const [progress, setProgress] = useState(0);
   const [running, setRunning] = useState(false);
   const [selectedLeagueId, setSelectedLeagueId] = useState<string>('');
   const [mappings, setMappings] = useState<TeamMapping[] | null>(null);
   const [mappingEdits, setMappingEdits] = useState<Record<string, number | null>>({});
-  const [statsYear, setStatsYear] = useState<string>('2025');
+  const [statsYear, setStatsYear] = useState<string>(String(CURRENT_SEASON_YEAR - 1));
   const [statsRunning, setStatsRunning] = useState(false);
   const [statsLog, setStatsLog] = useState<LogEntry[]>([]);
 
@@ -310,10 +324,11 @@ const Admin = () => {
   const selectedLeague = allLeagues?.find((l) => l.league_id === selectedLeagueId) ?? currentLeague;
 
   // ── Run helper ──
-  async function run(fn: () => Promise<void>) {
+  async function run(section: LogSection, fn: () => Promise<void>) {
     setRunning(true);
     setProgress(0);
-    clear();
+    setSection(section);
+    clear(section);
     try {
       await fn();
       // Bust the cache so all pages show fresh data immediately
@@ -328,7 +343,7 @@ const Admin = () => {
 
   // ── Team mapping ──
   async function handleLoadMappings() {
-    await run(async () => {
+    await run('mapping', async () => {
       const leagueId = selectedLeague?.league_id ?? LEAGUE_ID;
       log(`Fetching users for league ${leagueId}…`);
       const result = await buildTeamMappings(leagueId, log);
@@ -355,7 +370,7 @@ const Admin = () => {
       log('Cannot save — two or more Sleeper users are mapped to the same team. Fix the duplicates highlighted in red first.', 'error');
       return;
     }
-    await run(async () => {
+    await run('mapping', async () => {
       const updated: TeamMapping[] = mappings.map((m) => ({
         ...m,
         dbTeamId: mappingEdits[m.sleeperUserId] ?? null,
@@ -371,107 +386,92 @@ const Admin = () => {
   // ── Sync actions ──
   async function handleSyncScores() {
     if (!selectedLeague) return;
-    await run(async () => {
+    await run('scores', async () => {
       await syncScoresAndSchedules(selectedLeague, log, setProgress);
     });
   }
 
   async function handleSyncDrafts() {
     if (!selectedLeague) return;
-    await run(async () => {
+    await run('drafts', async () => {
       await syncDraftPicks(selectedLeague, log, setProgress);
     });
   }
 
   async function handleSyncTrades() {
     if (!selectedLeague) return;
-    await run(async () => {
+    await run('trades', async () => {
       await syncTrades(selectedLeague, log, setProgress);
     });
   }
 
   async function handleRepairTradeDescriptions() {
-    await run(async () => {
+    await run('trades', async () => {
       await repairTradeDescriptions(log);
     });
   }
 
   async function handleRepairPickDescriptions() {
-    await run(async () => {
+    await run('trades', async () => {
       await repairPickDescriptions(log);
     });
   }
 
   async function handleClearAndResyncTrades() {
     if (!selectedLeague) return;
-    await run(async () => {
+    await run('trades', async () => {
       await clearAndResyncTrades(selectedLeague, log, setProgress);
     });
   }
 
   async function handleSyncAll() {
     if (!selectedLeague) return;
-    await run(async () => {
+    await run('all', async () => {
       await syncAll(selectedLeague, log, (_label, p) => setProgress(p));
     });
   }
 
-  async function handleSyncPlayerStats(year?: number) {
+  async function runStats(years: number[]) {
     setStatsRunning(true);
     setStatsLog([]);
-    const yr = year ?? Number(statsYear);
-    const addLog = (msg: string, level: LogEntry['level'] = 'info') =>
+    const addLog: LogFn = (msg, level = 'info') =>
       setStatsLog((prev) => [...prev, { msg, level, ts: Date.now() }]);
     try {
-      addLog(`Syncing ${yr} player stats from Sleeper (league scoring, last week excluded)…`);
-      const { data, error } = await supabase.functions.invoke('sync-player-stats', {
-        body: { year: yr, league_id: LEAGUE_ID },
-      });
-      if (error) throw error;
-      if (data?.log) {
-        for (const line of data.log as string[]) {
-          const isErr = line.startsWith('ERROR');
-          addLog(line, isErr ? 'error' : line.startsWith('Upserted') ? 'success' : 'info');
+      for (const yr of years) {
+        const league = allLeagues?.find((l) => l.season === String(yr));
+        if (!league) {
+          addLog(`${yr}: no Sleeper league found for that season`, 'warn');
+          continue;
+        }
+        addLog(`── ${yr} ──────────────────────`);
+        try {
+          const r = await syncPlayerStats(league, addLog);
+          addLog(
+            `${yr}: ${r.total} players synced (${r.weeksFetched} weeks${r.excludedWeek ? `, wk ${r.excludedWeek} excluded` : ''})`,
+            'success',
+          );
+        } catch (err) {
+          addLog(`${yr} error: ${err instanceof Error ? err.message : String(err)}`, 'error');
         }
       }
-      if (data?.total != null) {
-        addLog(`✓ ${yr}: ${data.total} players synced (${data.weeksFetched} weeks, wk ${data.excludedWeek} excluded)`, 'success');
-      }
       await queryClient.invalidateQueries();
-    } catch (err) {
-      addLog(`Error: ${String(err)}`, 'error');
+      addLog('Player stats done.', 'success');
     } finally {
       setStatsRunning(false);
     }
   }
 
+  async function handleSyncPlayerStats(year?: number) {
+    await runStats([year ?? Number(statsYear)]);
+  }
+
   async function handleSyncAllPlayerStats() {
-    setStatsRunning(true);
-    setStatsLog([]);
-    const addLog = (msg: string, level: LogEntry['level'] = 'info') =>
-      setStatsLog((prev) => [...prev, { msg, level, ts: Date.now() }]);
-    const years = Array.from({ length: 14 }, (_, i) => 2013 + i); // 2013–2026
-    try {
-      for (const yr of years) {
-        addLog(`── ${yr} ──────────────────────`);
-        const { data, error } = await supabase.functions.invoke('sync-player-stats', {
-          body: { year: yr, league_id: LEAGUE_ID },
-        });
-        if (error) { addLog(`${yr} error: ${error.message}`, 'error'); continue; }
-        addLog(`✓ ${yr}: ${data?.total ?? '?'} players (wk ${data?.excludedWeek} excluded)`, 'success');
-      }
-      await queryClient.invalidateQueries();
-      addLog('All years synced.', 'success');
-    } catch (err) {
-      addLog(`Error: ${String(err)}`, 'error');
-    } finally {
-      setStatsRunning(false);
-    }
+    await runStats(Array.from({ length: SEASON_COUNT }, (_, i) => FIRST_SEASON_YEAR + i));
   }
 
   async function handleSyncAllSeasons() {
     if (!allLeagues) return;
-    await run(async () => {
+    await run('all', async () => {
       for (let i = 0; i < allLeagues.length; i++) {
         const league = allLeagues[i];
         await syncAll(league, log, (_label, p) =>
@@ -485,7 +485,7 @@ const Admin = () => {
   // Run this once after the draft_slot migration to fix pick slot resolution in trade history.
   async function handleResyncAllDraftsAndTrades() {
     if (!allLeagues) return;
-    await run(async () => {
+    await run('trades', async () => {
       const total = allLeagues.length * 2; // 2 passes per season
       for (let i = 0; i < allLeagues.length; i++) {
         const league = allLeagues[i];
@@ -704,7 +704,7 @@ const Admin = () => {
           </>
         )}
 
-        <LogPanel entries={entries} onClear={clear} />
+        <LogPanel section="mapping" entries={entries} onClear={clear} />
       </SyncCard>
 
       {/* Scores & Schedules */}
@@ -725,7 +725,7 @@ const Admin = () => {
             Sync {selectedLeague?.season ?? '…'}
           </Button>
         </div>
-        <LogPanel entries={entries} onClear={clear} />
+        <LogPanel section="scores" entries={entries} onClear={clear} />
       </SyncCard>
 
       {/* Draft picks */}
@@ -745,7 +745,7 @@ const Admin = () => {
           <RefreshCw className={cn('h-3 w-3 mr-1', running && 'animate-spin')} />
           Sync Drafts for {selectedLeague?.season ?? '…'}
         </Button>
-        <LogPanel entries={entries} onClear={clear} />
+        <LogPanel section="drafts" entries={entries} onClear={clear} />
       </SyncCard>
 
       {/* Trades */}
@@ -811,7 +811,7 @@ const Admin = () => {
             Rebuild All Draft Slots + Trades (All Seasons)
           </Button>
         </div>
-        <LogPanel entries={entries} onClear={clear} />
+        <LogPanel section="trades" entries={entries} onClear={clear} />
       </SyncCard>
 
       {/* Player Stats */}
@@ -827,7 +827,7 @@ const Admin = () => {
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {Array.from({ length: 14 }, (_, i) => String(2026 - i)).map((yr) => (
+              {Array.from({ length: SEASON_COUNT }, (_, i) => String(CURRENT_SEASON_YEAR - i)).map((yr) => (
                 <SelectItem key={yr} value={yr}>{yr}</SelectItem>
               ))}
             </SelectContent>
@@ -849,7 +849,7 @@ const Admin = () => {
             className="border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10"
           >
             <Zap className={cn('h-3 w-3 mr-1', statsRunning && 'animate-spin')} />
-            Sync All Years (2013–2026)
+            Sync All Years ({FIRST_SEASON_YEAR}–{CURRENT_SEASON_YEAR})
           </Button>
         </div>
         {statsLog.length > 0 && (
@@ -986,7 +986,7 @@ const Admin = () => {
       </Card>
 
       {/* Global log */}
-      <LogPanel entries={entries} onClear={clear} />
+      <LogPanel section="all" entries={entries} onClear={clear} />
     </div>
     </ErrorBoundary>
   );

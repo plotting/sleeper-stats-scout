@@ -1,4 +1,4 @@
-import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
+import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import Navigation from "./components/Navigation";
@@ -12,7 +12,7 @@ import Records from "./pages/Records";
 import WeeklyRecords from "./pages/WeeklyRecords";
 import Admin from "./pages/Admin";
 import Analytics from "./pages/Analytics";
-import Season14 from "./pages/Season14";
+import CurrentSeason from "./pages/CurrentSeason";
 import Recaps from "./pages/Recaps";
 import Rookies from "./pages/Rookies";
 import DraftGrades from "./pages/DraftGrades";
@@ -20,6 +20,7 @@ import DynastyDigest from "./pages/DynastyDigest";
 import GMScouting from "./pages/GMScouting";
 import Hall from "./pages/Hall";
 import NotFound from "./pages/NotFound";
+import PlayoffConfigProvider from "./components/PlayoffConfigProvider";
 import "./App.css";
 
 // Create a client
@@ -35,6 +36,7 @@ const queryClient = new QueryClient({
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
+      <PlayoffConfigProvider>
       <TooltipProvider>
       <Router>
         <div className="min-h-screen bg-background">
@@ -56,7 +58,8 @@ function App() {
               <Route path="/dynasty-digest" element={<DynastyDigest />} />
               <Route path="/gm-scouting" element={<GMScouting />} />
               <Route path="/hall" element={<Hall />} />
-              <Route path="/season14" element={<Season14 />} />
+              <Route path="/current-season" element={<CurrentSeason />} />
+              <Route path="/season14" element={<Navigate to="/current-season" replace />} />
               <Route path="/admin" element={<Admin />} />
               <Route path="*" element={<NotFound />} />
             </Routes>
@@ -64,6 +67,7 @@ function App() {
         </div>
       </Router>
       </TooltipProvider>
+      </PlayoffConfigProvider>
     </QueryClientProvider>
   );
 }

@@ -122,6 +122,39 @@ export type Database = {
           },
         ]
       }
+      player_seasons: {
+        Row: {
+          games_played: number
+          id: number
+          player_name: string
+          position: string
+          ppg: number | null
+          synced_at: string
+          total_points: number
+          year: number
+        }
+        Insert: {
+          games_played: number
+          id?: number
+          player_name: string
+          position: string
+          ppg?: number | null
+          synced_at?: string
+          total_points: number
+          year: number
+        }
+        Update: {
+          games_played?: number
+          id?: number
+          player_name?: string
+          position?: string
+          ppg?: number | null
+          synced_at?: string
+          total_points?: number
+          year?: number
+        }
+        Relationships: []
+      }
       schedules: {
         Row: {
           away_team_id: number | null
@@ -221,6 +254,39 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      season_playoffs: {
+        Row: {
+          league_id: string
+          losers: Json
+          playoff_teams: number
+          playoff_week_start: number
+          round_type: number
+          season_id: number
+          synced_at: string
+          winners: Json
+        }
+        Insert: {
+          league_id: string
+          losers?: Json
+          playoff_teams?: number
+          playoff_week_start?: number
+          round_type?: number
+          season_id: number
+          synced_at?: string
+          winners?: Json
+        }
+        Update: {
+          league_id?: string
+          losers?: Json
+          playoff_teams?: number
+          playoff_week_start?: number
+          round_type?: number
+          season_id?: number
+          synced_at?: string
+          winners?: Json
+        }
+        Relationships: []
       }
       seasons: {
         Row: {

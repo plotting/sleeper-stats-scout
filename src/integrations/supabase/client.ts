@@ -9,4 +9,21 @@ const SUPABASE_PUBLISHABLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiO
 // Import the supabase client like this:
 // import { supabase } from "@/integrations/supabase/client";
 
-export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
+// Long syncs fire hundreds of requests; a dropped connection surfaces as
+// "TypeError: Failed to fetch". Retry those network-level failures a few times
+// with backoff before giving up. (HTTP error responses are never retried.)
+const fetchWithRetry: typeof fetch = async (input, init) => {
+  const delays = [400, 1200, 3000];
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fetch(input, init);
+    } catch (err) {
+      if (attempt >= delays.length || init?.signal?.aborted) throw err;
+      await new Promise((r) => setTimeout(r, delays[attempt]));
+    }
+  }
+};
+
+export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
+  global: { fetch: fetchWithRetry },
+});

@@ -1,0 +1,38 @@
+name: Scheduled stat sync
+
+# Sleeper and the NFL post stat corrections after Monday night's game, and the
+# league's next week doesn't start until Thursday. Re-pull the current
+# season's scores and player stats every 4 hours from Tuesday through
+# Thursday (UTC; the first Tuesday run lands just after Monday night ends).
+# The script exits early when the league isn't in season.
+on:
+  schedule:
+    - cron: '15 */4 * * 2-4'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Run even if the league is not in season'
+        type: boolean
+        default: false
+
+concurrency:
+  group: scheduled-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npx tsx scripts/scheduled-sync.ts
+        env:
+          TSX_TSCONFIG_PATH: tsconfig.app.json
+          FORCE: ${{ inputs.force && '1' || '' }}
+          # Only needed once database writes are locked down to signed-in users:
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}

@@ -19,7 +19,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { getAllSeasons } from "@/utils/seasonUtils";
+import { getAllSeasons, CURRENT_SEASON_NUMBER, FIRST_SEASON_YEAR } from "@/utils/seasonUtils";
 import { format } from "date-fns";
 import TradeAssetModal from "@/components/TradeAssetModal";
 import { ChevronDown, ChevronRight } from "lucide-react";
@@ -235,7 +235,7 @@ function resolveDSTFullName(itemDesc: string): string | null {
 }
 
 const Trades = () => {
-  const [selectedSeason, setSelectedSeason] = useState("14");
+  const [selectedSeason, setSelectedSeason] = useState(String(CURRENT_SEASON_NUMBER));
   const [selectedAsset, setSelectedAsset] = useState<string | null>(null);
   const [assetModalOpen, setAssetModalOpen] = useState(false);
   const [showVorp, setShowVorp] = useState(false);
@@ -400,7 +400,7 @@ const Trades = () => {
     queryKey: ["draft-pick-lookups", unresolvedPastPickKeys],
     queryFn: async () => {
       if (!unresolvedPastPickKeys.length) return [] as DraftPickLookupRow[];
-      const seasonNumbers = [...new Set(unresolvedPastPickKeys.map(k => k.year - 2012))];
+      const seasonNumbers = [...new Set(unresolvedPastPickKeys.map(k => k.year - (FIRST_SEASON_YEAR - 1)))];
       const rounds = [...new Set(unresolvedPastPickKeys.map(k => k.round))];
       const draftSlots = [...new Set(unresolvedPastPickKeys.map(k => k.futId))];
       const { data, error } = await supabase
@@ -484,7 +484,7 @@ const Trades = () => {
   // draft_slot = futId from [fut:N] description = Sleeper roster_id of original pick owner.
   const draftPickByFutKey = new Map<string, DraftPickLookupRow[]>();
   for (const dp of draftPickLookups ?? []) {
-    const year = dp.season_number + 2012;
+    const year = dp.season_number + FIRST_SEASON_YEAR - 1;
     const key = `${year}-${dp.round}-${dp.draft_slot}`;
     if (!draftPickByFutKey.has(key)) draftPickByFutKey.set(key, []);
     draftPickByFutKey.get(key)!.push(dp);
