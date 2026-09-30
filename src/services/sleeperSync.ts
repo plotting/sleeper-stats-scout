@@ -403,6 +403,7 @@ export async function syncDraftPicks(
             team_id: teamId,
             player_name: playerName,
             draft_slot: originalRosterId,
+            position: p.metadata?.position ?? null,
           };
         })
         .filter(Boolean) as {
@@ -412,6 +413,7 @@ export async function syncDraftPicks(
         team_id: number;
         player_name: string;
         draft_slot: number;
+        position: string | null;
       }[];
 
       if (rows.length) {

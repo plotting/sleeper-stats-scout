@@ -122,6 +122,42 @@ export type Database = {
           },
         ]
       }
+      player_vorp: {
+        Row: {
+          games_played: number
+          player_name: string
+          position: string
+          season_rank: number
+          sleeper_player_id: string
+          total_points: number
+          updated_at: string
+          vorp: number
+          year: number
+        }
+        Insert: {
+          games_played: number
+          player_name: string
+          position: string
+          season_rank: number
+          sleeper_player_id: string
+          total_points: number
+          updated_at?: string
+          vorp: number
+          year: number
+        }
+        Update: {
+          games_played?: number
+          player_name?: string
+          position?: string
+          season_rank?: number
+          sleeper_player_id?: string
+          total_points?: number
+          updated_at?: string
+          vorp?: number
+          year?: number
+        }
+        Relationships: []
+      }
       schedules: {
         Row: {
           away_team_id: number | null

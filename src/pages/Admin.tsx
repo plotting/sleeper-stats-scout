@@ -39,7 +39,9 @@ import {
   repairPickDescriptions,
   clearAndResyncTrades,
   type TeamMapping,
+  type LogFn,
 } from '@/services/sleeperSync';
+import { syncPlayerStats } from '@/services/playerStatsSync';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -237,7 +239,7 @@ const Admin = () => {
   const [selectedLeagueId, setSelectedLeagueId] = useState<string>('');
   const [mappings, setMappings] = useState<TeamMapping[] | null>(null);
   const [mappingEdits, setMappingEdits] = useState<Record<string, number | null>>({});
-  const [statsYear, setStatsYear] = useState<string>('2025');
+  const [statsYear, setStatsYear] = useState<string>(String(CURRENT_SEASON_YEAR - 1));
   const [statsRunning, setStatsRunning] = useState(false);
   const [statsLog, setStatsLog] = useState<LogEntry[]>([]);
 
@@ -429,57 +431,42 @@ const Admin = () => {
     });
   }
 
-  async function handleSyncPlayerStats(year?: number) {
+  async function runStats(years: number[]) {
     setStatsRunning(true);
     setStatsLog([]);
-    const yr = year ?? Number(statsYear);
-    const addLog = (msg: string, level: LogEntry['level'] = 'info') =>
+    const addLog: LogFn = (msg, level = 'info') =>
       setStatsLog((prev) => [...prev, { msg, level, ts: Date.now() }]);
     try {
-      addLog(`Syncing ${yr} player stats from Sleeper (league scoring, last week excluded)…`);
-      const { data, error } = await supabase.functions.invoke('sync-player-stats', {
-        body: { year: yr, league_id: LEAGUE_ID },
-      });
-      if (error) throw error;
-      if (data?.log) {
-        for (const line of data.log as string[]) {
-          const isErr = line.startsWith('ERROR');
-          addLog(line, isErr ? 'error' : line.startsWith('Upserted') ? 'success' : 'info');
+      for (const yr of years) {
+        const league = allLeagues?.find((l) => l.season === String(yr));
+        if (!league) {
+          addLog(`${yr}: no Sleeper league found for that season`, 'warn');
+          continue;
+        }
+        addLog(`── ${yr} ──────────────────────`);
+        try {
+          const r = await syncPlayerStats(league, addLog);
+          addLog(
+            `${yr}: ${r.total} players synced (${r.weeksFetched} weeks${r.excludedWeek ? `, wk ${r.excludedWeek} excluded` : ''})`,
+            'success',
+          );
+        } catch (err) {
+          addLog(`${yr} error: ${err instanceof Error ? err.message : String(err)}`, 'error');
         }
       }
-      if (data?.total != null) {
-        addLog(`✓ ${yr}: ${data.total} players synced (${data.weeksFetched} weeks, wk ${data.excludedWeek} excluded)`, 'success');
-      }
       await queryClient.invalidateQueries();
-    } catch (err) {
-      addLog(`Error: ${String(err)}`, 'error');
+      addLog('Player stats done.', 'success');
     } finally {
       setStatsRunning(false);
     }
   }
 
+  async function handleSyncPlayerStats(year?: number) {
+    await runStats([year ?? Number(statsYear)]);
+  }
+
   async function handleSyncAllPlayerStats() {
-    setStatsRunning(true);
-    setStatsLog([]);
-    const addLog = (msg: string, level: LogEntry['level'] = 'info') =>
-      setStatsLog((prev) => [...prev, { msg, level, ts: Date.now() }]);
-    const years = Array.from({ length: SEASON_COUNT }, (_, i) => FIRST_SEASON_YEAR + i);
-    try {
-      for (const yr of years) {
-        addLog(`── ${yr} ──────────────────────`);
-        const { data, error } = await supabase.functions.invoke('sync-player-stats', {
-          body: { year: yr, league_id: LEAGUE_ID },
-        });
-        if (error) { addLog(`${yr} error: ${error.message}`, 'error'); continue; }
-        addLog(`✓ ${yr}: ${data?.total ?? '?'} players (wk ${data?.excludedWeek} excluded)`, 'success');
-      }
-      await queryClient.invalidateQueries();
-      addLog('All years synced.', 'success');
-    } catch (err) {
-      addLog(`Error: ${String(err)}`, 'error');
-    } finally {
-      setStatsRunning(false);
-    }
+    await runStats(Array.from({ length: SEASON_COUNT }, (_, i) => FIRST_SEASON_YEAR + i));
   }
 
   async function handleSyncAllSeasons() {

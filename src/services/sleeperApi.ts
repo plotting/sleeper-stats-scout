@@ -20,6 +20,8 @@ export interface SleeperLeague {
   total_rosters: number;
   /** Starting lineup slots in order, e.g. ["QB","RB","RB","WR","WR","TE","FLEX","DEF","BN",...] */
   roster_positions: string[];
+  /** Fantasy points per stat, e.g. { pass_yd: 0.04, rec: 1, rush_td: 6 } */
+  scoring_settings?: Record<string, number>;
 }
 
 export interface SleeperUser {
@@ -152,6 +154,46 @@ export async function lookupPlayerNames(playerIds: string[]): Promise<Map<string
     return [id, `Player ${id}`];
   }));
 }
+
+// ─── Fantasy-relevant player cache (QB/RB/WR/TE) ────────────────────────────
+
+export type FantasyPosition = 'QB' | 'RB' | 'WR' | 'TE';
+export interface FantasyPlayer { name: string; position: FantasyPosition }
+
+const FANTASY_CACHE_KEY = 'sleeper_fantasy_players_v1';
+let _fantasyPlayers: Map<string, FantasyPlayer> | null = null;
+
+/** Sleeper player_id → { name, position } for QB/RB/WR/TE (cached 7 days). */
+export async function getFantasyPlayers(): Promise<Map<string, FantasyPlayer>> {
+  if (_fantasyPlayers) return _fantasyPlayers;
+  try {
+    const raw = localStorage.getItem(FANTASY_CACHE_KEY);
+    if (raw) {
+      const { timestamp, data } = JSON.parse(raw);
+      if (Date.now() - timestamp < PLAYER_CACHE_TTL_MS) {
+        _fantasyPlayers = new Map(Object.entries(data as Record<string, FantasyPlayer>));
+        return _fantasyPlayers;
+      }
+    }
+  } catch { /* ignore */ }
+
+  const all = await get<Record<string, { full_name?: string; first_name?: string; last_name?: string; position?: string }>>('/players/nfl');
+  const out: Record<string, FantasyPlayer> = {};
+  for (const [id, p] of Object.entries(all)) {
+    if (p.position !== 'QB' && p.position !== 'RB' && p.position !== 'WR' && p.position !== 'TE') continue;
+    const name = p.full_name || [p.first_name, p.last_name].filter(Boolean).join(' ');
+    if (name) out[id] = { name, position: p.position };
+  }
+  try {
+    localStorage.setItem(FANTASY_CACHE_KEY, JSON.stringify({ timestamp: Date.now(), data: out }));
+  } catch { /* storage quota */ }
+  _fantasyPlayers = new Map(Object.entries(out));
+  return _fantasyPlayers;
+}
+
+/** Raw weekly stat lines for every player: player_id → { stat_key: value }. */
+export const fetchWeekStats = (season: string | number, week: number) =>
+  get<Record<string, Record<string, number>> | null>(`/stats/nfl/regular/${season}/${week}`);
 
 // ─── Fetch helpers ─────────────────────────────────────────────────────────
 
