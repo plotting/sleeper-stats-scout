@@ -255,6 +255,39 @@ export type Database = {
           },
         ]
       }
+      season_playoffs: {
+        Row: {
+          league_id: string
+          losers: Json
+          playoff_teams: number
+          playoff_week_start: number
+          round_type: number
+          season_id: number
+          synced_at: string
+          winners: Json
+        }
+        Insert: {
+          league_id: string
+          losers?: Json
+          playoff_teams?: number
+          playoff_week_start?: number
+          round_type?: number
+          season_id: number
+          synced_at?: string
+          winners?: Json
+        }
+        Update: {
+          league_id?: string
+          losers?: Json
+          playoff_teams?: number
+          playoff_week_start?: number
+          round_type?: number
+          season_id?: number
+          synced_at?: string
+          winners?: Json
+        }
+        Relationships: []
+      }
       seasons: {
         Row: {
           created_at: string

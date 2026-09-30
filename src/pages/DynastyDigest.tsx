@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { getPlayoffStartWeek } from "@/utils/playoffRegistry";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent } from "@/components/ui/card";
@@ -484,7 +485,7 @@ const DynastyDigest = () => {
     const seen = new Set<string>();
     const scores: number[] = [];
     for (const m of allMatchups) {
-      if (m.season_id !== seasonId || m.is_playoff || (m.week_number ?? 0) >= 15) continue;
+      if (m.season_id !== seasonId || m.is_playoff || (m.week_number ?? 0) >= getPlayoffStartWeek(seasonId)) continue;
       if (m.home_team_id == null || m.away_team_id == null || m.week_number == null) continue;
       const key = `${m.week_number}-${Math.min(m.home_team_id, m.away_team_id)}-${Math.max(m.home_team_id, m.away_team_id)}`;
       if (seen.has(key)) continue;

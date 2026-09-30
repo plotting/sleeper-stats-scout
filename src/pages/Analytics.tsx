@@ -20,6 +20,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { getAllSeasons, getSeasonYear } from "@/utils/seasonUtils";
+import { getPlayoffBracketSize, getPlayoffStartWeek } from "@/utils/playoffRegistry";
 import type { MatchupScoresView } from "@/types/database";
 import { getTeamFinalPlacements } from "@/components/playoff-bracket/utils/placementUtils";
 import { cn } from "@/lib/utils";
@@ -1863,8 +1864,9 @@ function computeParallelUniverse(
   for (const sid of seasonIds) {
     const seasonMatchups = allMatchups.filter(m => m.season_id === sid);
     // week_number is the reliable indicator; is_playoff/is_consolation flags are unreliable in DB
-    const regular  = seasonMatchups.filter(m => (m.week_number ?? 0) < 15);
-    const playoffs = seasonMatchups.filter(m => (m.week_number ?? 0) >= 15);
+    const playoffStart = getPlayoffStartWeek(sid);
+    const regular  = seasonMatchups.filter(m => (m.week_number ?? 0) < playoffStart);
+    const playoffs = seasonMatchups.filter(m => (m.week_number ?? 0) >= playoffStart);
     if (regular.length === 0) continue;
 
     type TS = { name: string; scores: number[]; actualWins: number; actualPF: number; apWins: number; apTotal: number };
@@ -2267,13 +2269,6 @@ interface CareerPowerRow {
   avgPlace: number;           // avg actual placement (1 = best) across seasons
   powerScore: number;
   rank: number;
-}
-
-/** Actual bracket size by season number (DB id matches season_number 1:1) */
-function getPlayoffBracketSize(seasonId: number): number {
-  if (seasonId >= 11 && seasonId <= 12) return 6;
-  if (seasonId >= 13) return 5;
-  return 4; // Seasons 1–10
 }
 
 /** Non-linear finish points: winning matters much more than just participating */

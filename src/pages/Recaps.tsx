@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getTeamFinalPlacements } from "@/components/playoff-bracket/utils/placementUtils";
 import { getSeasonYear } from "@/utils/seasonUtils";
+import { getPlayoffBracketSize, getPlayoffStartWeek } from "@/utils/playoffRegistry";
 import type { MatchupScoresView } from "@/types/database";
 import {
   Trophy,
@@ -22,15 +23,6 @@ import {
 function fmt(n: number, decimals = 1): string {
   return n.toFixed(decimals);
 }
-
-/** Number of teams in the real playoff bracket for a given season number */
-function getPlayoffBracketSize(seasonNumber: number): number {
-  if (seasonNumber >= 11 && seasonNumber <= 12) return 6;
-  if (seasonNumber >= 13) return 5;
-  return 4;
-}
-
-const PLAYOFF_START_WEEK = 15;
 
 // ─── Per-season stats ─────────────────────────────────────────────────────────
 
@@ -54,6 +46,7 @@ export function computeSeasonStats(
   matchups: MatchupScoresView[]
 ): SeasonStats {
   const seasonMatchups = matchups.filter((m) => m.season_id === seasonId);
+  const PLAYOFF_START_WEEK = getPlayoffStartWeek(seasonId);
   const regMatchups = seasonMatchups.filter(
     (m) => m.week_number != null && m.week_number < PLAYOFF_START_WEEK
   );
@@ -113,7 +106,7 @@ export function computeSeasonStats(
   }
 
   // ── Build bracketTeamIds (top N by reg-season record) ──────────────────────
-  const bracketSize = getPlayoffBracketSize(seasonNumber);
+  const bracketSize = getPlayoffBracketSize(seasonId);
   const sortedTeams = [...teamAgg.values()].sort((a, b) => {
     const aTotal = a.wins + a.losses + a.ties;
     const bTotal = b.wins + b.losses + b.ties;
@@ -134,7 +127,7 @@ export function computeSeasonStats(
     playoffMatchups,
     bracketTeamIds.size > 0 ? bracketTeamIds : undefined,
     teamSeeds,
-    seasonNumber
+    seasonId
   );
 
   const findByPlace = (place: number): string | null => {
@@ -535,7 +528,7 @@ const Recaps = () => {
       <header className="mb-8">
         <h1 className="text-4xl font-bold text-white mb-2">Season Recaps</h1>
         <p className="text-slate-400">
-          Key stats and highlights from every completed season (2013–2025).
+          Key stats and highlights from every completed season.
         </p>
       </header>
 

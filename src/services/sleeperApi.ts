@@ -1,3 +1,5 @@
+import type { SleeperBracketMatch } from '@/utils/playoffBracket';
+
 const BASE = 'https://api.sleeper.app/v1';
 
 export const LEAGUE_ID = '1319742366797545472';
@@ -13,6 +15,8 @@ export interface SleeperLeague {
   settings: {
     playoff_week_start: number;
     playoff_teams: number;
+    /** 0 one week per round, 1 two-week championship, 2 two weeks per round */
+    playoff_round_type?: number;
     num_teams: number;
     leg: number; // current NFL week
     last_scored_leg: number;
@@ -224,6 +228,12 @@ export const fetchDraft = (draftId: string) =>
 
 export const fetchDraftPicks = (draftId: string) =>
   get<SleeperDraftPick[]>(`/draft/${draftId}/picks`);
+
+/** Sleeper's own playoff bracket (byes, placement games and results included). */
+export const fetchWinnersBracket = (id: string) =>
+  get<SleeperBracketMatch[]>(`/league/${id}/winners_bracket`);
+export const fetchLosersBracket = (id: string) =>
+  get<SleeperBracketMatch[]>(`/league/${id}/losers_bracket`);
 
 export const fetchTransactions = (id: string, week: number) =>
   get<SleeperTransaction[]>(`/league/${id}/transactions/${week}`);

@@ -20,6 +20,7 @@ import DynastyDigest from "./pages/DynastyDigest";
 import GMScouting from "./pages/GMScouting";
 import Hall from "./pages/Hall";
 import NotFound from "./pages/NotFound";
+import PlayoffConfigProvider from "./components/PlayoffConfigProvider";
 import "./App.css";
 
 // Create a client
@@ -35,6 +36,7 @@ const queryClient = new QueryClient({
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
+      <PlayoffConfigProvider>
       <TooltipProvider>
       <Router>
         <div className="min-h-screen bg-background">
@@ -65,6 +67,7 @@ function App() {
         </div>
       </Router>
       </TooltipProvider>
+      </PlayoffConfigProvider>
     </QueryClientProvider>
   );
 }

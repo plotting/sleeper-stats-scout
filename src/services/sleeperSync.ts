@@ -1,4 +1,5 @@
 import { supabase } from '@/integrations/supabase/client';
+import { normalizeBracket } from '@/utils/playoffBracket';
 import {
   fetchLeagueUsers,
   fetchLeagueRosters,
@@ -7,6 +8,8 @@ import {
   fetchDraft,
   fetchDraftPicks,
   fetchTransactions,
+  fetchWinnersBracket,
+  fetchLosersBracket,
   buildRosterOwnerMap,
   lookupPlayerNames,
   type SleeperLeague,
@@ -146,6 +149,52 @@ async function findSeasonId(year: number): Promise<number | null> {
     .eq('year', year)
     .single();
   return data?.id ?? null;
+}
+
+// ─── Playoff bracket ────────────────────────────────────────────────────────
+// Stores Sleeper's own bracket for the season (with roster ids translated to
+// team ids) plus the playoff settings, so the app never has to guess a
+// league's playoff format.
+
+export async function syncPlayoffBracket(
+  league: SleeperLeague,
+  rosterMap: Map<number, number>,
+  seasonId: number,
+  log: LogFn,
+): Promise<void> {
+  const [winnersRaw, losersRaw] = await Promise.all([
+    fetchWinnersBracket(league.league_id).catch(() => []),
+    fetchLosersBracket(league.league_id).catch(() => []),
+  ]);
+  const winners = normalizeBracket(winnersRaw, rosterMap);
+  const losers = normalizeBracket(losersRaw, rosterMap);
+  if (winners.length === 0) {
+    log(`${league.season}: Sleeper has no playoff bracket yet`, 'info');
+  }
+
+  const unmapped = [...winnersRaw, ...losersRaw].filter(
+    (m) => (m.t1 != null && !rosterMap.has(m.t1)) || (m.t2 != null && !rosterMap.has(m.t2)),
+  ).length;
+  if (unmapped > 0) log(`${league.season}: ${unmapped} bracket matches include rosters with no mapped team`, 'warn');
+
+  const { error } = await supabase.from('season_playoffs').upsert(
+    {
+      season_id: seasonId,
+      league_id: league.league_id,
+      playoff_week_start: league.settings.playoff_week_start || 15,
+      playoff_teams: league.settings.playoff_teams || 0,
+      round_type: league.settings.playoff_round_type ?? 0,
+      winners: winners as unknown as never,
+      losers: losers as unknown as never,
+      synced_at: new Date().toISOString(),
+    },
+    { onConflict: 'season_id' },
+  );
+  if (error) {
+    log(`Could not save playoff bracket (${error.message}). Run supabase/migrations/20260930000003_season_playoffs.sql.`, 'warn');
+    return;
+  }
+  log(`Saved ${league.season} playoff bracket (${winners.length} winners-bracket games, ${losers.length} consolation games)`, 'success');
 }
 
 // ─── Scores & Schedules ─────────────────────────────────────────────────────
@@ -295,6 +344,12 @@ export async function syncScoresAndSchedules(
     }
 
     onProgress?.((week / totalWeeks) * 100);
+  }
+
+  try {
+    await syncPlayoffBracket(league, rosterMap, seasonId, log);
+  } catch (err) {
+    log(`Playoff bracket sync failed: ${err instanceof Error ? err.message : String(err)}`, 'warn');
   }
 
   log(`Scores & schedules sync complete for ${year}`, 'success');

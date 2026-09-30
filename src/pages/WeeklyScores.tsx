@@ -1,6 +1,5 @@
 
 import { useState } from "react";
-import { CURRENT_SEASON_NUMBER } from "@/utils/seasonUtils";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import type { MatchupScoresView, TeamRecordsView } from "@/types/database";
@@ -9,11 +8,15 @@ import WeeklyScoresTable from "@/components/weekly-scores/WeeklyScoresTable";
 import WLHeatmapCard from "@/components/weekly-scores/WLHeatmapCard";
 import ScheduleTable from "@/components/weekly-scores/ScheduleTable";
 
+import { CURRENT_SEASON_NUMBER } from "@/utils/seasonUtils";
+import { getPlayoffStartWeek } from "@/utils/playoffRegistry";
 const WeeklyScores = () => {
   const [selectedSeason, setSelectedSeason] = useState(String(CURRENT_SEASON_NUMBER));
 
-  const weekCount = parseInt(selectedSeason) <= 10 ? 16 : 17;
-  const regularSeasonWeeks = 14;
+  const playoffStartWeek = getPlayoffStartWeek(parseInt(selectedSeason));
+  const regularSeasonWeeks = playoffStartWeek - 1;
+  // Regular season + up to three playoff weeks (no fewer than 17 shown).
+  const weekCount = Math.max(17, playoffStartWeek + 3);
 
   const { data: teams } = useQuery({
     queryKey: ["teams"],

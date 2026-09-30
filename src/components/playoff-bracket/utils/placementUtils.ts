@@ -1,5 +1,6 @@
 
 import { MatchupScoresView } from "@/types/database";
+import { getBracketPlacements } from "@/utils/playoffRegistry";
 
 const assignGame = (
   game: MatchupScoresView | undefined,
@@ -31,8 +32,14 @@ export const getTeamFinalPlacements = (
   playoffMatchups: MatchupScoresView[],
   bracketTeamIds?: Set<number>,
   teamSeeds?: Map<number, number>,
-  seasonNumber?: number
+  seasonId?: number
 ): Map<number, number> => {
+  // A synced Sleeper bracket is authoritative: it already knows the league's
+  // format, byes and placement games. The heuristics below only run for
+  // seasons whose bracket hasn't been synced yet.
+  const synced = seasonId != null ? getBracketPlacements(seasonId) : undefined;
+  if (synced) return synced;
+
   // Schedule rows for future playoff weeks exist with null scores as soon as
   // the season's schedule is generated, long before those games are played.
   // Without this filter, the mop-up pass below (which fills in placements
