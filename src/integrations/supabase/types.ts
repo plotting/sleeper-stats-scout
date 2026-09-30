@@ -138,7 +138,6 @@ export type Database = {
           id?: number
           player_name: string
           position: string
-          ppg?: number | null
           synced_at?: string
           total_points: number
           year: number
@@ -148,7 +147,6 @@ export type Database = {
           id?: number
           player_name?: string
           position?: string
-          ppg?: number | null
           synced_at?: string
           total_points?: number
           year?: number
