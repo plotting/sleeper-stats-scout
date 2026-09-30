@@ -2,6 +2,7 @@ import { Link } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import type { MatchupScoresView } from "@/types/database";
 import {
+  losersPlaceOffset,
   ordinal,
   roundLabel,
   roundWeeks,
@@ -44,19 +45,20 @@ function slotLabel(from: { w?: number; l?: number } | undefined): string {
 }
 
 function MatchCard({
-  match, weeks, scores, teamNames, teamSeeds, seasonId,
+  match, weeks, scores, teamNames, teamSeeds, seasonId, placeOffset,
 }: {
   match: PlayoffMatch; weeks: number[]; scores: Scores | null;
   teamNames: Map<number, string>; teamSeeds: Map<number, number>; seasonId: number;
+  placeOffset: number;
 }) {
-  const rows: Array<{ id: number | null; from?: { w?: number; l?: number } }> = [
-    { id: match.t1, from: match.t1_from },
-    { id: match.t2, from: match.t2_from },
+  const rows: Array<{ id: number | null; from?: { w?: number; l?: number }; roster?: number }> = [
+    { id: match.t1, from: match.t1_from, roster: match.t1_roster },
+    { id: match.t2, from: match.t2_from, roster: match.t2_roster },
   ];
   return (
     <div className="rounded-lg border border-white/10 bg-white/[0.03] overflow-hidden">
       <div className="flex items-center justify-between px-3 py-1 text-[10px] uppercase tracking-wide text-slate-500 border-b border-white/5">
-        <span>{match.p != null ? `${ordinal(match.p)} place game` : `Game ${match.m}`}</span>
+        <span>{match.p != null ? `${ordinal(match.p + placeOffset)} place game` : `Game ${match.m}`}</span>
         <span>Wk {weeks.join("–")}</span>
       </div>
       {rows.map((row, i) => {
@@ -83,7 +85,12 @@ function MatchCard({
                   {teamNames.get(row.id) ?? `Team ${row.id}`}
                 </Link>
               ) : (
-                <span className="truncate text-slate-500 italic">{slotLabel(row.from)}</span>
+                <span
+                  className={cn("truncate italic", row.roster != null ? "text-amber-400/80" : "text-slate-500")}
+                  title={row.roster != null ? "This Sleeper roster isn't mapped to a team for this season — fix it in Admin → Team Mapping and re-sync scores." : undefined}
+                >
+                  {row.roster != null ? `Unmapped team (roster ${row.roster})` : slotLabel(row.from)}
+                </span>
               )}
             </div>
             <span className={cn("font-mono text-xs", won ? "text-emerald-300 font-semibold" : "text-slate-500")}>
@@ -97,8 +104,8 @@ function MatchCard({
 }
 
 function BracketColumns({
-  title, matches, config, matchups, teamNames, teamSeeds, seasonId,
-}: Props & { title: string; matches: PlayoffMatch[] }) {
+  title, matches, config, matchups, teamNames, teamSeeds, seasonId, placeOffset,
+}: Props & { title: string; matches: PlayoffMatch[]; placeOffset: number }) {
   if (matches.length === 0) return null;
   const rounds = [...new Set(matches.map((m) => m.r))].sort((a, b) => a - b);
   const total = Math.max(...rounds);
@@ -126,6 +133,7 @@ function BracketColumns({
                     teamNames={teamNames}
                     teamSeeds={teamSeeds}
                     seasonId={seasonId}
+                    placeOffset={placeOffset}
                   />
                 ))}
             </div>
@@ -139,8 +147,13 @@ function BracketColumns({
 /** Renders whatever bracket Sleeper published for the season — any size or format. */
 const BracketView = (props: Props) => (
   <div className="space-y-8">
-    <BracketColumns {...props} title="Playoff Bracket" matches={props.config.winners} />
-    <BracketColumns {...props} title="Consolation Bracket" matches={props.config.losers} />
+    <BracketColumns {...props} title="Playoff Bracket" matches={props.config.winners} placeOffset={0} />
+    <BracketColumns
+      {...props}
+      title="Consolation Bracket"
+      matches={props.config.losers}
+      placeOffset={losersPlaceOffset(props.config.winners, props.config.losers)}
+    />
   </div>
 );
 

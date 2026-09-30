@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  normalizeBracket, bracketByes, computePlacements, roundWeeks, roundLabel, type SleeperBracketMatch,
+  normalizeBracket, bracketByes, computePlacements, roundWeeks, roundLabel, losersPlaceOffset, type SleeperBracketMatch,
 } from '../src/utils/playoffBracket';
 
 const identity = new Map(Array.from({ length: 14 }, (_, i) => [i + 1, i + 101]));
@@ -70,4 +70,20 @@ test('round labels count back from the final', () => {
   assert.equal(roundLabel(2, 3), 'Semifinals');
   assert.equal(roundLabel(1, 3), 'Quarterfinals');
   assert.equal(roundLabel(1, 4), 'Round 1');
+});
+
+test('losers-bracket place offset follows the winners-bracket size', () => {
+  const rel: SleeperBracketMatch[] = [{ r: 1, m: 1, t1: 7, t2: 8, w: 7, l: 8, p: 1 }];
+  const abs: SleeperBracketMatch[] = [{ r: 1, m: 1, t1: 7, t2: 8, w: 7, l: 8, p: 7 }];
+  const w = normalizeBracket(winners, identity);
+  assert.equal(losersPlaceOffset(w, normalizeBracket(rel, identity)), 6);
+  assert.equal(losersPlaceOffset(w, normalizeBracket(abs, identity)), 0);
+});
+
+test('rosters without a mapped team keep their roster id', () => {
+  const partial = new Map([[1, 101]]);
+  const m = normalizeBracket([{ r: 1, m: 1, t1: 1, t2: 2, w: null, l: null }], partial);
+  assert.equal(m[0].t2, null);
+  assert.equal(m[0].t2_roster, 2);
+  assert.equal(m[0].t1_roster, undefined);
 });

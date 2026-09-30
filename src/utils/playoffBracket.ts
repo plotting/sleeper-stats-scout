@@ -31,6 +31,9 @@ export interface PlayoffMatch {
   w: number | null;
   l: number | null;
   p?: number;
+  /** Sleeper roster id, kept only when that roster has no mapped team. */
+  t1_roster?: number;
+  t2_roster?: number;
 }
 
 export interface PlayoffConfig {
@@ -53,6 +56,8 @@ export function normalizeBracket(
     m: x.m,
     t1: team(x.t1),
     t2: team(x.t2),
+    ...(x.t1 != null && team(x.t1) == null ? { t1_roster: x.t1 } : {}),
+    ...(x.t2 != null && team(x.t2) == null ? { t2_roster: x.t2 } : {}),
     ...(x.t1_from ? { t1_from: x.t1_from } : {}),
     ...(x.t2_from ? { t2_from: x.t2_from } : {}),
     w: team(x.w),
@@ -86,6 +91,14 @@ export function bracketByes(winners: PlayoffMatch[]): Set<number> {
  * consolation teams*) or already overall; if the smallest p is within the
  * winners-bracket team count we treat them as relative and offset them.
  */
+/** Amount to add to a losers-bracket `p` to get the overall place (0 when already absolute). */
+export function losersPlaceOffset(winners: PlayoffMatch[], losers: PlayoffMatch[]): number {
+  const winnersTeamCount = bracketTeams(winners).size;
+  const loserPs = losers.filter((m) => m.p != null).map((m) => m.p as number);
+  const relative = loserPs.length > 0 && Math.min(...loserPs) <= winnersTeamCount;
+  return relative ? winnersTeamCount : 0;
+}
+
 export function computePlacements(winners: PlayoffMatch[], losers: PlayoffMatch[]): Map<number, number> {
   const places = new Map<number, number>();
   const apply = (matches: PlayoffMatch[], offset: number) => {
@@ -96,10 +109,7 @@ export function computePlacements(winners: PlayoffMatch[], losers: PlayoffMatch[
     }
   };
   apply(winners, 0);
-  const winnersTeamCount = bracketTeams(winners).size;
-  const loserPs = losers.filter((m) => m.p != null).map((m) => m.p as number);
-  const relative = loserPs.length > 0 && Math.min(...loserPs) <= winnersTeamCount;
-  apply(losers, relative ? winnersTeamCount : 0);
+  apply(losers, losersPlaceOffset(winners, losers));
   return places;
 }
 
