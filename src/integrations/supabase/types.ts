@@ -122,38 +122,35 @@ export type Database = {
           },
         ]
       }
-      player_vorp: {
+      player_seasons: {
         Row: {
           games_played: number
+          id: number
           player_name: string
           position: string
-          season_rank: number
-          sleeper_player_id: string
+          ppg: number | null
+          synced_at: string
           total_points: number
-          updated_at: string
-          vorp: number
           year: number
         }
         Insert: {
           games_played: number
+          id?: number
           player_name: string
           position: string
-          season_rank: number
-          sleeper_player_id: string
+          ppg?: number | null
+          synced_at?: string
           total_points: number
-          updated_at?: string
-          vorp: number
           year: number
         }
         Update: {
           games_played?: number
+          id?: number
           player_name?: string
           position?: string
-          season_rank?: number
-          sleeper_player_id?: string
+          ppg?: number | null
+          synced_at?: string
           total_points?: number
-          updated_at?: string
-          vorp?: number
           year?: number
         }
         Relationships: []

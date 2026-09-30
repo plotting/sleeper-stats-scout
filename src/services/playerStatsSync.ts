@@ -4,32 +4,9 @@ import type { LogFn } from './sleeperSync';
 
 const POSITIONS: FantasyPosition[] = ['QB', 'RB', 'WR', 'TE'];
 
-/** How many players at each position a league "starts", counting the share of
- *  flex/superflex slots that position can fill. Replacement level for VORP is
- *  the player ranked at (teams × this number). */
-function starterSlots(league: SleeperLeague): Record<FantasyPosition, number> {
-  const slots: Record<FantasyPosition, number> = { QB: 0, RB: 0, WR: 0, TE: 0 };
-  const flexEligible: Record<string, FantasyPosition[]> = {
-    FLEX: ['RB', 'WR', 'TE'],
-    WRRB_FLEX: ['RB', 'WR'],
-    REC_FLEX: ['WR', 'TE'],
-    SUPER_FLEX: ['QB', 'RB', 'WR', 'TE'],
-  };
-  for (const slot of league.roster_positions ?? []) {
-    if ((POSITIONS as string[]).includes(slot)) {
-      slots[slot as FantasyPosition] += 1;
-    } else if (flexEligible[slot]) {
-      const eligible = flexEligible[slot];
-      // Superflex is filled by a QB most of the time; other flex slots split evenly.
-      if (slot === 'SUPER_FLEX') slots.QB += 0.75;
-      const rest = slot === 'SUPER_FLEX' ? 0.25 : 1;
-      for (const pos of eligible.filter((p) => slot !== 'SUPER_FLEX' || p !== 'QB')) {
-        slots[pos] += rest / (slot === 'SUPER_FLEX' ? 3 : eligible.length);
-      }
-    }
-  }
-  return slots;
-}
+// This league's DB keeps raw season totals in `player_seasons`; the `player_vorp`
+// view derives rank, replacement level and VORP from them, so this sync only
+// writes points and games played.
 
 function scoreLine(stats: Record<string, number>, scoring: Record<string, number>): number {
   let pts = 0;
@@ -41,7 +18,6 @@ function scoreLine(stats: Record<string, number>, scoring: Record<string, number
 }
 
 interface PlayerSeason {
-  sleeper_player_id: string;
   player_name: string;
   position: FantasyPosition;
   total_points: number;
@@ -55,8 +31,8 @@ export interface PlayerStatsResult {
 }
 
 /** Build one season's per-player fantasy totals from Sleeper weekly stats,
- *  scored with THIS league's scoring settings, then compute VORP against
- *  replacement level and upsert into `player_vorp`.
+ *  scored with THIS league's scoring settings, and replace that year's
+ *  QB/RB/WR/TE rows in `player_seasons` (D/ST rows are left as they are).
  *  The final regular-season week is excluded (resting starters / seeding). */
 export async function syncPlayerStats(
   league: SleeperLeague,
@@ -99,7 +75,6 @@ export async function syncPlayerStats(
       if (!player || !(line.gp > 0)) continue;
       const pts = scoreLine(line, scoring);
       const cur = seasons.get(playerId) ?? {
-        sleeper_player_id: playerId,
         player_name: player.name,
         position: player.position,
         total_points: 0,
@@ -113,41 +88,32 @@ export async function syncPlayerStats(
     onProgress?.((week / lastWeek) * 80);
   }
 
-  // Rank within position, find replacement level, compute VORP.
-  const slots = starterSlots(league);
-  const teams = league.total_rosters || league.settings.num_teams || 12;
-  const rows: Array<PlayerSeason & { year: number; season_rank: number; vorp: number }> = [];
-  for (const pos of POSITIONS) {
-    const ranked = [...seasons.values()]
-      .filter((p) => p.position === pos)
-      .sort((a, b) => b.total_points - a.total_points);
-    if (ranked.length === 0) continue;
-    const replacementRank = Math.max(1, Math.round(teams * slots[pos]));
-    const replacement = ranked[Math.min(replacementRank, ranked.length) - 1].total_points;
-    log(`${year} ${pos}: replacement = #${replacementRank} (${replacement.toFixed(1)} pts)`);
-    ranked.forEach((p, i) => {
-      rows.push({
-        ...p,
-        year,
-        season_rank: i + 1,
-        total_points: Math.round(p.total_points * 100) / 100,
-        vorp: Math.round((p.total_points - replacement) * 100) / 100,
-      });
-    });
-  }
+  const rows = [...seasons.values()].map((p) => {
+    const total = Math.round(p.total_points * 100) / 100;
+    return {
+      player_name: p.player_name,
+      position: p.position,
+      year,
+      total_points: total,
+      games_played: p.games_played,
+      ppg: Math.round((total / p.games_played) * 100) / 100,
+    };
+  });
+
+  // No unique key to upsert on, so replace this year's rows for these positions.
+  const { error: delErr } = await supabase
+    .from('player_seasons')
+    .delete()
+    .eq('year', year)
+    .in('position', POSITIONS);
+  if (delErr) throw new Error(`Failed to clear ${year} player stats: ${delErr.message}`);
 
   const BATCH = 400;
   for (let i = 0; i < rows.length; i += BATCH) {
-    const { error } = await supabase
-      .from('player_vorp')
-      .upsert(rows.slice(i, i + BATCH), { onConflict: 'sleeper_player_id,year' });
-    if (error) {
-      throw new Error(
-        `Failed to save player stats (${error.message}). Run supabase/migrations/20260930000002_player_stats.sql in the Supabase SQL editor.`,
-      );
-    }
-    onProgress?.(80 + ((i + BATCH) / rows.length) * 20);
+    const { error } = await supabase.from('player_seasons').insert(rows.slice(i, i + BATCH));
+    if (error) throw new Error(`Failed to save player stats: ${error.message}`);
+    onProgress?.(80 + (Math.min(i + BATCH, rows.length) / rows.length) * 20);
   }
-  log(`Upserted ${rows.length} player seasons for ${year}`, 'success');
+  log(`Saved ${rows.length} player seasons for ${year}`, 'success');
   return { total: rows.length, weeksFetched, excludedWeek };
 }
