@@ -438,14 +438,19 @@ const Admin = () => {
       setStatsLog((prev) => [...prev, { msg, level, ts: Date.now() }]);
     try {
       for (const yr of years) {
-        const league = allLeagues?.find((l) => l.season === String(yr));
+        // Seasons before Sleeper's league chain begins borrow the oldest league's scoring.
+        const oldest = allLeagues?.[0];
+        const exact = allLeagues?.find((l) => l.season === String(yr));
+        const league = exact ?? (oldest && yr < Number(oldest.season) ? oldest : undefined);
         if (!league) {
           addLog(`${yr}: no Sleeper league found for that season`, 'warn');
           continue;
         }
+        const borrowed = !exact;
         addLog(`── ${yr} ──────────────────────`);
         try {
-          const r = await syncPlayerStats(league, addLog);
+          if (borrowed) addLog(`${yr}: predates Sleeper — scoring with the ${league.season} league's settings`, 'warn');
+          const r = await syncPlayerStats(league, addLog, undefined, borrowed ? yr : undefined);
           addLog(
             `${yr}: ${r.total} players synced (${r.weeksFetched} weeks${r.excludedWeek ? `, wk ${r.excludedWeek} excluded` : ''})`,
             'success',
