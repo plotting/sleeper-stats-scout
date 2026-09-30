@@ -174,7 +174,7 @@ function LogPanel({ section, entries: allEntries, onClear }: { section: LogSecti
     <div className="mt-4 rounded-lg border border-white/10 bg-black/30 p-3 font-mono text-xs max-h-56 overflow-y-auto">
       <div className="flex justify-between items-center mb-2">
         <span className="text-slate-500">Sync log</span>
-        <button onClick={onClear} className="text-slate-500 hover:text-slate-300 text-xs">clear</button>
+        <button onClick={() => onClear(section)} className="text-slate-500 hover:text-slate-300 text-xs">clear</button>
       </div>
       {entries.map((e, i) => (
         <div key={i} className={cn('leading-5', colorMap[e.level])}>
