@@ -13,13 +13,14 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { CURRENT_SEASON_NUMBER, CURRENT_SEASON_YEAR } from "@/utils/seasonUtils";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import type { MatchupScoresView } from "@/types/database";
 import { ScoreHover } from "@/components/shared/ScoreHover";
 
-const SEASON_ID = 14;
-const SEASON_YEAR = 2026;
+const SEASON_ID = CURRENT_SEASON_NUMBER; // season number, used in ?season= links
+const SEASON_YEAR = CURRENT_SEASON_YEAR;
 
 function fmt(n: number, d = 1) {
   return n.toFixed(d);
@@ -280,11 +281,11 @@ function TopScorers({ matchups }: { matchups: MatchupScoresView[] }) {
 
 // ── Page ───────────────────────────────────────────────────────────────────────
 
-const Season14 = () => {
+const CurrentSeason = () => {
   const [tab, setTab] = useState<"season" | "recaps">("season");
 
   const { data: matchups, isLoading } = useQuery({
-    queryKey: ["season14-matchups"],
+    queryKey: ["current-season-matchups", SEASON_YEAR],
     queryFn: async () => {
       const { data, error } = await supabase
         .from("matchup_scores_view")
@@ -312,7 +313,7 @@ const Season14 = () => {
       {/* ── Header ── */}
       <header className="mb-2">
         <div className="flex items-center gap-3 mb-1">
-          <h1 className="text-4xl font-bold text-white">Season 14</h1>
+          <h1 className="text-4xl font-bold text-white">Season {SEASON_ID}</h1>
           <Badge variant="outline" className="border-blue-500/40 text-blue-400 text-sm px-3">
             {SEASON_YEAR}
           </Badge>
@@ -348,11 +349,11 @@ const Season14 = () => {
         ))}
       </div>
 
-      {/* ── Season 14 content ── */}
+      {/* ── current-season content ── */}
       {tab === "season" && (
         isLoading ? (
           <div className="flex items-center justify-center py-20">
-            <p className="text-slate-400 animate-pulse">Loading Season 14 data…</p>
+            <p className="text-slate-400 animate-pulse">Loading Season {SEASON_ID} data…</p>
           </div>
         ) : (
           <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
@@ -396,4 +397,4 @@ const Season14 = () => {
   );
 };
 
-export default Season14;
+export default CurrentSeason;

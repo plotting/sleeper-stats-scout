@@ -5,7 +5,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { getAllSeasons, getSeasonYear } from "@/utils/seasonUtils";
+import { getAllSeasons, getSeasonYear, CURRENT_SEASON_NUMBER } from "@/utils/seasonUtils";
 import type { MatchupScoresView } from "@/types/database";
 import { computeSeasonStats, type SeasonStats } from "./Recaps";
 import {
@@ -271,7 +271,7 @@ function buildNarrative(
 // ── Page ─────────────────────────────────────────────────────────────────────
 
 const DynastyDigest = () => {
-  const [selectedSeason, setSelectedSeason] = useState("13");
+  const [selectedSeason, setSelectedSeason] = useState(String(CURRENT_SEASON_NUMBER - 1));
   const seasonNumber = parseInt(selectedSeason, 10);
   const year = getSeasonYear(seasonNumber);
 
@@ -416,7 +416,7 @@ const DynastyDigest = () => {
     const wins = new Map<string, number[]>();
     if (!allMatchups || !seasons) return { wins };
     for (const s of seasons) {
-      if (s.season_number < 1 || s.season_number > 13) continue;
+      if (s.season_number < 1 || s.season_number > CURRENT_SEASON_NUMBER - 1) continue;
       const st = computeSeasonStats(s.id, s.season_number, s.year ?? getSeasonYear(s.season_number), allMatchups);
       if (st.champion) {
         if (!wins.has(st.champion)) wins.set(st.champion, []);
@@ -543,7 +543,7 @@ const DynastyDigest = () => {
             <SelectValue placeholder="Select Season" />
           </SelectTrigger>
           <SelectContent>
-            {getAllSeasons().filter((s) => Number(s.value) <= 13).map((season) => (
+            {getAllSeasons().filter((s) => Number(s.value) <= CURRENT_SEASON_NUMBER - 1).map((season) => (
               <SelectItem key={season.value} value={season.value}>{season.label}</SelectItem>
             ))}
           </SelectContent>

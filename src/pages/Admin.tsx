@@ -1,4 +1,5 @@
 import { useState, useCallback, Component, type ReactNode } from 'react';
+import { SEASON_COUNT, FIRST_SEASON_YEAR, CURRENT_SEASON_YEAR } from '@/utils/seasonUtils';
 import { useQueryClient } from '@tanstack/react-query';
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
@@ -450,7 +451,7 @@ const Admin = () => {
     setStatsLog([]);
     const addLog = (msg: string, level: LogEntry['level'] = 'info') =>
       setStatsLog((prev) => [...prev, { msg, level, ts: Date.now() }]);
-    const years = Array.from({ length: 14 }, (_, i) => 2013 + i); // 2013–2026
+    const years = Array.from({ length: SEASON_COUNT }, (_, i) => FIRST_SEASON_YEAR + i);
     try {
       for (const yr of years) {
         addLog(`── ${yr} ──────────────────────`);
@@ -827,7 +828,7 @@ const Admin = () => {
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {Array.from({ length: 14 }, (_, i) => String(2026 - i)).map((yr) => (
+              {Array.from({ length: SEASON_COUNT }, (_, i) => String(CURRENT_SEASON_YEAR - i)).map((yr) => (
                 <SelectItem key={yr} value={yr}>{yr}</SelectItem>
               ))}
             </SelectContent>
@@ -849,7 +850,7 @@ const Admin = () => {
             className="border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10"
           >
             <Zap className={cn('h-3 w-3 mr-1', statsRunning && 'animate-spin')} />
-            Sync All Years (2013–2026)
+            Sync All Years ({FIRST_SEASON_YEAR}–{CURRENT_SEASON_YEAR})
           </Button>
         </div>
         {statsLog.length > 0 && (

@@ -1,5 +1,6 @@
 
 import { useState } from "react";
+import { CURRENT_SEASON_NUMBER } from "@/utils/seasonUtils";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import type { MatchupScoresView, TeamRecordsView } from "@/types/database";
@@ -9,7 +10,7 @@ import WLHeatmapCard from "@/components/weekly-scores/WLHeatmapCard";
 import ScheduleTable from "@/components/weekly-scores/ScheduleTable";
 
 const WeeklyScores = () => {
-  const [selectedSeason, setSelectedSeason] = useState("14");
+  const [selectedSeason, setSelectedSeason] = useState(String(CURRENT_SEASON_NUMBER));
 
   const weekCount = parseInt(selectedSeason) <= 10 ? 16 : 17;
   const regularSeasonWeeks = 14;

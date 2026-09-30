@@ -7,7 +7,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import type { MatchupScoresView } from "@/types/database";
 import { computeSeasonStats, type SeasonStats } from "./Recaps";
-import { getSeasonYear } from "@/utils/seasonUtils";
+import { getSeasonYear, CURRENT_SEASON_NUMBER } from "@/utils/seasonUtils";
 import { askHistorian, buildHistorianContext } from "@/services/historian";
 import Records from "./Records";
 import {
@@ -247,7 +247,7 @@ const Hall = () => {
   const allStats = useMemo<SeasonStats[]>(() => {
     if (!seasons || !allMatchups) return [];
     return seasons
-      .filter((s) => s.season_number >= 1 && s.season_number <= 13)
+      .filter((s) => s.season_number >= 1 && s.season_number <= CURRENT_SEASON_NUMBER - 1)
       .map((s) => computeSeasonStats(s.id, s.season_number, s.year ?? getSeasonYear(s.season_number), allMatchups))
       .sort((a, b) => a.seasonNumber - b.seasonNumber);
   }, [seasons, allMatchups]);

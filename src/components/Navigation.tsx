@@ -33,10 +33,11 @@ import { supabase } from '@/integrations/supabase/client';
 import { type Team } from '@/types/database';
 import { cn } from '@/lib/utils';
 import { formatDistanceToNowStrict } from 'date-fns';
+import { CURRENT_SEASON_NUMBER, CURRENT_SEASON_YEAR } from '@/utils/seasonUtils';
 
 // Core pages, kept as flat top-level links.
 const links = [
-  { to: '/season14', label: 'S14 \'26', icon: Flame },
+  { to: '/current-season', label: `S${CURRENT_SEASON_NUMBER} '${String(CURRENT_SEASON_YEAR).slice(2)}`, icon: Flame },
   { to: '/', label: 'Seasons', icon: Trophy },
   { to: '/draft', label: 'Draft', icon: BookOpen },
   { to: '/trades', label: 'Trades', icon: ArrowLeftRight },
@@ -46,7 +47,7 @@ const links = [
 // Everything else lives behind "More" so the primary bar stays short —
 // splitting these out actually narrows the nav instead of just appending to it.
 // Recaps and Rookies are intentionally absent: Recaps now lives as a sub-tab
-// under Season14, and Rookies' functionality was absorbed into Draft Grades'
+// under the current-season page, and Rookies' functionality was absorbed into Draft Grades'
 // ADP/Pick Value tabs — both dropped from the nav upstream on main.
 // Weekly Scores, By Week, and H2H are also absent: all three now live as
 // sub-tabs on the Seasons page. Dynasty Digest and GM Scouting are hidden

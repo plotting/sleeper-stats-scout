@@ -1,3 +1,4 @@
+import { FIRST_SEASON_YEAR, CURRENT_SEASON_YEAR } from "@/utils/seasonUtils";
 /**
  * Shared value-estimation helpers for Dynasty Digest and GM Scouting Report.
  * Deliberately simpler than Trades.tsx's precise date-windowed, retrade-aware
@@ -33,11 +34,11 @@ export interface HistoricalPick {
 }
 
 /** Smoothed (±1 slot) expected 5yr VORP by overall draft slot, built from
- *  2014–2021 classes only (the only years with a complete 5-season window). */
+ *  first-season through five-seasons-ago classes only (the only years with a complete 5-season window). */
 export function buildExpectedVorpCurve(historicalPicks: HistoricalPick[]): Map<number, number> {
   const slotMap = new Map<number, number[]>();
   for (const p of historicalPicks) {
-    if (p.draft_year < 2014 || p.draft_year > 2021) continue;
+    if (p.draft_year < FIRST_SEASON_YEAR || p.draft_year > CURRENT_SEASON_YEAR - 5) continue;
     if (!slotMap.has(p.overall_pick)) slotMap.set(p.overall_pick, []);
     slotMap.get(p.overall_pick)!.push(Number(p.five_yr_vorp));
   }

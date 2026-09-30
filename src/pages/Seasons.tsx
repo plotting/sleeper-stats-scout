@@ -1,6 +1,7 @@
 
 import { Card } from "@/components/ui/card";
 import { useState, useEffect } from "react";
+import { CURRENT_SEASON_NUMBER } from "@/utils/seasonUtils";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import PlayoffBracket from "@/components/PlayoffBracket";
@@ -16,7 +17,7 @@ import HeadToHead from "./HeadToHead";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 const Seasons = () => {
-  const [selectedSeason, setSelectedSeason] = useState("14");
+  const [selectedSeason, setSelectedSeason] = useState(String(CURRENT_SEASON_NUMBER));
   const [activeTab, setActiveTab] = useState("overview");
   const seasonNumber = parseInt(selectedSeason);
 
