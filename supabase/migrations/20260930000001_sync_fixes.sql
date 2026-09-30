@@ -15,7 +15,9 @@ alter table draft_picks add column if not exists position text;
 
 -- 3. Only list a team in a season's standings if it actually has games that
 --    season (previously every team appeared in every season with 0-0).
-create or replace view team_records_view as
+-- Dropped first: CREATE OR REPLACE can't reorder/rename columns of an existing view.
+drop view if exists team_records_view;
+create view team_records_view as
 select
   t.id as team_id,
   t.name as team_name,
@@ -52,6 +54,8 @@ left join (
   where home_score is not null and away_score is not null
 ) m on m.team_id = t.id and m.season_id = seasons_played.season_id
 group by t.id, t.name, seasons_played.season_id;
+
+grant select on team_records_view to anon, authenticated;
 
 -- Make the API pick up the new column immediately.
 notify pgrst, 'reload schema';
