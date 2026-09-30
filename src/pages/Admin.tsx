@@ -31,6 +31,8 @@ import {
 import {
   buildTeamMappings,
   saveTeamMappings,
+  createTeamsForUnmapped,
+  autoMapSeasonsByRoster,
   syncScoresAndSchedules,
   syncDraftPicks,
   syncTrades,
@@ -362,10 +364,32 @@ const Admin = () => {
         dbTeamId: mappingEdits[m.sleeperUserId] ?? null,
         dbTeamName: dbTeams?.find((t) => t.id === mappingEdits[m.sleeperUserId])?.name ?? null,
       }));
-      await saveTeamMappings(updated, log);
+      await saveTeamMappings(selectedLeague?.league_id ?? LEAGUE_ID, updated, log);
       // Refresh mappings so isNew flags update after save
       const refreshed = await buildTeamMappings(selectedLeague?.league_id ?? LEAGUE_ID);
       setMappings(refreshed);
+    });
+  }
+
+  async function handleAutoMapSeasons() {
+    if (!allLeagues) return;
+    await run(async () => {
+      await autoMapSeasonsByRoster(allLeagues, log);
+      setMappings(null);
+      setMappingEdits({});
+    });
+  }
+
+  async function handleCreateTeams() {
+    if (!mappings) return;
+    await run(async () => {
+      await createTeamsForUnmapped(selectedLeague?.league_id ?? LEAGUE_ID, mappings, log);
+      await queryClient.invalidateQueries({ queryKey: ['teams'] });
+      const refreshed = await buildTeamMappings(selectedLeague?.league_id ?? LEAGUE_ID);
+      setMappings(refreshed);
+      const edits: Record<string, number | null> = {};
+      for (const m of refreshed) edits[m.sleeperUserId] = m.dbTeamId;
+      setMappingEdits(edits);
     });
   }
 
@@ -621,8 +645,24 @@ const Admin = () => {
           Load Mappings
         </Button>
 
+        <Button
+          onClick={handleAutoMapSeasons}
+          disabled={running || !allLeagues}
+          size="sm"
+          variant="outline"
+          className="border-purple-500/30 text-purple-400 hover:bg-purple-500/10 mb-4 ml-2"
+          title="Uses Sleeper roster IDs: a roster keeps its franchise across seasons even when the owner changes. Map the newest season first."
+        >
+          Carry newest season back to all years
+        </Button>
+
         {mappings && (
           <>
+            {dbTeams?.length === 0 && (
+              <p className="text-xs text-amber-400 mb-3">
+                No teams exist in the database yet. Use “Create Teams for Unmapped Users” to add one per Sleeper user.
+              </p>
+            )}
             <div className="space-y-2 mb-4">
               {mappings.map((m) => {
                 const currentDbId = mappingEdits[m.sleeperUserId];
@@ -647,7 +687,9 @@ const Admin = () => {
                           </span>
                         )}
                       </div>
-                      <p className="text-xs text-slate-500">@{m.sleeperUsername}</p>
+                      <p className="text-xs text-slate-500 truncate">
+                        @{m.sleeperUsername}{m.sleeperTeamName ? ` · "${m.sleeperTeamName}"` : ''}
+                      </p>
                     </div>
                     <div className="w-44">
                       <Select
@@ -695,6 +737,17 @@ const Admin = () => {
               >
                 Save Mappings
               </Button>
+              {mappings.some((m) => mappingEdits[m.sleeperUserId] == null) && (
+                <Button
+                  onClick={handleCreateTeams}
+                  disabled={running}
+                  size="sm"
+                  variant="outline"
+                  className="border-purple-500/30 text-purple-400 hover:bg-purple-500/10"
+                >
+                  Create Teams for Unmapped Users
+                </Button>
+              )}
               {duplicateTeamIds.size > 0 && (
                 <p className="text-xs text-red-400 flex items-center gap-1">
                   <XCircle className="h-3 w-3" />
