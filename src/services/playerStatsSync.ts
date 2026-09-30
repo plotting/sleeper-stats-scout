@@ -152,12 +152,19 @@ export async function syncPlayerStats(
     if (!data || data.length < 1000) break;
   }
 
-  const { error: delErr } = await supabase
+  const { data: deleted, error: delErr } = await supabase
     .from('player_seasons')
     .delete()
     .eq('year', year)
-    .in('position', replaced);
+    .in('position', replaced)
+    .select('id');
   if (delErr) throw new Error(`Failed to clear ${year} player stats: ${delErr.message}`);
+  if (backup.length > 0 && (deleted?.length ?? 0) < backup.length) {
+    // Row-level security silently skips rows the caller can't delete.
+    throw new Error(
+      `Could only clear ${deleted?.length ?? 0} of ${backup.length} existing ${year} rows — table write access is blocked (see supabase/migrations/20260930000004_player_seasons_write.sql)`,
+    );
+  }
 
   const BATCH = 400;
   try {
@@ -168,11 +175,14 @@ export async function syncPlayerStats(
     }
   } catch (err) {
     // Roll back: clear any partial insert and restore the previous rows.
+    const reason = err instanceof Error ? err.message : String(err);
     await supabase.from('player_seasons').delete().eq('year', year).in('position', replaced);
+    let restored = 0;
     for (let i = 0; i < backup.length; i += BATCH) {
-      await supabase.from('player_seasons').insert(backup.slice(i, i + BATCH));
+      const { error } = await supabase.from('player_seasons').insert(backup.slice(i, i + BATCH));
+      if (!error) restored += Math.min(BATCH, backup.length - i);
     }
-    throw new Error(`Failed to save player stats (${err instanceof Error ? err.message : String(err)}); restored ${backup.length} previous rows`);
+    throw new Error(`Failed to save player stats (${reason}); restored ${restored} of ${backup.length} previous rows`);
   }
   log(`Saved ${toSave.length} player seasons for ${year}${keepDst ? '' : ` (${dstCount} D/ST)`}`, 'success');
   return { total: toSave.length, weeksFetched, excludedWeek };
