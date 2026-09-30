@@ -59,16 +59,20 @@ export async function syncPlayerStats(
   league: SleeperLeague,
   log: LogFn,
   onProgress?: (pct: number) => void,
+  /** Score a different season than `league` with this league's settings
+   *  (used for seasons that predate the Sleeper league chain). */
+  yearOverride?: number,
 ): Promise<PlayerStatsResult> {
-  const year = parseInt(league.season, 10);
+  const year = yearOverride ?? parseInt(league.season, 10);
   const scoring = league.scoring_settings;
   if (!scoring || Object.keys(scoring).length === 0) {
     throw new Error(`No scoring settings on the ${year} Sleeper league`);
   }
 
+  const isBorrowed = yearOverride != null && yearOverride !== parseInt(league.season, 10);
   const playoffStart = league.settings.playoff_week_start > 0 ? league.settings.playoff_week_start : 15;
   const lastRegularWeek = playoffStart - 1;
-  const scoredThrough = league.status === 'complete'
+  const scoredThrough = league.status === 'complete' || isBorrowed
     ? lastRegularWeek
     : Math.min(lastRegularWeek, league.settings.last_scored_leg || league.settings.leg || 0);
   const excludedWeek = scoredThrough >= lastRegularWeek ? lastRegularWeek : null;
