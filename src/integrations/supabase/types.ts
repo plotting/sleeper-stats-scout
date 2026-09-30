@@ -246,35 +246,6 @@ export type Database = {
         }
         Relationships: []
       }
-      team_owners: {
-        Row: {
-          created_at: string
-          league_id: string
-          sleeper_user_id: string
-          team_id: number
-        }
-        Insert: {
-          created_at?: string
-          league_id: string
-          sleeper_user_id: string
-          team_id: number
-        }
-        Update: {
-          created_at?: string
-          league_id?: string
-          sleeper_user_id?: string
-          team_id?: number
-        }
-        Relationships: [
-          {
-            foreignKeyName: "team_owners_team_id_fkey"
-            columns: ["team_id"]
-            isOneToOne: false
-            referencedRelation: "teams"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       teams: {
         Row: {
           created_at: string

@@ -9,19 +9,16 @@ import {
   fetchTransactions,
   buildRosterOwnerMap,
   lookupPlayerNames,
-  LEAGUE_ID,
   type SleeperLeague,
 } from './sleeperApi';
 
 export type LogFn = (msg: string, level?: 'info' | 'success' | 'warn' | 'error') => void;
 
-// ─── Legacy mapping cache ─────────────────────────────────────────────────
-// Ownership is stored per Sleeper league (season) in the `team_owners` table,
-// because teams change hands over the years. The old browser-local
-// { [sleeperUserId]: dbTeamId } cache and teams.owner_id are only used as
-// *suggestions* for leagues that haven't been mapped yet.
+// ─── Persistent mapping store ─────────────────────────────────────────────
+// Saved as { [sleeperUserId]: dbTeamId } in localStorage so mappings carry
+// forward across seasons without re-mapping every time.
 
-const MAPPINGS_STORAGE_KEY = 'matzie_sleeper_team_mappings';
+const MAPPINGS_STORAGE_KEY = 'sleeper_team_mappings';
 
 export function loadPersistedMappings(): Record<string, number> {
   try {
@@ -31,17 +28,9 @@ export function loadPersistedMappings(): Record<string, number> {
   }
 }
 
-async function loadLeagueOwners(leagueId: string): Promise<Map<string, number>> {
-  const { data, error } = await supabase
-    .from('team_owners')
-    .select('sleeper_user_id, team_id')
-    .eq('league_id', leagueId);
-  if (error) {
-    throw new Error(
-      `Could not read team_owners (${error.message}). Run supabase/migrations/20260930000001_team_owners.sql in the Supabase SQL editor.`,
-    );
-  }
-  return new Map((data ?? []).map((r) => [r.sleeper_user_id, r.team_id]));
+function persistMappings(updates: Record<string, number>) {
+  const current = loadPersistedMappings();
+  localStorage.setItem(MAPPINGS_STORAGE_KEY, JSON.stringify({ ...current, ...updates }));
 }
 
 // ─── Team mapping ──────────────────────────────────────────────────────────
@@ -50,16 +39,13 @@ export interface TeamMapping {
   sleeperUserId: string;
   sleeperUsername: string;
   sleeperDisplayName: string;
-  sleeperTeamName: string | null;
   dbTeamId: number | null;
   dbTeamName: string | null;
-  isNew: boolean; // true if this user isn't mapped to any existing team
+  isNew: boolean; // true if this user has never been mapped before
 }
 
-/** Fetch Sleeper users for a league and match them to DB teams *for that season*.
- *  Saved rows for this league win. Otherwise the user's team from another
- *  season is suggested (isNew = true until saved), since most owners keep
- *  their team; reassign it if the team changed hands that year.
+/** Fetch Sleeper users for a league and match them to existing DB teams.
+ *  Resolution order: localStorage cache → Supabase owner_id → unmatched (isNew = true).
  */
 export async function buildTeamMappings(leagueId: string, log?: LogFn): Promise<TeamMapping[]> {
   log?.(`Calling Sleeper /league/${leagueId}/users…`);
@@ -77,195 +63,51 @@ export async function buildTeamMappings(leagueId: string, log?: LogFn): Promise<
   const dbTeams = dbResult.data ?? [];
   log?.(`Found ${dbTeams.length} teams in database`);
 
-  const leagueOwners = await loadLeagueOwners(leagueId);
-  const legacy = loadPersistedMappings();
+  const saved = loadPersistedMappings();
 
   return users.map((u) => {
-    const savedId = leagueOwners.get(u.user_id);
-    const saved = dbTeams.find((t) => t.id === savedId);
-    const suggested = saved
-      ? undefined
-      : dbTeams.find((t) => t.id === legacy[u.user_id]) ??
-        dbTeams.find((t) => t.owner_id === u.user_id);
-    const match = saved ?? suggested;
+    const isNew = !(u.user_id in saved);
+    // Prefer localStorage, fall back to Supabase owner_id column
+    const savedId = saved[u.user_id];
+    const match = savedId
+      ? dbTeams.find((t) => t.id === savedId)
+      : dbTeams.find((t) => t.owner_id === u.user_id);
     return {
       sleeperUserId: u.user_id,
       sleeperUsername: u.username,
       sleeperDisplayName: u.display_name,
-      sleeperTeamName: u.metadata?.team_name?.trim() || null,
       dbTeamId: match?.id ?? null,
       dbTeamName: match?.name ?? null,
-      isNew: !saved,
+      isNew,
     };
   });
 }
 
-/** Persist this league's user→team mapping to team_owners. Rows for users
- *  left unset are removed. teams.owner_id is only touched for the current
- *  league (it means "current owner"). */
+/** Persist a user→team mapping to localStorage and Supabase teams.owner_id. */
 export async function saveTeamMappings(
-  leagueId: string,
   mappings: TeamMapping[],
   log: LogFn,
 ): Promise<void> {
-  const rows = mappings
-    .filter((m) => m.dbTeamId)
-    .map((m) => ({ league_id: leagueId, sleeper_user_id: m.sleeperUserId, team_id: m.dbTeamId as number }));
+  const toSave: Record<string, number> = {};
 
-  const unset = mappings.filter((m) => !m.dbTeamId).map((m) => m.sleeperUserId);
-  if (unset.length) {
-    const { error } = await supabase
-      .from('team_owners')
-      .delete()
-      .eq('league_id', leagueId)
-      .in('sleeper_user_id', unset);
-    if (error) throw new Error(`Failed to clear unset mappings: ${error.message}`);
-  }
-
-  if (rows.length) {
-    const { error } = await supabase
-      .from('team_owners')
-      .upsert(rows, { onConflict: 'league_id,sleeper_user_id' });
-    if (error) throw new Error(`Failed to save mappings: ${error.message}`);
-  }
   for (const m of mappings) {
-    if (m.dbTeamId) log(`Mapped "${m.sleeperDisplayName}" → ${m.dbTeamName}`, 'success');
-  }
-  log(`Saved ${rows.length} mappings for league ${leagueId}`, 'success');
-
-  if (leagueId === LEAGUE_ID) {
-    for (const m of mappings) {
-      if (!m.dbTeamId) continue;
-      const { error } = await supabase.from('teams').update({ owner_id: m.sleeperUserId }).eq('id', m.dbTeamId);
-      if (error) log(`Could not update current owner of ${m.dbTeamName}: ${error.message}`, 'warn');
+    if (!m.dbTeamId) continue;
+    toSave[m.sleeperUserId] = m.dbTeamId;
+    const { error } = await supabase
+      .from('teams')
+      .update({ owner_id: m.sleeperUserId })
+      .eq('id', m.dbTeamId);
+    if (error) {
+      log(`Failed to update team ${m.dbTeamName}: ${error.message}`, 'error');
+    } else {
+      log(`Mapped "${m.sleeperDisplayName}" → ${m.dbTeamName}`, 'success');
     }
   }
-}
 
-/** Create a DB team for each Sleeper user that isn't mapped yet, owned by that user.
- *  Used to populate an empty teams table from the Sleeper league. */
-export async function createTeamsForUnmapped(
-  leagueId: string,
-  mappings: TeamMapping[],
-  log: LogFn,
-): Promise<number> {
-  const unmapped = mappings.filter((m) => m.dbTeamId == null);
-  if (unmapped.length === 0) {
-    log('Every Sleeper user is already mapped to a team', 'info');
-    return 0;
+  if (Object.keys(toSave).length) {
+    persistMappings(toSave);
+    log(`Saved ${Object.keys(toSave).length} mappings to local storage`, 'success');
   }
-
-  const { data, error } = await supabase
-    .from('teams')
-    .insert(
-      unmapped.map((m) => ({
-        name: m.sleeperTeamName ?? m.sleeperDisplayName,
-        owner_id: m.sleeperUserId,
-      })),
-    )
-    .select('id, owner_id');
-  if (error) throw error;
-
-  const ownerRows = (data ?? [])
-    .filter((t) => t.owner_id)
-    .map((t) => ({ league_id: leagueId, sleeper_user_id: t.owner_id as string, team_id: t.id }));
-  const { error: ownerErr } = await supabase
-    .from('team_owners')
-    .upsert(ownerRows, { onConflict: 'league_id,sleeper_user_id' });
-  if (ownerErr) throw new Error(`Failed to save mappings: ${ownerErr.message}`);
-  log(`Created ${data?.length ?? 0} teams from Sleeper users`, 'success');
-  return data?.length ?? 0;
-}
-
-/** Map every past season from the current one using Sleeper's roster_id.
- *
- *  A roster_id is the franchise: when a league renews, each roster keeps its
- *  id and a new owner simply takes it over. So if roster 4 is "2021 Champs" in
- *  the newest season, roster 4 is that same team in every earlier season, no
- *  matter who owned it then. Walks newest → oldest, filling in any Sleeper
- *  user that hasn't been saved for that season, and logs a review line per
- *  roster (owner, Sleeper team name, record) so it can be checked by eye.
- *  Existing saved mappings are never overwritten — conflicts are only flagged.
- *
- *  `leagues` must be oldest → newest (as fetchAllLeagues returns). The newest
- *  season must already be mapped. */
-export async function autoMapSeasonsByRoster(leagues: SleeperLeague[], log: LogFn): Promise<void> {
-  if (leagues.length < 2) {
-    log('Only one Sleeper season exists — nothing to carry back.', 'info');
-    return;
-  }
-  const newest = leagues[leagues.length - 1];
-
-  const { data: teams, error: teamsErr } = await supabase.from('teams').select('id, name');
-  if (teamsErr) throw teamsErr;
-  const teamName = new Map((teams ?? []).map((t) => [t.id, t.name]));
-  const norm = (n: string | null | undefined) => (n ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
-
-  const newestOwners = await loadLeagueOwners(newest.league_id);
-  if (newestOwners.size === 0) {
-    throw new Error(`Map the ${newest.season} season first (Load Mappings → Save Mappings), then run this.`);
-  }
-
-  // roster_id → DB team, for the season just processed (starts with newest).
-  const chain = new Map<number, number>();
-  const newestRosters = await fetchLeagueRosters(newest.league_id);
-  for (const r of newestRosters) {
-    const t = r.owner_id ? newestOwners.get(r.owner_id) : undefined;
-    if (t) chain.set(r.roster_id, t);
-  }
-  log(`${newest.season}: ${chain.size} of ${newestRosters.length} rosters mapped — carrying back by roster_id`);
-  if (chain.size < newestRosters.length) {
-    log(`${newest.season}: some rosters have no mapped owner; those franchises can't be carried back`, 'warn');
-  }
-
-  for (let i = leagues.length - 2; i >= 0; i--) {
-    const league = leagues[i];
-    const [rosters, users, saved] = await Promise.all([
-      fetchLeagueRosters(league.league_id),
-      fetchLeagueUsers(league.league_id),
-      loadLeagueOwners(league.league_id),
-    ]);
-    const userById = new Map((users ?? []).map((u) => [u.user_id, u]));
-    const next = new Map<number, number>();
-    const rows: { league_id: string; sleeper_user_id: string; team_id: number }[] = [];
-    log(`── ${league.season} ──`);
-
-    for (const r of rosters) {
-      const teamId = chain.get(r.roster_id);
-      const user = r.owner_id ? userById.get(r.owner_id) : undefined;
-      const who = user?.display_name ?? r.owner_id ?? '(no owner)';
-      const sleeperTeam = user?.metadata?.team_name?.trim() || null;
-      const record = `${r.settings.wins}-${r.settings.losses}${r.settings.ties ? `-${r.settings.ties}` : ''}, ${(r.settings.fpts + (r.settings.fpts_decimal ?? 0) / 100).toFixed(1)} PF`;
-      const label = `roster ${r.roster_id} · ${who}${sleeperTeam ? ` "${sleeperTeam}"` : ''} · ${record}`;
-
-      if (!teamId) {
-        log(`${label} → no franchise in ${leagues[i + 1].season}`, 'warn');
-        continue;
-      }
-      next.set(r.roster_id, teamId);
-      if (!r.owner_id) {
-        log(`${label} → ${teamName.get(teamId)} (no owner listed)`, 'warn');
-        continue;
-      }
-      const existing = saved.get(r.owner_id);
-      const nameMatches = sleeperTeam != null && norm(sleeperTeam) === norm(teamName.get(teamId));
-      if (existing != null && existing !== teamId) {
-        log(`${label} → kept saved "${teamName.get(existing)}" (roster continuity says "${teamName.get(teamId)}") — review`, 'warn');
-        continue;
-      }
-      if (existing == null) rows.push({ league_id: league.league_id, sleeper_user_id: r.owner_id, team_id: teamId });
-      log(`${label} → ${teamName.get(teamId)}${nameMatches ? ' (team name matches)' : ''}`, 'success');
-    }
-
-    if (rows.length) {
-      const { error } = await supabase.from('team_owners').upsert(rows, { onConflict: 'league_id,sleeper_user_id' });
-      if (error) throw new Error(`Failed to save ${league.season} mappings: ${error.message}`);
-    }
-    log(`${league.season}: saved ${rows.length} new mappings`, 'success');
-    chain.clear();
-    for (const [k, v] of next) chain.set(k, v);
-  }
-  log('Done. Re-run Sync All Seasons so each season uses its mapping.', 'success');
 }
 
 // ─── Roster → DB team ID lookup ─────────────────────────────────────────────
@@ -273,32 +115,24 @@ export async function autoMapSeasonsByRoster(leagues: SleeperLeague[], log: LogF
 export async function buildRosterToTeamMap(
   leagueId: string,
 ): Promise<Map<number, number>> {
-  const [rosterOwnerMap, dbResult, leagueOwners] = await Promise.all([
+  const [rosterOwnerMap, dbResult] = await Promise.all([
     buildRosterOwnerMap(leagueId),
     supabase.from('teams').select('id, owner_id'),
-    loadLeagueOwners(leagueId),
   ]);
 
   if (dbResult.error) throw dbResult.error;
   const dbTeams = dbResult.data ?? [];
-  const validIds = new Set(dbTeams.map((t) => t.id));
 
-  // If this season has been mapped, use ONLY its mapping so a team that
-  // changed hands isn't attributed to a previous owner. Seasons that were
-  // never mapped fall back to the legacy single-owner mapping.
-  const strict = leagueOwners.size > 0;
-  const legacy = loadPersistedMappings();
+  // Use localStorage as the primary source (always up-to-date after Save Mappings),
+  // then fall back to teams.owner_id in Supabase.
+  const persisted = loadPersistedMappings(); // { sleeperUserId → dbTeamId }
 
   const map = new Map<number, number>();
   for (const [rosterId, sleeperUserId] of rosterOwnerMap) {
-    let teamId = leagueOwners.get(sleeperUserId);
-    if (!strict) {
-      const fallbackId = legacy[sleeperUserId];
-      teamId =
-        (validIds.has(fallbackId) ? fallbackId : undefined) ??
-        dbTeams.find((t) => t.owner_id === sleeperUserId)?.id;
-    }
-    if (teamId && validIds.has(teamId)) map.set(rosterId, teamId);
+    const teamId =
+      persisted[sleeperUserId] ??
+      dbTeams.find((t) => t.owner_id === sleeperUserId)?.id;
+    if (teamId) map.set(rosterId, teamId);
   }
   return map;
 }
