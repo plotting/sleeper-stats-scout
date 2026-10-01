@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, Component, type ReactNode } from 'react';
 import { SEASON_COUNT, FIRST_SEASON_YEAR, CURRENT_SEASON_YEAR } from '@/utils/seasonUtils';
 import { useQueryClient } from '@tanstack/react-query';
+import { Link } from 'react-router-dom';
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
   state = { error: null };
@@ -72,53 +73,8 @@ import {
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import { useAdminSession } from '@/hooks/useAdminSession';
+import { LoginGate } from '@/components/admin/AdminGate';
 
-// ─── Admin sign-in ───────────────────────────────────────────────────────────
-// Real Supabase auth. Write access is enforced in the database (row-level
-// security: only emails in admin_emails can write), so this is just the login form.
-
-function LoginGate() {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  async function submit() {
-    setBusy(true);
-    setError(null);
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) setError(error.message);
-    setBusy(false);
-  }
-
-  return (
-    <div className="max-w-sm mx-auto mt-24 space-y-4 text-center">
-      <h1 className="text-xl font-bold flex items-center justify-center gap-2">
-        <Zap className="h-5 w-5 text-blue-400" />
-        Admin Sign In
-      </h1>
-      <p className="text-slate-400 text-sm">Sign in to sync data and edit the league.</p>
-      <Input
-        type="email"
-        value={email}
-        onChange={(e) => setEmail(e.target.value)}
-        placeholder="Email"
-        autoComplete="username"
-        autoFocus
-      />
-      <Input
-        type="password"
-        value={password}
-        onChange={(e) => setPassword(e.target.value)}
-        onKeyDown={(e) => e.key === 'Enter' && email && password && submit()}
-        placeholder="Password"
-        autoComplete="current-password"
-      />
-      {error && <p className="text-red-400 text-xs">{error}</p>}
-      <Button onClick={submit} disabled={busy || !email || !password} className="w-full">Sign in</Button>
-    </div>
-  );
-}
 
 // ─── Log entry ─────────────────────────────────────────────────────────────
 
@@ -596,6 +552,7 @@ const Admin = () => {
               Syncing…
             </div>
           )}
+          <Link to="/trade-market" className="text-sm text-blue-400 hover:underline">Trade Market →</Link>
           <Button variant="ghost" size="sm" onClick={() => supabase.auth.signOut()} className="text-slate-400">
             Sign out
           </Button>
