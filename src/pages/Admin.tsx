@@ -157,33 +157,72 @@ function LeagueBadge({ status }: { status: SleeperLeague['status'] }) {
 
 // ─── Log panel ──────────────────────────────────────────────────────────────
 
-function LogPanel({ section, entries: allEntries, onClear }: { section: LogSection; entries: LogEntry[]; onClear: (section?: LogSection) => void }) {
-  const entries = allEntries.filter((e) => e.section === section);
-  const colorMap = {
-    info: 'text-slate-300',
-    success: 'text-emerald-400',
-    warn: 'text-amber-400',
-    error: 'text-red-400',
-  };
-  const iconMap = {
-    info: '›',
-    success: '✓',
-    warn: '⚠',
-    error: '✗',
-  };
+const LOG_COLORS = {
+  info: 'text-slate-300',
+  success: 'text-emerald-400',
+  warn: 'text-amber-400',
+  error: 'text-red-400',
+};
+const LOG_ICONS = { info: '›', success: '✓', warn: '⚠', error: '✗' };
+
+async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    // Clipboard API unavailable (e.g. insecure context): fall back to a hidden textarea.
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+      return ok;
+    } catch {
+      return false;
+    }
+  }
+}
+
+/** A scrolling log with copy + clear buttons. */
+function LogBox({ title, entries, onClear, maxHeight = 'max-h-56' }: {
+  title: string; entries: LogEntry[]; onClear: () => void; maxHeight?: string;
+}) {
+  const [copied, setCopied] = useState(false);
   if (entries.length === 0) return null;
+  async function copy() {
+    const ok = await copyText(entries.map((e) => `${LOG_ICONS[e.level]} ${e.msg}`).join('\n'));
+    setCopied(ok);
+    setTimeout(() => setCopied(false), 1500);
+  }
   return (
-    <div className="mt-4 rounded-lg border border-white/10 bg-black/30 p-3 font-mono text-xs max-h-56 overflow-y-auto">
+    <div className={cn('mt-4 rounded-lg border border-white/10 bg-black/30 p-3 font-mono text-xs overflow-y-auto', maxHeight)}>
       <div className="flex justify-between items-center mb-2">
-        <span className="text-slate-500">Sync log</span>
-        <button onClick={() => onClear(section)} className="text-slate-500 hover:text-slate-300 text-xs">clear</button>
+        <span className="text-slate-500">{title}</span>
+        <span className="flex gap-3">
+          <button onClick={copy} className="text-slate-500 hover:text-slate-300 text-xs">{copied ? 'copied' : 'copy'}</button>
+          <button onClick={onClear} className="text-slate-500 hover:text-slate-300 text-xs">clear</button>
+        </span>
       </div>
       {entries.map((e, i) => (
-        <div key={i} className={cn('leading-5', colorMap[e.level])}>
-          <span className="mr-1">{iconMap[e.level]}</span>{e.msg}
+        <div key={i} className={cn('leading-5', LOG_COLORS[e.level])}>
+          <span className="mr-1">{LOG_ICONS[e.level]}</span>{e.msg}
         </div>
       ))}
     </div>
+  );
+}
+
+function LogPanel({ section, entries, onClear }: { section: LogSection; entries: LogEntry[]; onClear: (section?: LogSection) => void }) {
+  return (
+    <LogBox
+      title="Sync log"
+      entries={entries.filter((e) => e.section === section)}
+      onClear={() => onClear(section)}
+    />
   );
 }
 
@@ -857,24 +896,7 @@ const Admin = () => {
             Sync All Years ({FIRST_SEASON_YEAR}–{CURRENT_SEASON_YEAR})
           </Button>
         </div>
-        {statsLog.length > 0 && (
-          <div className="mt-4 rounded-lg border border-white/10 bg-black/30 p-3 font-mono text-xs max-h-48 overflow-y-auto">
-            <div className="flex justify-between items-center mb-2">
-              <span className="text-slate-500">Stats sync log</span>
-              <button onClick={() => setStatsLog([])} className="text-slate-500 hover:text-slate-300 text-xs">clear</button>
-            </div>
-            {statsLog.map((e, i) => (
-              <div key={i} className={cn('leading-5', {
-                'text-slate-300': e.level === 'info',
-                'text-emerald-400': e.level === 'success',
-                'text-amber-400': e.level === 'warn',
-                'text-red-400': e.level === 'error',
-              })}>
-                <span className="mr-1">{e.level === 'success' ? '✓' : e.level === 'error' ? '✗' : '›'}</span>{e.msg}
-              </div>
-            ))}
-          </div>
-        )}
+        <LogBox title="Stats sync log" entries={statsLog} onClear={() => setStatsLog([])} maxHeight="max-h-48" />
       </SyncCard>
 
       {/* Score Adjustments */}
