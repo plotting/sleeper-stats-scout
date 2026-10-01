@@ -415,7 +415,7 @@ const Admin = () => {
         dbTeamId: mappingEdits[m.sleeperUserId] ?? null,
         dbTeamName: dbTeams?.find((t) => t.id === mappingEdits[m.sleeperUserId])?.name ?? null,
       }));
-      await saveTeamMappings(updated, log);
+      await saveTeamMappings(selectedLeague?.league_id ?? LEAGUE_ID, updated, log);
       // Refresh mappings so isNew flags update after save
       const refreshed = await buildTeamMappings(selectedLeague?.league_id ?? LEAGUE_ID);
       setMappings(refreshed);
