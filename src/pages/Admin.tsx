@@ -42,6 +42,7 @@ import {
   type LogFn,
 } from '@/services/sleeperSync';
 import { syncPlayerStats } from '@/services/playerStatsSync';
+import { fillAllMissing, fillMissingForYear, HISTORICAL_FILL_YEARS } from '@/services/historicalPlayerFill';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -494,6 +495,8 @@ const Admin = () => {
         try {
           if (borrowed) addLog(`${yr}: predates Sleeper — scoring with the ${league.season} league's settings`, 'warn');
           const r = await syncPlayerStats(league, addLog, undefined, borrowed ? yr : undefined);
+          // Sleeper no longer lists many retired players; add them back for the early seasons.
+          if (HISTORICAL_FILL_YEARS.includes(yr)) await fillMissingForYear(yr, addLog);
           addLog(
             `${yr}: ${r.total} players synced (${r.weeksFetched} weeks${r.excludedWeek ? `, wk ${r.excludedWeek} excluded` : ''})`,
             'success',
@@ -515,6 +518,22 @@ const Admin = () => {
 
   async function handleSyncAllPlayerStats() {
     await runStats(Array.from({ length: SEASON_COUNT }, (_, i) => FIRST_SEASON_YEAR + i));
+  }
+
+  async function handleFillMissing(dryRun: boolean) {
+    setStatsRunning(true);
+    setStatsLog([]);
+    const addLog: LogFn = (msg, level = 'info') =>
+      setStatsLog((prev) => [...prev, { msg, level, ts: Date.now() }]);
+    try {
+      await fillAllMissing(addLog, dryRun);
+      if (!dryRun) await queryClient.invalidateQueries();
+      addLog(dryRun ? 'Preview done — nothing was written.' : 'Missing players added.', 'success');
+    } catch (err) {
+      addLog(`Error: ${err instanceof Error ? err.message : String(err)}`, 'error');
+    } finally {
+      setStatsRunning(false);
+    }
   }
 
   async function handleSyncAllSeasons() {
@@ -902,6 +921,25 @@ const Admin = () => {
           >
             <Zap className={cn('h-3 w-3 mr-1', statsRunning && 'animate-spin')} />
             Sync All Years ({FIRST_SEASON_YEAR}–{CURRENT_SEASON_YEAR})
+          </Button>
+          <Button
+            onClick={() => handleFillMissing(true)}
+            disabled={statsRunning}
+            size="sm"
+            variant="outline"
+            className="border-white/10 text-slate-300 hover:bg-white/5"
+            title="Retired players Sleeper no longer lists (e.g. Tony Gonzalez) are missing for 2013–2019. Preview what would be added."
+          >
+            Preview missing players (2013–2019)
+          </Button>
+          <Button
+            onClick={() => handleFillMissing(false)}
+            disabled={statsRunning}
+            size="sm"
+            variant="outline"
+            className="border-white/10 text-slate-300 hover:bg-white/5"
+          >
+            Add missing players (2013–2019)
           </Button>
         </div>
         <LogBox title="Stats sync log" entries={statsLog} onClear={() => setStatsLog([])} maxHeight="max-h-48" />

@@ -20,7 +20,7 @@ import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { getAllSeasons, CURRENT_SEASON_NUMBER, FIRST_SEASON_YEAR, LEAGUE_SIZE } from "@/utils/seasonUtils";
-import { buildExpectedVorpCurve, getExpectedVorp, type HistoricalPick } from "@/utils/dynastyValue";
+import { buildExpectedVorpCurve, getExpectedVorp, nameKey, type HistoricalPick } from "@/utils/dynastyValue";
 import { format } from "date-fns";
 import TradeAssetModal from "@/components/TradeAssetModal";
 import { ChevronDown, ChevronRight } from "lucide-react";
@@ -81,6 +81,7 @@ function sortItems(items: TradeItem[]): TradeItem[] {
 
 interface PlayerSeasonVorp {
   player_name: string;
+  name_key?: string;
   year: number;
   vorp: number;
 }
@@ -281,7 +282,7 @@ const Trades = () => {
         if (item.item_type === "player") {
           // DST items are stored as "Eagles D/ST" but player_seasons uses "Philadelphia Eagles"
           const dstFull = resolveDSTFullName(item.item_description);
-          names.add(dstFull ?? item.item_description);
+          names.add(nameKey(dstFull ?? item.item_description));
         }
       }
     }
@@ -295,8 +296,8 @@ const Trades = () => {
       if (!playerNames.length) return [] as PlayerSeasonVorp[];
       const { data, error } = await supabase
         .from("player_vorp" as never)
-        .select("player_name, year, vorp")
-        .in("player_name", playerNames);
+        .select("player_name, name_key, year, vorp")
+        .in("name_key", playerNames);
       if (error) throw error;
       return data as PlayerSeasonVorp[];
     },
@@ -306,36 +307,14 @@ const Trades = () => {
   // Build lookup: player name (lower) → seasons[]
   const playerVorpByName = new Map<string, Array<{ year: number; vorp: number }>>();
   for (const row of playerSeasonVorps ?? []) {
-    const key = row.player_name.toLowerCase();
+    const key = row.name_key ?? nameKey(row.player_name);
     if (!playerVorpByName.has(key)) playerVorpByName.set(key, []);
     playerVorpByName.get(key)!.push({ year: Number(row.year), vorp: Number(row.vorp) });
   }
 
-  /**
-   * Strip generational suffixes (Jr., Sr., II, III, IV, V, VI) for fallback matching.
-   * Handles cases where trade_items stored names without suffixes (synced before full_name
-   * was used) while player_seasons uses the full Sleeper name.
-   */
-  function stripNameSuffix(name: string): string {
-    return name.replace(/\s+(Jr\.?|Sr\.?|II|III|IV|V|VI)$/i, '').trim();
-  }
-
-  // Secondary lookup keyed by suffix-stripped lowercase name (fallback for mismatches)
-  const playerVorpByStrippedName = new Map<string, Array<{ year: number; vorp: number }>>();
-  for (const [key, seasons] of playerVorpByName) {
-    const stripped = stripNameSuffix(key).toLowerCase();
-    if (!playerVorpByStrippedName.has(stripped)) {
-      playerVorpByStrippedName.set(stripped, seasons);
-    }
-  }
-
   function lookupPlayerVorp(name: string): Array<{ year: number; vorp: number }> | undefined {
-    return playerVorpByName.get(name.toLowerCase())
-      ?? playerVorpByStrippedName.get(stripNameSuffix(name).toLowerCase())
-      ?? (() => {
-        const dstFull = resolveDSTFullName(name);
-        return dstFull ? playerVorpByName.get(dstFull.toLowerCase()) : undefined;
-      })();
+    const dstFull = resolveDSTFullName(name);
+    return playerVorpByName.get(nameKey(dstFull ?? name));
   }
 
   // Resolved pick grades
