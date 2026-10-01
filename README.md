@@ -48,3 +48,19 @@ npm run build
 ```
 
 The `dist/` folder can be deployed to any static host (Netlify, Vercel, Cloudflare Pages, etc.).
+
+## Securing writes
+
+The Supabase anon key is public (it ships in the browser bundle), so database
+writes are locked to a signed-in admin by row-level security. Reads stay public.
+
+1. Run `supabase/migrations/20260930000012_admin_auth.sql` (adds the admin
+   allow-list and admin write policies; nothing is removed yet).
+2. Run `supabase/admin_user_setup.sql`: it creates the admin login and prints a
+   generated 16-character password. In Supabase → Authentication → Providers →
+   Email, turn off "Allow new users to sign up".
+3. Deploy, sign in at `/admin`, and confirm sync works.
+4. Run `supabase/migrations/20260930000013_lock_writes.sql` (removes public write
+   access; the file ends with an undo block).
+5. Add the GitHub Actions secret `SUPABASE_SERVICE_ROLE_KEY` (Supabase → Project
+   Settings → API → service_role) so the scheduled sync can keep writing.

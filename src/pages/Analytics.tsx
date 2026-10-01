@@ -30,6 +30,7 @@ import type { WorkerSimResult } from "@/workers/playoffSim.worker";
 import { fetchLeagueRosters, fetchLeague, LEAGUE_ID } from "@/services/sleeperApi";
 import { buildRosterToTeamMap } from "@/services/sleeperSync";
 import { computeTeamWeekProjections, type TeamWeekProjection } from "@/services/playerProjections";
+import { useAdminSession } from "@/hooks/useAdminSession";
 import { savePlayoffSimSnapshot, deletePlayoffSimHistoryForSeason, fetchPlayoffSimHistory } from "@/services/playoffSimHistory";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -1245,6 +1246,9 @@ function PlayoffSim({
   const [backfilling, setBackfilling] = useState(false);
   const [backfillProgress, setBackfillProgress] = useState<{ done: number; total: number } | null>(null);
 
+  // Saving sim snapshots is a database write, which is admin-only.
+  const adminSession = useAdminSession();
+
   async function runBackfill() {
     if (!currentSeasonId || playedWeeks.length === 0) return;
     const weeksToBackfill = allAsOfWeeks;
@@ -1410,7 +1414,7 @@ function PlayoffSim({
           {isRunning ? "Simulating…" : `Re-run (${numSims.toLocaleString()} sims)`}
         </button>
 
-        {!isLiveSeason && playedWeeks.length > 0 && (
+        {adminSession && !isLiveSeason && playedWeeks.length > 0 && (
           <button
             onClick={runBackfill}
             disabled={backfilling}
@@ -1422,7 +1426,7 @@ function PlayoffSim({
               : "Backfill week-by-week history"}
           </button>
         )}
-        {!isLiveSeason && !backfilling && (simHistory?.length ?? 0) === 0 && playedWeeks.length > 0 && (
+        {!isLiveSeason && !backfilling && (simHistory?.length ?? 0) === 0 && playedWeeks.length > 0 && !!adminSession && (
           <span className="text-[11px] text-slate-600 italic">Run backfill to see week-over-week change</span>
         )}
 
