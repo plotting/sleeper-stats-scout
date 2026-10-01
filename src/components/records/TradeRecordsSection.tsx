@@ -11,8 +11,9 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { supabase } from "@/integrations/supabase/client";
+import { LEAGUE_SIZE } from "@/utils/seasonUtils";
 
-const NUM_TEAMS = 10;
+const NUM_TEAMS = LEAGUE_SIZE;
 
 /** Strip internal markers and provenance info before counting. */
 function displayDesc(raw: string): string {

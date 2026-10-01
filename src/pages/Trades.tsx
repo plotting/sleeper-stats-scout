@@ -19,7 +19,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { getAllSeasons, CURRENT_SEASON_NUMBER, FIRST_SEASON_YEAR } from "@/utils/seasonUtils";
+import { getAllSeasons, CURRENT_SEASON_NUMBER, FIRST_SEASON_YEAR, LEAGUE_SIZE } from "@/utils/seasonUtils";
 import { format } from "date-fns";
 import TradeAssetModal from "@/components/TradeAssetModal";
 import { ChevronDown, ChevronRight } from "lucide-react";
@@ -345,7 +345,7 @@ const Trades = () => {
       for (const item of t.items ?? []) {
         if (item.item_type === "pick") {
           const parsed = parseResolvedPick(item.item_description);
-          if (parsed) keys.push({ year: parsed.year, pick: (parsed.round - 1) * 20 + parsed.pick });
+          if (parsed) keys.push({ year: parsed.year, pick: (parsed.round - 1) * LEAGUE_SIZE + parsed.pick });
         }
       }
     }
@@ -570,7 +570,7 @@ const Trades = () => {
     if (item.item_type === "pick") {
       const resolved = parseResolvedPick(item.item_description);
       if (resolved) {
-        const overall = (resolved.round - 1) * 20 + resolved.pick;
+        const overall = (resolved.round - 1) * LEAGUE_SIZE + resolved.pick;
         const desc = displayDesc(item.item_description);
         // If the receiver re-traded this pick, credit them with the historical slot average
         const isRetraded =
@@ -801,7 +801,7 @@ const Trades = () => {
                                     item.to_team_id != null &&
                                     retradedPicks.has(`${trade.id}:${displayDesc(item.item_description)}:${item.to_team_id}`);
                                   const pickGrade = resolvedPick && !isRetradedPick
-                                    ? pickGradeByKey.get(`${resolvedPick.year}:${(resolvedPick.round - 1) * 20 + resolvedPick.pick}`)
+                                    ? pickGradeByKey.get(`${resolvedPick.year}:${(resolvedPick.round - 1) * LEAGUE_SIZE + resolvedPick.pick}`)
                                     : null;
                                   const futPick = item.item_type === "pick"
                                     ? parseUnresolvedPickFut(item.item_description)

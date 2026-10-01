@@ -4,6 +4,8 @@ export const FIRST_SEASON_YEAR = 2013;
 export const CURRENT_SEASON_YEAR = 2026;
 export const CURRENT_SEASON_NUMBER = CURRENT_SEASON_YEAR - FIRST_SEASON_YEAR + 1;
 export const SEASON_COUNT = CURRENT_SEASON_NUMBER;
+// Teams in the league = picks per draft round (overall pick = (round - 1) * LEAGUE_SIZE + pick).
+export const LEAGUE_SIZE = 10;
 // The first season's draft was the startup draft (veterans, not rookies), so
 // rookie draft grades begin the following year.
 export const FIRST_ROOKIE_DRAFT_YEAR = FIRST_SEASON_YEAR + 1;
