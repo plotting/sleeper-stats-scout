@@ -24,10 +24,60 @@ interface MarketTrade {
   sides: Array<{ r: number; g: Asset[] }>;
   player_ids: string[];
   pick_keys: string[];
+  shape: string | null;
 }
 interface PlayerInfo { player_id: string; name: string; position: string | null; team: string | null }
 
 const PAGE = 20;
+
+interface Filters { qb: string; ppr: string; tep: string; teams: string; shape: string; window: string }
+const DEFAULT_FILTERS: Filters = { qb: "any", ppr: "any", tep: "any", teams: "any", shape: "any", window: "all" };
+
+const SHAPES = ["1-1", "2-1", "2-2", "3-1", "3-2", "3-3"];
+const WINDOWS: Array<[string, string]> = [["all", "All time"], ["7", "Last 7 days"], ["30", "Last 30 days"], ["90", "Last 90 days"], ["365", "Last year"]];
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function applyFilters(q: any, f: Filters) {
+  if (f.qb === "1qb") q = q.eq("superflex", false);
+  if (f.qb === "sf") q = q.eq("superflex", true);
+  if (f.ppr === "std") q = q.eq("ppr", 0);
+  if (f.ppr === "half") q = q.eq("ppr", 0.5);
+  if (f.ppr === "ppr") q = q.gte("ppr", 1);
+  if (f.tep === "none") q = q.eq("te_premium", 0);
+  if (f.tep === "tep") q = q.gt("te_premium", 0).lt("te_premium", 0.75);
+  if (f.tep === "tepp") q = q.gte("te_premium", 0.75);
+  if (f.teams !== "any") q = q.eq("num_teams", Number(f.teams));
+  if (f.shape === "picks") q = q.eq("has_picks", true);
+  else if (f.shape === "players") q = q.eq("has_picks", false);
+  else if (f.shape !== "any") q = q.eq("shape", f.shape);
+  if (f.window !== "all") q = q.gte("traded_at", new Date(Date.now() - Number(f.window) * 86400000).toISOString());
+  return q;
+}
+
+function Segmented({ label, value, options, onChange }: {
+  label?: string; value: string; options: Array<[string, string]>; onChange: (v: string) => void;
+}) {
+  return (
+    <div className="flex items-center gap-1.5">
+      {label && <span className="text-[10px] uppercase tracking-wide text-slate-500">{label}</span>}
+      <div className="flex gap-0.5 rounded-lg border border-white/10 p-0.5">
+        {options.map(([key, text]) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => onChange(key)}
+            className={cn(
+              "px-2.5 py-1 text-xs rounded-md transition-colors",
+              value === key ? "bg-white/10 text-white font-medium" : "text-slate-400 hover:text-white",
+            )}
+          >
+            {text}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
 const POS_STYLE: Record<string, string> = {
   QB: "text-amber-400 bg-amber-400/10 border-amber-400/30",
   RB: "text-emerald-400 bg-emerald-400/10 border-emerald-400/30",
@@ -53,6 +103,9 @@ const TradeMarketInner = () => {
   const [input, setInput] = useState("");
   const [query, setQuery] = useState("");
   const [limit, setLimit] = useState(PAGE);
+  const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
+  const setFilter = (key: keyof Filters, value: string) => { setFilters((f) => ({ ...f, [key]: value })); setLimit(PAGE); };
+  const filtersOn = JSON.stringify(filters) !== JSON.stringify(DEFAULT_FILTERS);
 
   const { data: stats } = useQuery({
     queryKey: ["market-stats"],
@@ -66,9 +119,12 @@ const TradeMarketInner = () => {
   });
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ["market-trades", query, limit],
+    queryKey: ["market-trades", query, limit, filters],
     queryFn: async () => {
-      let q = supabase.from("market_trades" as never).select("*").order("traded_at", { ascending: false }).limit(limit);
+      let q = applyFilters(
+        supabase.from("market_trades" as never).select("*", { count: "exact" }).order("traded_at", { ascending: false }).limit(limit),
+        filters,
+      );
       let label = "Latest trades";
       const pickKey = parsePickQuery(query);
       if (pickKey) {
@@ -78,11 +134,11 @@ const TradeMarketInner = () => {
         const { data: found } = await supabase
           .from("sleeper_players" as never).select("player_id, name").ilike("name", `%${query.trim()}%`).limit(10);
         const ids = ((found ?? []) as unknown as Array<{ player_id: string }>).map((p) => p.player_id);
-        if (ids.length === 0) return { label: `No player matches "${query}"`, trades: [] as MarketTrade[], players: new Map<string, PlayerInfo>() };
+        if (ids.length === 0) return { label: `No player matches "${query}"`, trades: [] as MarketTrade[], players: new Map<string, PlayerInfo>(), total: 0 };
         q = q.overlaps("player_ids", ids);
         label = `Trades involving "${query.trim()}"`;
       }
-      const { data: rows, error } = await q;
+      const { data: rows, error, count } = await q;
       if (error) throw error;
       const trades = (rows ?? []) as unknown as MarketTrade[];
       const ids = [...new Set(trades.flatMap((t) => t.player_ids))];
@@ -91,7 +147,7 @@ const TradeMarketInner = () => {
         const { data: ps } = await supabase.from("sleeper_players" as never).select("player_id, name, position, team").in("player_id", ids.slice(i, i + 100));
         for (const p of (ps ?? []) as unknown as PlayerInfo[]) players.set(p.player_id, p);
       }
-      return { label, trades, players };
+      return { label, trades, players, total: count ?? trades.length };
     },
   });
 
@@ -156,6 +212,50 @@ const TradeMarketInner = () => {
         <Button type="submit">Search</Button>
       </form>
 
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <Segmented value={filters.qb} onChange={(v) => setFilter("qb", v)} options={[["any", "Any"], ["1qb", "1QB"], ["sf", "SF"]]} />
+        <Segmented value={filters.ppr} onChange={(v) => setFilter("ppr", v)} options={[["any", "Any"], ["std", "Std"], ["half", "½"], ["ppr", "PPR"]]} />
+        <Segmented value={filters.tep} onChange={(v) => setFilter("tep", v)} options={[["any", "Any"], ["none", "None"], ["tep", "TE+"], ["tepp", "TE++"]]} />
+        <label className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-slate-500">
+          Teams
+          <select
+            value={filters.teams}
+            onChange={(e) => setFilter("teams", e.target.value)}
+            className="bg-transparent border border-white/10 rounded-md px-2 py-1 text-xs normal-case text-slate-200"
+          >
+            {["any", "8", "10", "12"].map((t) => <option key={t} value={t} className="bg-slate-900">{t === "any" ? "Any" : t}</option>)}
+          </select>
+        </label>
+        <label className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-slate-500">
+          Shape
+          <select
+            value={filters.shape}
+            onChange={(e) => setFilter("shape", e.target.value)}
+            className="bg-transparent border border-white/10 rounded-md px-2 py-1 text-xs normal-case text-slate-200"
+          >
+            <option value="any" className="bg-slate-900">Any</option>
+            {SHAPES.map((sh) => <option key={sh} value={sh} className="bg-slate-900">{sh.replace("-", " for ")}</option>)}
+            <option value="picks" className="bg-slate-900">Picks involved</option>
+            <option value="players" className="bg-slate-900">Players only</option>
+          </select>
+        </label>
+        <label className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-slate-500">
+          Window
+          <select
+            value={filters.window}
+            onChange={(e) => setFilter("window", e.target.value)}
+            className="bg-transparent border border-white/10 rounded-md px-2 py-1 text-xs normal-case text-slate-200"
+          >
+            {WINDOWS.map(([k, t]) => <option key={k} value={k} className="bg-slate-900">{t}</option>)}
+          </select>
+        </label>
+        {filtersOn && (
+          <button type="button" onClick={() => { setFilters(DEFAULT_FILTERS); setLimit(PAGE); }} className="text-xs text-blue-400 hover:underline">
+            Reset filters
+          </button>
+        )}
+      </div>
+
       {isLoading && <p className="text-center text-slate-500 text-sm animate-pulse py-8">Loading…</p>}
       {error && (
         <p className="text-center text-red-400 text-sm py-8">
@@ -165,13 +265,14 @@ const TradeMarketInner = () => {
 
       {data && (
         <div className="space-y-4">
-          <p className="text-sm text-slate-400">{data.label} · showing {data.trades.length}</p>
-          {data.trades.length === 0 && !isLoading && <p className="text-center text-slate-500 py-8">No trades yet.</p>}
+          <p className="text-sm text-slate-400">{data.label} · {data.total.toLocaleString()} trades · showing 1–{data.trades.length}</p>
+          {data.trades.length === 0 && !isLoading && <p className="text-center text-slate-500 py-8">No trades match.</p>}
           {data.trades.map((t) => (
             <Card key={t.id} className="border-white/10 overflow-hidden">
               <div className="flex items-center justify-between px-4 py-2 border-b border-white/5 text-xs text-slate-400">
                 <span>{new Date(t.traded_at).toLocaleDateString()} · {t.season}{t.week ? ` wk ${t.week}` : ""}</span>
                 <span className="flex gap-1.5">
+                  {t.shape && <span className="px-1.5 py-0.5 rounded border border-white/10">{t.shape.replace("-", " for ")}</span>}
                   {t.num_teams && <span className="px-1.5 py-0.5 rounded border border-white/10">{t.num_teams}T</span>}
                   <span className="px-1.5 py-0.5 rounded border border-white/10">{t.ppr > 0 ? `${t.ppr} PPR` : "No PPR"}</span>
                   {t.te_premium > 0 && <span className="px-1.5 py-0.5 rounded border border-white/10">TE+</span>}

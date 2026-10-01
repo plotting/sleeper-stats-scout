@@ -107,11 +107,21 @@ async function seedUsers() {
 }
 
 // ── One league: save its profile; if it matches, collect trades and discover members ──
+async function discoverMembers(leagueId: string) {
+  const members = await api<Array<{ user_id: string }>>(`/league/${leagueId}/users`);
+  if (members?.length) {
+    must(await supabase.from('market_seen_users').upsert(members.map((u) => ({ user_id: u.user_id })), { onConflict: 'user_id', ignoreDuplicates: true }), 'users');
+  }
+  must(await supabase.from('market_leagues').update({ members_synced_at: new Date().toISOString() }).eq('league_id', leagueId), 'members done');
+}
+
 async function processLeague(l: SleeperLeagueLite): Promise<number> {
   const profile = profileLeague(l);
   const { data: existing } = await supabase.from('market_leagues').select('league_id').eq('league_id', l.league_id).maybeSingle();
   if (existing) return 0;
   must(await supabase.from('market_leagues').insert(profile), 'league');
+  // Members of any dynasty league are worth visiting: they may be in similar leagues too.
+  if (profile.dynasty) await discoverMembers(l.league_id);
   if (!profile.matches) return 0;
 
   const rows = [];
@@ -125,17 +135,33 @@ async function processLeague(l: SleeperLeagueLite): Promise<number> {
   if (rows.length) {
     must(await supabase.from('market_trades').upsert(rows, { onConflict: 'league_id,transaction_id', ignoreDuplicates: true }), 'trades');
   }
-  const members = await api<Array<{ user_id: string }>>(`/league/${l.league_id}/users`);
-  if (members?.length) {
-    must(await supabase.from('market_seen_users').upsert(members.map((u) => ({ user_id: u.user_id })), { onConflict: 'user_id', ignoreDuplicates: true }), 'users');
-  }
   must(await supabase.from('market_leagues').update({ trades_synced_at: new Date().toISOString() }).eq('league_id', l.league_id), 'league done');
   return rows.length;
+}
+
+// Leagues saved by an earlier version (before members were discovered from every dynasty league).
+async function backfillMembers() {
+  const { data } = await supabase
+    .from('market_leagues').select('league_id, dynasty').is('members_synced_at', null).or('dynasty.is.null,dynasty.eq.true').limit(500);
+  if (!data?.length) return;
+  console.log(`Discovering members of ${data.length} leagues seen earlier…`);
+  for (const l of data) {
+    if (!timeLeft()) break;
+    let dynasty = l.dynasty;
+    if (dynasty === null) {
+      const league = await api<SleeperLeagueLite>(`/league/${l.league_id}`);
+      dynasty = league?.settings?.type === 2;
+      must(await supabase.from('market_leagues').update({ dynasty }).eq('league_id', l.league_id), 'league type');
+    }
+    if (dynasty) await discoverMembers(l.league_id);
+    else must(await supabase.from('market_leagues').update({ members_synced_at: new Date().toISOString() }).eq('league_id', l.league_id), 'skip');
+  }
 }
 
 async function main() {
   await refreshPlayers();
   await seedUsers();
+  await backfillMembers();
   let total = await tradeCount();
   let leaguesSeen = 0, leaguesMatched = 0, newTrades = 0;
   console.log(`Starting with ${total} trades (target ${TARGET}).`);
