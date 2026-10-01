@@ -24,6 +24,11 @@ const fetchWithRetry: typeof fetch = async (input, init) => {
   }
 };
 
-export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
+// The scheduled sync (Node) may supply a service-role key so it keeps working
+// now that database writes are admin-only. Never set in the browser.
+const nodeEnv = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env;
+const SUPABASE_KEY = nodeEnv?.SUPABASE_SERVICE_ROLE_KEY || SUPABASE_PUBLISHABLE_KEY;
+
+export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_KEY, {
   global: { fetch: fetchWithRetry },
 });

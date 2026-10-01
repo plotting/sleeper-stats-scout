@@ -70,47 +70,51 @@ import {
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
+import { useAdminSession } from '@/hooks/useAdminSession';
 
-// ─── PIN gate ────────────────────────────────────────────────────────────────
-// Client-side deterrent only, not real auth — the anon key already has no
-// write access to anything sensitive. Keeps casual visitors from tripping
-// over the sync buttons on the now-public site. Set VITE_ADMIN_PIN to
-// override the default.
-const ADMIN_PIN = import.meta.env.VITE_ADMIN_PIN || '1975';
-const ADMIN_UNLOCK_KEY = 'admin-unlocked';
+// ─── Admin sign-in ───────────────────────────────────────────────────────────
+// Real Supabase auth. Write access is enforced in the database (row-level
+// security: only emails in admin_emails can write), so this is just the login form.
 
-function PinGate({ onUnlock }: { onUnlock: () => void }) {
-  const [pin, setPin] = useState('');
-  const [error, setError] = useState(false);
+function LoginGate() {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
 
-  function submit() {
-    if (pin === ADMIN_PIN) {
-      localStorage.setItem(ADMIN_UNLOCK_KEY, 'true');
-      onUnlock();
-    } else {
-      setError(true);
-    }
+  async function submit() {
+    setBusy(true);
+    setError(null);
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) setError(error.message);
+    setBusy(false);
   }
 
   return (
     <div className="max-w-sm mx-auto mt-24 space-y-4 text-center">
       <h1 className="text-xl font-bold flex items-center justify-center gap-2">
         <Zap className="h-5 w-5 text-blue-400" />
-        Admin Access
+        Admin Sign In
       </h1>
-      <p className="text-slate-400 text-sm">Enter the PIN to access data sync.</p>
+      <p className="text-slate-400 text-sm">Sign in to sync data and edit the league.</p>
       <Input
-        type="password"
-        inputMode="numeric"
-        value={pin}
-        onChange={(e) => { setPin(e.target.value); setError(false); }}
-        onKeyDown={(e) => e.key === 'Enter' && submit()}
-        placeholder="PIN"
-        className="text-center"
+        type="email"
+        value={email}
+        onChange={(e) => setEmail(e.target.value)}
+        placeholder="Email"
+        autoComplete="username"
         autoFocus
       />
-      {error && <p className="text-red-400 text-xs">Incorrect PIN</p>}
-      <Button onClick={submit} className="w-full">Unlock</Button>
+      <Input
+        type="password"
+        value={password}
+        onChange={(e) => setPassword(e.target.value)}
+        onKeyDown={(e) => e.key === 'Enter' && email && password && submit()}
+        placeholder="Password"
+        autoComplete="current-password"
+      />
+      {error && <p className="text-red-400 text-xs">{error}</p>}
+      <Button onClick={submit} disabled={busy || !email || !password} className="w-full">Sign in</Button>
     </div>
   );
 }
@@ -270,7 +274,7 @@ function SyncCard({
 // ─── Main page ───────────────────────────────────────────────────────────────
 
 const Admin = () => {
-  const [unlocked, setUnlocked] = useState(() => localStorage.getItem(ADMIN_UNLOCK_KEY) === 'true');
+  const session = useAdminSession();
   const { entries, log, clear, setSection } = useLog();
   const queryClient = useQueryClient();
   const [progress, setProgress] = useState(0);
@@ -549,9 +553,8 @@ const Admin = () => {
     });
   }
 
-  if (!unlocked) {
-    return <PinGate onUnlock={() => setUnlocked(true)} />;
-  }
+  if (session === undefined) return null;
+  if (!session) return <LoginGate />;
 
   return (
     <ErrorBoundary>
@@ -567,12 +570,17 @@ const Admin = () => {
             Pull live data from the Sleeper API into Supabase
           </p>
         </div>
-        {running && (
-          <div className="flex items-center gap-2 text-sm text-blue-400">
-            <RefreshCw className="h-4 w-4 animate-spin" />
-            Syncing…
-          </div>
-        )}
+        <div className="flex items-center gap-3">
+          {running && (
+            <div className="flex items-center gap-2 text-sm text-blue-400">
+              <RefreshCw className="h-4 w-4 animate-spin" />
+              Syncing…
+            </div>
+          )}
+          <Button variant="ghost" size="sm" onClick={() => supabase.auth.signOut()} className="text-slate-400">
+            Sign out
+          </Button>
+        </div>
       </div>
 
       {running && <Progress value={progress} className="h-1" />}

@@ -1,5 +1,5 @@
 
-import { SEASON_COUNT, FIRST_SEASON_YEAR, CURRENT_SEASON_YEAR } from "@/utils/seasonUtils";
+import { SEASON_COUNT, FIRST_ROOKIE_DRAFT_YEAR, CURRENT_SEASON_YEAR } from "@/utils/seasonUtils";
 import { useState, useMemo, Fragment } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -251,10 +251,10 @@ function VorpBreakdown({
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 // Seasons this league has existed, newest first.
-const DRAFT_YEARS     = Array.from({ length: SEASON_COUNT }, (_, i) => CURRENT_SEASON_YEAR - i);
+const DRAFT_YEARS     = Array.from({ length: SEASON_COUNT - 1 }, (_, i) => CURRENT_SEASON_YEAR - i);
 const ADP_YEARS       = DRAFT_YEARS;
 // Expected-VORP baseline = drafts whose full 5-season window has been played.
-const BASELINE_FIRST  = FIRST_SEASON_YEAR;
+const BASELINE_FIRST  = FIRST_ROOKIE_DRAFT_YEAR;
 const BASELINE_LAST   = CURRENT_SEASON_YEAR - 5;
 const BASELINE_LABEL  = `${BASELINE_FIRST}–${BASELINE_LAST}`;
 const GRADABLE_POS    = ["QB", "RB", "WR", "TE"];
@@ -282,7 +282,7 @@ function AllTimeTabContent({ expectedVorpCurve, curveReady }: {
       const { data, error } = await supabase
         .from("rookie_draft_grades" as never)
         .select("*")
-        .gte("draft_year", FIRST_SEASON_YEAR)
+        .gte("draft_year", FIRST_ROOKIE_DRAFT_YEAR)
         .in("position", GRADABLE_POS)
         .order("draft_year")
         .order("overall_pick");
@@ -662,7 +662,7 @@ const DraftGrades = () => {
       const { data, error } = await supabase
         .from("rookie_draft_grades" as never)
         .select("overall_pick, round, pick_number, five_yr_vorp, seasons_with_data, position, draft_year, player_name")
-        .gte("draft_year", FIRST_SEASON_YEAR)
+        .gte("draft_year", FIRST_ROOKIE_DRAFT_YEAR)
         .in("position", GRADABLE_POS);
       if (error) throw error;
       return data as HistoricalPick[];
