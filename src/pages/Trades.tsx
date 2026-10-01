@@ -15,11 +15,12 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { getAllSeasons, CURRENT_SEASON_NUMBER, CURRENT_SEASON_YEAR, FIRST_SEASON_YEAR, FIRST_ROOKIE_DRAFT_YEAR, LEAGUE_SIZE } from "@/utils/seasonUtils";
+import { getAllSeasons, CURRENT_SEASON_NUMBER, FIRST_SEASON_YEAR, LEAGUE_SIZE } from "@/utils/seasonUtils";
+import { buildExpectedVorpCurve, getExpectedVorp, type HistoricalPick } from "@/utils/dynastyValue";
 import { format } from "date-fns";
 import TradeAssetModal from "@/components/TradeAssetModal";
 import { ChevronDown, ChevronRight } from "lucide-react";
@@ -370,6 +371,34 @@ const Trades = () => {
     (pickGrades ?? []).map(p => [`${p.draft_year}:${p.overall_pick}`, p])
   );
 
+  // Per-season VORP of the players drafted with resolved picks (for the year-by-year line).
+  const draftedNames = [...new Set((pickGrades ?? []).map((p) => p.player_name))];
+  const { data: draftedSeasonRows } = useQuery({
+    queryKey: ["drafted-player-seasons", draftedNames],
+    queryFn: async () => {
+      if (!draftedNames.length) return [] as PlayerSeasonVorp[];
+      const { data, error } = await supabase
+        .from("player_vorp" as never)
+        .select("player_name, year, vorp")
+        .in("player_name", draftedNames);
+      if (error) throw error;
+      return data as PlayerSeasonVorp[];
+    },
+    enabled: needsVorp && draftedNames.length > 0,
+  });
+  const draftedSeasonsByName = new Map<string, Array<{ year: number; vorp: number }>>();
+  for (const row of draftedSeasonRows ?? []) {
+    const key = row.player_name.toLowerCase();
+    draftedSeasonsByName.set(key, [...(draftedSeasonsByName.get(key) ?? []), { year: Number(row.year), vorp: Number(row.vorp) }]);
+  }
+  /** The drafted player's season-by-season VORP over the 5-season window from the draft year. */
+  function getDraftedPlayerSeasons(playerName: string, draftYear: number) {
+    return (draftedSeasonsByName.get(playerName.toLowerCase()) ?? [])
+      .filter((s) => s.year >= draftYear && s.year <= draftYear + 4)
+      .sort((a, b) => a.year - b.year)
+      .map((s) => ({ year: s.year, vorp: s.vorp, prorated: s.vorp, mult: 1 }));
+  }
+
   // ── Unresolved [fut:N] picks from past drafts ──────────────────────────────
   // The [fut:N] number IS the Sleeper roster_id of the original pick owner, which equals
   // draft_picks.draft_slot (the original draft slot, never changes when picks are traded).
@@ -452,36 +481,21 @@ const Trades = () => {
     enabled: needsVorp && unresolvedPickYears.length > 0,
   });
 
-  // Historical slot-average VORP: avg five_yr_vorp by overall_pick across COMPLETED
-  // draft classes only (a full 5-season window has been played). Recent classes with
-  // 1-4 seasons of data would drag the average down. The startup draft is excluded.
-  // Used for picks that were re-traded (receiver passed the pick on rather than drafting with it).
-  const { data: slotAvgData } = useQuery({
-    queryKey: ["slot-avg-vorp"],
+  // Expected 5yr VORP by overall pick: the same smoothed (±1 slot) curve the Draft
+  // Grades page uses, built from completed draft classes only (no startup draft, no
+  // classes with fewer than 5 seasons). Credited for picks the receiver re-traded.
+  const { data: slotCurveRows } = useQuery({
+    queryKey: ["slot-curve-rows"],
     queryFn: async () => {
       const { data, error } = await supabase
         .from("rookie_draft_grades" as never)
-        .select("overall_pick, five_yr_vorp")
-        .gte("draft_year", FIRST_ROOKIE_DRAFT_YEAR)
-        .lte("draft_year", CURRENT_SEASON_YEAR - 5);
+        .select("overall_pick, five_yr_vorp, draft_year, position");
       if (error) throw error;
-      const bySlot = new Map<number, number[]>();
-      for (const row of data as Array<{ overall_pick: number; five_yr_vorp: number }>) {
-        const slot = Number(row.overall_pick);
-        if (!bySlot.has(slot)) bySlot.set(slot, []);
-        bySlot.get(slot)!.push(Number(row.five_yr_vorp));
-      }
-      return [...bySlot.entries()].map(([overall_pick, vorps]) => ({
-        overall_pick,
-        avg_vorp: vorps.reduce((a, b) => a + b, 0) / vorps.length,
-      }));
+      return data as unknown as HistoricalPick[];
     },
     enabled: needsVorp,
   });
-
-  const slotAvgByOverallPick = new Map<number, number>(
-    (slotAvgData ?? []).map(r => [r.overall_pick, r.avg_vorp])
-  );
+  const slotCurve = useMemo(() => buildExpectedVorpCurve(slotCurveRows ?? []), [slotCurveRows]);
 
   // Build lookups
   // "year-round-draftSlot" → the pick used by the original slot owner in that year/round.
@@ -582,7 +596,7 @@ const Trades = () => {
           item.to_team_id != null &&
           retradedPicks.has(`${tradeId}:${desc}:${item.to_team_id}`);
         if (isRetraded) {
-          return slotAvgByOverallPick.get(overall) ?? null;
+          return getExpectedVorp(slotCurve, overall);
         }
         // Final holder — use actual player's 5yr VORP
         const pg = pickGradeByKey.get(`${resolved.year}:${overall}`);
@@ -795,9 +809,6 @@ const Trades = () => {
                               <div className="space-y-1">
                                 {received.map((item, idx) => {
                                   const vorp = getItemVorp(item, tradeDate, trade.id);
-                                  const seasons = item.item_type === "player"
-                                    ? getPlayerSeasons(item.item_description, tradeDate)
-                                    : null;
                                   const resolvedPick = item.item_type === "pick"
                                     ? parseResolvedPick(item.item_description)
                                     : null;
@@ -807,6 +818,11 @@ const Trades = () => {
                                   const pickGrade = resolvedPick && !isRetradedPick
                                     ? pickGradeByKey.get(`${resolvedPick.year}:${(resolvedPick.round - 1) * LEAGUE_SIZE + resolvedPick.pick}`)
                                     : null;
+                                  const seasons = item.item_type === "player"
+                                    ? getPlayerSeasons(item.item_description, tradeDate)
+                                    : pickGrade && resolvedPick
+                                      ? getDraftedPlayerSeasons(pickGrade.player_name, resolvedPick.year)
+                                      : null;
                                   const futPick = item.item_type === "pick"
                                     ? parseUnresolvedPickFut(item.item_description)
                                     : null;
