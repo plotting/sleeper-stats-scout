@@ -19,6 +19,7 @@ export interface LeagueProfile {
   te_premium: number;
   pass_td: number | null;
   matches: boolean;
+  dynasty: boolean;
   previous_league_id: string | null;
 }
 
@@ -42,8 +43,9 @@ export function profileLeague(l: SleeperLeagueLite): LeagueProfile {
   const ppr = scoring.rec ?? 0;
   const te_premium = scoring.bonus_rec_te ?? 0;
   const pass_td = scoring.pass_td ?? null;
+  const dynasty = l.settings?.type === SIMILARITY.dynastyType;
   const matches =
-    l.settings?.type === SIMILARITY.dynastyType &&
+    dynasty &&
     num_teams != null && num_teams >= SIMILARITY.minTeams && num_teams <= SIMILARITY.maxTeams &&
     !superflex &&
     ppr <= SIMILARITY.maxPpr &&
@@ -58,6 +60,7 @@ export function profileLeague(l: SleeperLeagueLite): LeagueProfile {
     te_premium,
     pass_td,
     matches,
+    dynasty,
     previous_league_id: l.previous_league_id ?? null,
   };
 }
@@ -90,6 +93,9 @@ export interface TradeRow {
   sides: TradeSide[];
   player_ids: string[];
   pick_keys: string[];
+  shape: string;
+  has_picks: boolean;
+  has_players: boolean;
 }
 
 /** Turn a completed Sleeper trade into a row, or null if it isn't a usable two-or-more-sided trade. */
@@ -125,6 +131,9 @@ export function parseTrade(tx: SleeperTransactionLite, league: LeagueProfile): T
     sides,
     player_ids,
     pick_keys,
+    shape: sides.map((s) => s.g.length).sort((a, b) => b - a).join('-'),
+    has_picks: pick_keys.length > 0,
+    has_players: player_ids.length > 0,
   };
 }
 

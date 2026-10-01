@@ -35,6 +35,9 @@ test('a two-team trade is split into what each side receives', () => {
   assert.deepEqual(row.player_ids.sort(), ['4034', '6794']);
   assert.deepEqual(row.pick_keys, ['2027-1']);
   assert.equal(row.week, 6);
+  assert.equal(row.shape, '2-2');
+  assert.equal(row.has_picks, true);
+  assert.equal(row.has_players, true);
 });
 
 test('failed, non-trade and one-sided trades are skipped', () => {
