@@ -8,8 +8,8 @@ import {
   DialogDescription
 } from "@/components/ui/dialog";
 import { Link } from "react-router-dom";
-import { Card } from "@/components/ui/card";
 import { format } from "date-fns";
+import { cn } from "@/lib/utils";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -68,131 +68,105 @@ const TradeAssetModal = ({ open, onOpenChange, assetDescription }: TradeAssetMod
 
   if (!assetDescription) return null;
 
+  const ReceivedList = ({ name, items }: { name: string; items: Array<{ item_description: string }> }) => (
+    <div>
+      <p className="text-xs font-semibold text-slate-300 mb-2">{name} received</p>
+      <div className="space-y-1">
+        {items.length > 0 ? (
+          items.map((item, index) => {
+            const isTarget = normalizeDesc(item.item_description) === normalizedTarget;
+            return (
+              <div
+                key={index}
+                className={cn(
+                  "py-1.5 px-2 rounded text-sm border-b border-white/[0.04] last:border-0",
+                  isTarget ? "bg-blue-500/10 text-blue-400 font-medium" : "text-white",
+                )}
+              >
+                {item.item_description}
+              </div>
+            );
+          })
+        ) : (
+          <p className="text-sm text-slate-500 px-2">Nothing received</p>
+        )}
+      </div>
+    </div>
+  );
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[80vh] overflow-y-auto">
+      <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto bg-slate-950 border-white/10 text-white">
         <DialogHeader>
-          <DialogTitle>Trades involving "{assetDescription}"</DialogTitle>
-          <DialogDescription>
-            All trades involving this asset
+          <DialogTitle className="text-xl font-bold">Trades involving "{assetDescription}"</DialogTitle>
+          <DialogDescription className="text-slate-400">
+            Every trade this asset has been part of
           </DialogDescription>
         </DialogHeader>
-        
+
         {isLoading ? (
-          <div className="flex justify-center py-8">
-            Loading trades...
-          </div>
+          <div className="flex justify-center py-8 text-slate-400">Loading trades…</div>
         ) : trades && trades.length > 0 ? (
-          <div className="space-y-6 mt-4">
+          <div className="space-y-4 mt-2">
             {trades.map((trade) => {
-              // Find the specific item that matches our asset
-              const targetItem = trade.items.find(item => 
+              const targetItem = trade.items.find((item) =>
                 normalizeDesc(item.item_description) === normalizedTarget
               );
-              
               if (!targetItem) return null;
-              
-              // Determine the direction of the trade for this asset
-              const assetFromTeamId = targetItem.from_team_id;
-              const assetToTeamId = targetItem.to_team_id;
-              
-              // Get team names for the asset's movement
+
               const fromTeamName = targetItem.from_team?.name || "Unknown";
               const toTeamName = targetItem.to_team?.name || "Unknown";
-              
-              // Group items by receiving team
-              const team1Items = trade.items.filter(item => item.to_team_id === trade.team1_id);
-              const team2Items = trade.items.filter(item => item.to_team_id === trade.team2_id);
-              
+              const team1Items = trade.items.filter((item) => item.to_team_id === trade.team1_id);
+              const team2Items = trade.items.filter((item) => item.to_team_id === trade.team2_id);
+
               return (
-                <Card key={trade.id} className="p-4">
-                  <div className="flex flex-col space-y-4">
-                    <div className="flex justify-between items-center">
-                      <div className="font-medium">
-                        <span className="text-muted-foreground">Trade between </span>
-                        <Link 
-                          to={`/team/${trade.team1.id}?season=${trade.season.season_number}`}
-                          className="text-primary hover:underline"
-                        >
-                          {trade.team1.name}
-                        </Link>
-                        <span className="text-muted-foreground"> and </span>
-                        <Link 
-                          to={`/team/${trade.team2.id}?season=${trade.season.season_number}`}
-                          className="text-primary hover:underline"
-                        >
-                          {trade.team2.name}
-                        </Link>
-                      </div>
-                      <div className="text-sm text-muted-foreground">
-                        {format(new Date(trade.trade_date), "MMM d, yyyy")}
-                      </div>
-                    </div>
-                    
-                    <div className="bg-muted/30 p-3 rounded-md">
-                      <p className="text-sm font-medium mb-2">
-                        <span className="text-primary font-bold">{assetDescription}</span> traded from{" "}
-                        <span className="font-medium">{fromTeamName}</span> to{" "}
-                        <span className="font-medium">{toTeamName}</span>
-                      </p>
-                    </div>
-                    
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2">
-                      <div>
-                        <p className="text-sm font-medium mb-1">{trade.team1.name} received:</p>
-                        <ul className="list-disc list-inside text-sm space-y-1">
-                          {team1Items.length > 0 ? (
-                            team1Items.map((item, index) => (
-                              <li key={index} className={
-                                normalizeDesc(item.item_description) === normalizedTarget 
-                                  ? "font-bold text-primary" 
-                                  : "text-muted-foreground"
-                              }>
-                                {item.item_description}
-                              </li>
-                            ))
-                          ) : (
-                            <li className="text-muted-foreground">No items received</li>
-                          )}
-                        </ul>
-                      </div>
-                      <div>
-                        <p className="text-sm font-medium mb-1">{trade.team2.name} received:</p>
-                        <ul className="list-disc list-inside text-sm space-y-1">
-                          {team2Items.length > 0 ? (
-                            team2Items.map((item, index) => (
-                              <li key={index} className={
-                                normalizeDesc(item.item_description) === normalizedTarget 
-                                  ? "font-bold text-primary" 
-                                  : "text-muted-foreground"
-                              }>
-                                {item.item_description}
-                              </li>
-                            ))
-                          ) : (
-                            <li className="text-muted-foreground">No items received</li>
-                          )}
-                        </ul>
-                      </div>
-                    </div>
-                    
-                    <div className="text-sm text-right">
-                      <Link 
-                        to={`/trades?season=${trade.season.season_number}`}
-                        className="text-primary hover:underline"
+                <div key={trade.id} className="rounded-lg border border-white/10 bg-white/[0.03] overflow-hidden">
+                  <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-white/5">
+                    <div className="text-sm font-medium">
+                      <Link
+                        to={`/team/${trade.team1.id}?season=${trade.season.season_number}`}
+                        className="text-blue-400 hover:underline"
                       >
-                        View season {trade.season.season_number} trades
+                        {trade.team1.name}
+                      </Link>
+                      <span className="text-slate-500"> ⇄ </span>
+                      <Link
+                        to={`/team/${trade.team2.id}?season=${trade.season.season_number}`}
+                        className="text-blue-400 hover:underline"
+                      >
+                        {trade.team2.name}
+                      </Link>
+                    </div>
+                    <div className="text-sm text-slate-400 shrink-0">
+                      {format(new Date(trade.trade_date), "MMM d, yyyy")}
+                    </div>
+                  </div>
+
+                  <div className="px-4 py-3 space-y-4 bg-white/[0.03]">
+                    <p className="text-xs text-slate-400">
+                      <span className="text-blue-400 font-medium">{assetDescription}</span> moved from{" "}
+                      <span className="text-slate-200">{fromTeamName}</span> to{" "}
+                      <span className="text-slate-200">{toTeamName}</span>
+                    </p>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <ReceivedList name={trade.team1.name} items={team1Items} />
+                      <ReceivedList name={trade.team2.name} items={team2Items} />
+                    </div>
+                    <div className="text-xs text-right">
+                      <Link
+                        to={`/trades?season=${trade.season.season_number}`}
+                        className="text-blue-400 hover:underline"
+                      >
+                        View season {trade.season.season_number} trades →
                       </Link>
                     </div>
                   </div>
-                </Card>
+                </div>
               );
             })}
           </div>
         ) : (
-          <div className="text-center py-8 text-muted-foreground">
-            No trades found involving this asset
-          </div>
+          <div className="text-center py-8 text-slate-400">No trades found involving this asset</div>
         )}
       </DialogContent>
     </Dialog>

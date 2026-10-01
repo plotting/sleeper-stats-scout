@@ -371,6 +371,30 @@ const Trades = () => {
     (pickGrades ?? []).map(p => [`${p.draft_year}:${p.overall_pick}`, p])
   );
 
+  // Year-by-year expected VORP for a slot (draft year + 0..4), shown on re-traded picks.
+  const { data: slotYearRows } = useQuery({
+    queryKey: ["slot-expected-by-year"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("slot_expected_by_year" as never)
+        .select("overall_pick, season_offset, avg_vorp");
+      if (error) throw error;
+      return data as unknown as Array<{ overall_pick: number; season_offset: number; avg_vorp: number }>;
+    },
+    enabled: needsVorp,
+    retry: false,
+  });
+  const slotYearsBySlot = new Map<number, Array<{ offset: number; vorp: number }>>();
+  for (const row of slotYearRows ?? []) {
+    const slot = Number(row.overall_pick);
+    slotYearsBySlot.set(slot, [...(slotYearsBySlot.get(slot) ?? []), { offset: Number(row.season_offset), vorp: Number(row.avg_vorp) }]);
+  }
+  function getSlotExpectedSeasons(draftYear: number, overall: number) {
+    return (slotYearsBySlot.get(overall) ?? [])
+      .sort((a, b) => a.offset - b.offset)
+      .map((o) => ({ year: draftYear + o.offset, vorp: o.vorp, prorated: o.vorp, mult: 1 }));
+  }
+
   // Per-season VORP of the players drafted with resolved picks (for the year-by-year line).
   const draftedNames = [...new Set((pickGrades ?? []).map((p) => p.player_name))];
   const { data: draftedSeasonRows } = useQuery({
@@ -822,7 +846,9 @@ const Trades = () => {
                                     ? getPlayerSeasons(item.item_description, tradeDate)
                                     : pickGrade && resolvedPick
                                       ? getDraftedPlayerSeasons(pickGrade.player_name, resolvedPick.year)
-                                      : null;
+                                      : isRetradedPick && resolvedPick
+                                        ? getSlotExpectedSeasons(resolvedPick.year, (resolvedPick.round - 1) * LEAGUE_SIZE + resolvedPick.pick)
+                                        : null;
                                   const futPick = item.item_type === "pick"
                                     ? parseUnresolvedPickFut(item.item_description)
                                     : null;
