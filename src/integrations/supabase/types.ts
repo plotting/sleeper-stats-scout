@@ -392,6 +392,7 @@ export type Database = {
           id: number
           season_id: number | null
           team1_id: number | null
+          sleeper_transaction_id: string | null
           team2_id: number | null
           trade_date: string
         }
@@ -400,6 +401,7 @@ export type Database = {
           id?: number
           season_id?: number | null
           team1_id?: number | null
+          sleeper_transaction_id?: string | null
           team2_id?: number | null
           trade_date?: string
         }
@@ -408,6 +410,7 @@ export type Database = {
           id?: number
           season_id?: number | null
           team1_id?: number | null
+          sleeper_transaction_id?: string | null
           team2_id?: number | null
           trade_date?: string
         }
