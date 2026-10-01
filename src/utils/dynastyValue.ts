@@ -26,6 +26,11 @@ export function parseResolvedPick(description: string): { year: number; round: n
   return { year, round, pick, overall: (round - 1) * LEAGUE_SIZE + pick };
 }
 
+/** Name key matching player_vorp.name_key: lowercase, no Jr./II-style suffix, letters and digits only. */
+export function nameKey(name: string): string {
+  return name.replace(/\s+(jr|sr|ii|iii|iv|v)\.?$/i, "").replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
+}
+
 export interface HistoricalPick {
   overall_pick: number;
   five_yr_vorp: number;
