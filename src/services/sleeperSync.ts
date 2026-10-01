@@ -608,6 +608,30 @@ export async function syncTrades(
   await lookupPlayerNames([]);
 
   const syncedIds = loadSyncedTradeIds(year);
+
+  // The browser-local synced list is lost whenever storage is cleared or the
+  // sync runs from another browser/the scheduled job, which used to re-insert
+  // every trade. The database is the source of truth: trades already stored
+  // for this season (or the previous one, for pre-draft trades) are skipped.
+  const seasonIdsToCheck = [seasonId, ...(previousSeasonId != null ? [previousSeasonId] : [])];
+  const { data: existingRows, error: existingErr } = await supabase
+    .from('trades')
+    .select('id, team1_id, team2_id, trade_date, sleeper_transaction_id')
+    .in('season_id', seasonIdsToCheck);
+  if (existingErr) {
+    log(`Could not read existing trades (${existingErr.message}); run supabase/migrations/20260930000007_trade_transaction_ids.sql`, 'error');
+    return;
+  }
+  const dbTxIds = new Set<string>();
+  // Older rows have no Sleeper id: match them by team pair + date, then claim them.
+  const legacyByKey = new Map<string, number[]>();
+  const pairKey = (a: number | null, b: number | null, date: string) =>
+    `${Math.min(a ?? 0, b ?? 0)}-${Math.max(a ?? 0, b ?? 0)}-${date}`;
+  for (const r of existingRows ?? []) {
+    if (r.sleeper_transaction_id) { dbTxIds.add(r.sleeper_transaction_id); continue; }
+    const k = pairKey(r.team1_id, r.team2_id, r.trade_date);
+    legacyByKey.set(k, [...(legacyByKey.get(k) ?? []), r.id]);
+  }
   const playoffStart = league.settings.playoff_week_start;
   const totalWeeks = Math.max(
     league.settings.last_scored_leg ?? league.settings.leg ?? 17,
@@ -624,7 +648,7 @@ export async function syncTrades(
       );
 
       for (const tx of trades) {
-        if (syncedIds.has(tx.transaction_id)) continue;
+        if (syncedIds.has(tx.transaction_id) || dbTxIds.has(tx.transaction_id)) continue;
 
         const rosterIds = tx.roster_ids ?? [];
         const team1Id = rosterIds[0] != null ? rosterMap.get(rosterIds[0]) : undefined;
@@ -641,9 +665,29 @@ export async function syncTrades(
         const isBeforeOrAtDraft = draftCutoffDate == null ? true : tradeDate <= draftCutoffDate;
         const effectiveSeasonId = isBeforeOrAtDraft && previousSeasonId != null ? previousSeasonId : seasonId;
 
+        const legacyIds = legacyByKey.get(pairKey(team1Id, team2Id, tradeDate));
+        if (legacyIds && legacyIds.length > 0) {
+          const claimId = legacyIds.shift() as number;
+          const { error: claimErr } = await supabase
+            .from('trades')
+            .update({ sleeper_transaction_id: tx.transaction_id })
+            .eq('id', claimId);
+          if (!claimErr) {
+            dbTxIds.add(tx.transaction_id);
+            saveSyncedTradeId(year, tx.transaction_id);
+            continue;
+          }
+        }
+
         const { data: tradeRow, error: tradeErr } = await supabase
           .from('trades')
-          .insert({ season_id: effectiveSeasonId, team1_id: team1Id, team2_id: team2Id, trade_date: tradeDate })
+          .insert({
+            season_id: effectiveSeasonId,
+            team1_id: team1Id,
+            team2_id: team2Id,
+            trade_date: tradeDate,
+            sleeper_transaction_id: tx.transaction_id,
+          })
           .select('id')
           .single();
 
