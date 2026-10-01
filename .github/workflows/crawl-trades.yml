@@ -37,3 +37,8 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           MAX_MINUTES: ${{ inputs.max_minutes || '300' }}
           TARGET_TRADES: ${{ inputs.target_trades || '50000' }}
+      - name: Fit trade values
+        run: npx tsx scripts/fit-trade-values.ts
+        env:
+          TSX_TSCONFIG_PATH: tsconfig.app.json
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
