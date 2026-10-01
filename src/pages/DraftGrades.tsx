@@ -1,4 +1,6 @@
 
+import { GRADE_STYLE, relativeGrades } from "@/utils/gradeScale";
+import TradeGradesTab from "@/components/grades/TradeGradesTab";
 import { SEASON_COUNT, FIRST_ROOKIE_DRAFT_YEAR, CURRENT_SEASON_YEAR } from "@/utils/seasonUtils";
 import { useState, useMemo, Fragment } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -62,23 +64,12 @@ interface HistoricalPick {
 }
 
 type Position = "ALL" | "QB" | "RB" | "WR" | "TE";
-type PageTab  = "grades" | "value" | "curve" | "teams" | "alltime";
+type PageTab  = "grades" | "value" | "curve" | "teams" | "alltime" | "trades";
 type ViewMode = "picks" | "byteam" | "adp";
 type AllTimeSort = "vorp" | "efficiency";
 
 // ── Style helpers ─────────────────────────────────────────────────────────────
 
-const GRADE_STYLE: Record<string, string> = {
-  "A+": "text-emerald-300 bg-emerald-400/15 border-emerald-400/30",
-  "A":  "text-emerald-400 bg-emerald-400/10 border-emerald-400/25",
-  "A-": "text-emerald-500 bg-emerald-500/10 border-emerald-500/25",
-  "B+": "text-sky-300 bg-sky-400/15 border-sky-400/30",
-  "B":  "text-sky-400 bg-sky-400/10 border-sky-400/25",
-  "B-": "text-sky-500 bg-sky-500/10 border-sky-500/25",
-  "C":  "text-amber-400 bg-amber-400/10 border-amber-400/25",
-  "D":  "text-orange-400 bg-orange-400/10 border-orange-400/25",
-  "F":  "text-red-400 bg-red-400/10 border-red-400/25",
-};
 
 const POS_COLORS: Record<string, string> = {
   QB: "text-amber-400 bg-amber-400/10 border-amber-400/30",
@@ -265,6 +256,7 @@ const PAGE_TABS: { key: PageTab; label: string }[] = [
   { key: "curve",   label: "Slot Curve" },
   { key: "teams",   label: "Teams" },
   { key: "alltime", label: "All-Time" },
+  { key: "trades",  label: "Trade Grades" },
 ];
 
 // ── All-Time Tab (isolated component with its own query + state) ──────────────
@@ -370,10 +362,20 @@ function AllTimeTabContent({ expectedVorpCurve, curveReady }: {
         };
       });
 
-      // Percentile = share of the league this team's pick-value efficiency beats.
+      // Team grades are relative to the league (z-score of the spread), so ten teams don't
+      // all land on the same C or D: VORP grade = average 5-year VORP per pick, Efficiency
+      // grade = average pick value vs. what each slot normally produces.
+      const perPickVorp = relativeGrades(rows.map((r) => (r.pick_count ? r.total_vorp / r.pick_count : 0)));
+      const efficiencyGrades = relativeGrades(rows.map((r) => r.avg_pick_value));
+      rows.forEach((r, i) => {
+        r.vorp_grade = perPickVorp[i];
+        r.pick_efficiency_grade = efficiencyGrades[i];
+      });
+
+      // Percentile: "Top X%" is the team's rank by pick-value efficiency (best of 10 = top 5%).
       const byEfficiency = [...rows].sort((a, b) => a.avg_pick_value - b.avg_pick_value);
       const percentileByName = new Map(
-        byEfficiency.map((r, i) => [r.team_name, byEfficiency.length > 1 ? Math.round((i / (byEfficiency.length - 1)) * 100) : 100]),
+        byEfficiency.map((r, i) => [r.team_name, Math.round(((i + 0.5) / byEfficiency.length) * 100)]),
       );
       for (const r of rows) r.percentile = percentileByName.get(r.team_name) ?? 0;
 
@@ -873,16 +875,16 @@ const DraftGrades = () => {
           <h1 className="text-4xl font-bold text-white mb-2">Draft Grades</h1>
           <p className="text-muted-foreground">
             5-year VORP grades, pick efficiency &amp; rookie ADP
-            {picks.length > 0 && pageTab !== "curve" && (
+            {picks.length > 0 && pageTab !== "curve" && pageTab !== "trades" && (
               <span className="ml-1">· {gradablePicks.length} graded picks</span>
             )}
           </p>
-          {dataNote && pageTab !== "curve" && pageTab !== "alltime" && (
+          {dataNote && pageTab !== "curve" && pageTab !== "alltime" && pageTab !== "trades" && (
             <p className="text-amber-400/80 text-xs mt-1">{dataNote}</p>
           )}
         </div>
         {/* Year selector — hidden on Curve/All-Time (year-agnostic) and ADP sub-tab (has own) */}
-        {pageTab !== "curve" && pageTab !== "alltime" && !(pageTab === "grades" && viewMode === "adp") && (
+        {pageTab !== "curve" && pageTab !== "alltime" && pageTab !== "trades" && !(pageTab === "grades" && viewMode === "adp") && (
           <Select value={String(year)} onValueChange={handleYearChange}>
             <SelectTrigger className="w-[140px]">
               <SelectValue />
@@ -1511,6 +1513,8 @@ const DraftGrades = () => {
       {/* ═══════════════════════════════════════════════════════════════════════
           ALL-TIME TAB
       ═══════════════════════════════════════════════════════════════════════ */}
+      {pageTab === "trades" && <TradeGradesTab />}
+
       {pageTab === "alltime" && (
         <AllTimeTabContent expectedVorpCurve={expectedVorpCurve} curveReady={curveReady} />
       )}
