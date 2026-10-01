@@ -70,13 +70,15 @@ export async function syncPlayerStats(
   }
 
   const isBorrowed = yearOverride != null && yearOverride !== parseInt(league.season, 10);
-  const playoffStart = league.settings.playoff_week_start > 0 ? league.settings.playoff_week_start : 15;
-  const lastRegularWeek = playoffStart - 1;
+  // Stats cover the whole NFL regular season (fantasy playoff weeks included):
+  // 17 weeks through 2020, 18 from 2021. The final NFL week is left out because
+  // starters rest, so the season is scored over weeks 1..(last - 1).
+  const nflLastWeek = year >= 2021 ? 18 : 17;
   const scoredThrough = league.status === 'complete' || isBorrowed
-    ? lastRegularWeek
-    : Math.min(lastRegularWeek, league.settings.last_scored_leg || league.settings.leg || 0);
-  const excludedWeek = scoredThrough >= lastRegularWeek ? lastRegularWeek : null;
-  const lastWeek = excludedWeek != null ? lastRegularWeek - 1 : scoredThrough;
+    ? nflLastWeek
+    : Math.min(nflLastWeek, league.settings.last_scored_leg || league.settings.leg || 0);
+  const excludedWeek = scoredThrough >= nflLastWeek ? nflLastWeek : null;
+  const lastWeek = excludedWeek != null ? nflLastWeek - 1 : scoredThrough;
 
   if (lastWeek < 1) {
     log(`${year}: no completed weeks to score yet`, 'warn');
