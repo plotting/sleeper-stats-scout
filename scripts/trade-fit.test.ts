@@ -40,9 +40,35 @@ test('fit recovers relative order of values and balances trades', () => {
   assert.ok(truth.size > 0);
 });
 
-test('anchors the current-class first at 1000', () => {
-  const { trades } = synthetic(300);
-  assert.ok(Math.abs(fitValues(trades).get('pk:0:1')! - 1000) < 1e-6);
+test('scales the five biggest players (5+ trades) to an average of 9000', () => {
+  const { trades } = synthetic(600);
+  const vals = fitValues(trades);
+  const top = [...vals].filter(([k]) => k.startsWith('p:')).map(([, v]) => v).sort((x, y) => y - x).slice(0, 5);
+  assert.ok(Math.abs(top.reduce((a, b) => a + b, 0) / 5 - 9000) < 1e-6);
+});
+
+test('a consolidation exponent is chosen when stars are worth more than the sum of parts', () => {
+  // truth: side value = sqrt-free p-norm with alpha 2 — two 1000s are worth ~1414, not 2000
+  let seed = 11;
+  const rand = () => ((seed = (seed * 1664525 + 1013904223) % 4294967296) / 4294967296);
+  const truth = new Map<string, number>();
+  for (let i = 0; i < 30; i++) truth.set(`p:${i}`, 200 + i * 150);
+  const keys = [...truth.keys()];
+  const side = (ks: string[]) => Math.sqrt(ks.reduce((s, k) => s + truth.get(k)! ** 2, 0));
+  const trades: FitTrade[] = [];
+  while (trades.length < 800) {
+    const a = [keys[Math.floor(rand() * keys.length)]];
+    const b: string[] = [];
+    for (let tries = 0; tries < 8 && b.length < 3; tries++) {
+      const k = keys[Math.floor(rand() * keys.length)];
+      if (k === a[0] || b.includes(k)) continue;
+      if (side([...b, k]) <= side(a) * 1.05) b.push(k);
+    }
+    if (b.length && side(b) > side(a) * 0.9) trades.push({ id: trades.length, a, b });
+  }
+  const { report } = fitAndReport(trades);
+  assert.ok(report.alpha >= 1.5, `alpha ${report.alpha}`);
+  assert.ok(report.holdoutMeanGap! < 20, `holdout ${report.holdoutMeanGap}`);
 });
 
 test('tiers follow the gap thresholds and unknown assets give no score', () => {

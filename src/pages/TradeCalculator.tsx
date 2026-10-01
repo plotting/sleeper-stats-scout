@@ -6,7 +6,7 @@ import AdminGate from "@/components/admin/AdminGate";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import { assess, pickOptions, suggestToEven, TIER_LABEL, type CalcAsset } from "@/utils/marketCalc";
+import { assess, sideTotal, pickOptions, suggestToEven, TIER_LABEL, type CalcAsset } from "@/utils/marketCalc";
 
 // Hidden, admin-only page: prices a trade with the values fitted from completed market trades
 // (market_values). Players only appear once they've been in enough trades to get a value.
@@ -78,8 +78,8 @@ function AssetSearch({ values, picks, taken, onAdd }: {
   );
 }
 
-function Side({ title, assets, onRemove, children }: { title: string; assets: CalcAsset[]; onRemove: (key: string) => void; children: React.ReactNode }) {
-  const total = assets.reduce((s, a) => s + a.value, 0);
+function Side({ title, assets, alpha, onRemove, children }: { title: string; assets: CalcAsset[]; alpha: number; onRemove: (key: string) => void; children: React.ReactNode }) {
+  const total = sideTotal(assets, alpha);
   return (
     <div className="space-y-3">
       <div className="flex items-baseline justify-between">
@@ -113,7 +113,8 @@ const Calculator = () => {
 
   const picks = useMemo(() => (values ? pickOptions(new Date(), values) : []), [values]);
   const taken = useMemo(() => new Set([...receive, ...send].map((a) => a.key)), [receive, send]);
-  const result = assess(receive, send);
+  const alpha = values?.get("cfg:alpha")?.value ?? 1;
+  const result = assess(receive, send, alpha);
   const pool = useMemo(() => {
     if (!values) return [] as CalcAsset[];
     return [...values].map(([key, v]) => ({ key, label: key, value: v.value, nTrades: v.n_trades })).filter((a) => a.key.startsWith("p:") || picks.some((p) => p.key === a.key));
@@ -163,10 +164,10 @@ const Calculator = () => {
       {values && values.size > 0 && (
         <>
           <Card className="border-white/10 p-5 grid md:grid-cols-2 gap-8">
-            <Side title="You receive" assets={receive} onRemove={remove(setReceive)}>
+            <Side title="You receive" assets={receive} alpha={alpha} onRemove={remove(setReceive)}>
               <AssetSearch values={values} picks={picks} taken={taken} onAdd={add(setReceive)} />
             </Side>
-            <Side title="You send" assets={send} onRemove={remove(setSend)}>
+            <Side title="You send" assets={send} alpha={alpha} onRemove={remove(setSend)}>
               <AssetSearch values={values} picks={picks} taken={taken} onAdd={add(setSend)} />
             </Side>
           </Card>
