@@ -26,3 +26,10 @@ test('suggestions are the closest values with enough history, excluding assets a
   assert.deepEqual(suggestToEven(500, pool, new Set(['s']), 3, 2).map((x) => x.key), ['p', 'r']);
   assert.deepEqual(suggestToEven(0.2, pool, new Set()), []);
 });
+
+test('a higher consolidation exponent makes one star worth more than the sum of lesser pieces', () => {
+  const star = [a('s', 1000)];
+  const parts = [a('x', 600), a('y', 600)];
+  assert.equal(assess(star, parts, 1).winner, 'them'); // 1000 vs 1200
+  assert.equal(assess(star, parts, 3).winner, 'you');  // 1000 vs ~756
+});

@@ -14,9 +14,15 @@ export type FairTier = 'even' | 'close' | 'edge' | 'lop';
 export const TIER_LABEL: Record<FairTier, string> = { even: 'Dead even', close: 'Close', edge: 'Clear winner', lop: 'Lopsided' };
 
 /** Same thresholds as the fitted trade scores: gap as a share of the bigger side. */
-export function assess(receive: CalcAsset[], send: CalcAsset[]) {
-  const recv = receive.reduce((s, a) => s + a.value, 0);
-  const sent = send.reduce((s, a) => s + a.value, 0);
+export function sideTotal(assets: CalcAsset[], alpha = 1): number {
+  const xs = assets.map((a) => a.value);
+  return alpha === 1 ? xs.reduce((a, b) => a + b, 0) : Math.pow(xs.reduce((a, b) => a + Math.pow(b, alpha), 0), 1 / alpha);
+}
+
+/** alpha is the fitted consolidation exponent (1 = plain sum; higher = a star beats several lesser pieces). */
+export function assess(receive: CalcAsset[], send: CalcAsset[], alpha = 1) {
+  const recv = sideTotal(receive, alpha);
+  const sent = sideTotal(send, alpha);
   const big = Math.max(recv, sent);
   const diffPct = big > 0 ? (Math.abs(recv - sent) / big) * 100 : 0;
   const tier: FairTier = diffPct <= 10 ? 'even' : diffPct <= 25 ? 'close' : diffPct <= 50 ? 'edge' : 'lop';

@@ -160,7 +160,8 @@ const FitReview = () => {
             <p className="text-slate-200 font-medium">{r.format === "sf" ? "Superflex" : "1QB"} · {r.n_trades.toLocaleString()} trades · {r.n_assets.toLocaleString()} assets · {new Date(r.ran_at).toLocaleDateString()}</p>
             <p>Avg gap: fit {pct(r.in_sample_mean_gap)} (guess-everything-equal {pct(r.prior_mean_gap)})</p>
             <p>Held-out gap: {pct(r.holdout_mean_gap)}{r.holdout_coverage != null && ` · ${Math.round(r.holdout_coverage * 100)}% of held-out trades fully valued`}</p>
-            {r.tiers && <p>{Object.entries(r.tiers).map(([k, n]) => `${TIER_LABEL[k] ?? k} ${n}`).join(" · ")}</p>}
+            {r.tiers && <p>{Object.entries(r.tiers).filter(([k]) => k in TIER_LABEL).map(([k, n]) => `${TIER_LABEL[k]} ${n}`).join(" · ")}</p>}
+            {r.tiers && "alpha" in r.tiers && <p>Consolidation exponent {Number(r.tiers.alpha).toFixed(2)} {Number(r.tiers.alpha) > 1 ? "(stars beat several lesser pieces)" : "(plain sum)"}</p>}
           </div>
         ))}
       </div>

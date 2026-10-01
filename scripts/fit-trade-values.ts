@@ -55,8 +55,10 @@ for (const format of ['1qb', 'sf'] as const) {
   const valueRows = [...values].map(([asset_key, value]) => ({
     format, asset_key, value: Math.round(value * 10) / 10, n_trades: counts.get(asset_key) ?? 0, updated_at: new Date().toISOString(),
   }));
+  // The consolidation exponent travels with the values (the calculator needs it to price a side).
+  valueRows.push({ format, asset_key: 'cfg:alpha', value: report.alpha, n_trades: 0, updated_at: new Date().toISOString() });
   const scoreRows = trades.map((t) => {
-    const s = scoreTrade(t, values)!;
+    const s = scoreTrade(t, values, false, report.alpha)!;
     return { trade_id: t.id, val_a: Math.round(s.valA), val_b: Math.round(s.valB), diff_pct: Math.round(s.diffPct * 10) / 10, fair_tier: s.tier };
   });
   for (const [table, batch, conflict] of [
@@ -71,7 +73,7 @@ for (const format of ['1qb', 'sf'] as const) {
   const { error } = await db.from('market_fit_runs').insert({
     format, n_trades: report.trades, n_assets: report.assets,
     in_sample_mean_gap: report.inSampleMeanGap, prior_mean_gap: report.priorMeanGap,
-    holdout_mean_gap: report.holdoutMeanGap, holdout_coverage: report.holdoutCoverage, tiers: report.tiers,
+    holdout_mean_gap: report.holdoutMeanGap, holdout_coverage: report.holdoutCoverage, tiers: { ...report.tiers, alpha: report.alpha },
   });
   if (error) throw error;
 }
