@@ -5,7 +5,7 @@
 // Env: MIN_TRADES (default 30) per format before a fit is stored.
 
 import { fitAndReport, scoreTrade, toFitTrade, type FitTrade } from './lib/tradeFit';
-import type { TradeRow } from './lib/tradeMarket';
+import { createThrottle, lineupLabel, lineupOf, lineupWeight, type Lineup, type TradeRow } from './lib/tradeMarket';
 
 const store = new Map<string, string>();
 (globalThis as unknown as { localStorage: Storage }).localStorage = {
@@ -18,6 +18,7 @@ const store = new Map<string, string>();
 } as Storage;
 
 const { supabase } = await import('../src/integrations/supabase/client');
+const { LEAGUE_ID } = await import('../src/services/sleeperApi');
 
 if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
   console.error('SUPABASE_SERVICE_ROLE_KEY is not set — the market tables are admin-only.');
@@ -26,10 +27,47 @@ if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
 const MIN_TRADES = Number(process.env.MIN_TRADES ?? 30);
 const db = supabase as unknown as { from: (t: string) => any }; // eslint-disable-line @typescript-eslint/no-explicit-any
 
-type Row = Pick<TradeRow, 'sides' | 'traded_at' | 'superflex'> & { id: number };
+// ── Lineup weighting: trades from leagues whose lineups look like ours count more ──
+async function sleeper<T>(path: string): Promise<T | null> {
+  try {
+    const res = await fetch(`https://api.sleeper.app/v1${path}`);
+    return res.ok ? ((await res.json()) as T) : null;
+  } catch {
+    return null;
+  }
+}
+const target: Lineup | null = lineupOf((await sleeper<{ roster_positions?: string[] }>(`/league/${LEAGUE_ID}`))?.roster_positions);
+console.log(target ? `Target lineup: ${lineupLabel(target)}` : 'Could not read our lineup — trades are weighted equally.');
+
+const lineups = new Map<string, Lineup | null>();
+for (let from = 0; ; from += 1000) {
+  const { data, error } = await db.from('market_leagues').select('league_id, lineup, matches').order('league_id').range(from, from + 999);
+  if (error) throw error;
+  for (const l of data as Array<{ league_id: string; lineup: Lineup | null; matches: boolean }>) lineups.set(l.league_id, l.lineup);
+  if (!data || data.length < 1000) break;
+}
+if (target) {
+  const missing = [...lineups].filter(([, l]) => l === null).map(([id]) => id);
+  const MAX = Number(process.env.MAX_LINEUP_CALLS ?? 4000);
+  const throttle = createThrottle(600);
+  let filled = 0;
+  for (const id of missing.slice(0, MAX)) {
+    await throttle();
+    const league = await sleeper<{ roster_positions?: string[] }>(`/league/${id}`);
+    const lineup = lineupOf(league?.roster_positions);
+    if (!lineup) continue;
+    const { error } = await db.from('market_leagues').update({ lineup }).eq('league_id', id);
+    if (error) throw error;
+    lineups.set(id, lineup);
+    filled++;
+  }
+  console.log(`Lineups: ${filled} filled now, ${Math.max(0, missing.length - MAX)} still missing`);
+}
+
+type Row = Pick<TradeRow, 'sides' | 'traded_at' | 'superflex' | 'league_id'> & { id: number };
 const rows: Row[] = [];
 for (let from = 0; ; from += 1000) {
-  const { data, error } = await db.from('market_trades').select('id, sides, traded_at, superflex').order('id').range(from, from + 999);
+  const { data, error } = await db.from('market_trades').select('id, sides, traded_at, superflex, league_id').order('id').range(from, from + 999);
   if (error) throw error;
   rows.push(...(data as Row[]));
   if (!data || data.length < 1000) break;
@@ -40,7 +78,7 @@ for (const format of ['1qb', 'sf'] as const) {
   const trades: FitTrade[] = [];
   for (const r of rows) {
     if (r.superflex !== (format === 'sf')) continue;
-    const t = toFitTrade(r);
+    const t = toFitTrade(r, lineupWeight(lineups.get(r.league_id), target));
     if (t) trades.push(t);
   }
   if (trades.length < MIN_TRADES) {
@@ -73,7 +111,7 @@ for (const format of ['1qb', 'sf'] as const) {
   const { error } = await db.from('market_fit_runs').insert({
     format, n_trades: report.trades, n_assets: report.assets,
     in_sample_mean_gap: report.inSampleMeanGap, prior_mean_gap: report.priorMeanGap,
-    holdout_mean_gap: report.holdoutMeanGap, holdout_coverage: report.holdoutCoverage, tiers: { ...report.tiers, alpha: report.alpha },
+    holdout_mean_gap: report.holdoutMeanGap, holdout_coverage: report.holdoutCoverage, tiers: { ...report.tiers, alpha: report.alpha, ...(target ? { lineup: lineupLabel(target) } : {}) },
   });
   if (error) throw error;
 }

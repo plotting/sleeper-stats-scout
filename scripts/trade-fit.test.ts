@@ -83,7 +83,17 @@ test('toFitTrade makes picks relative to the trade year and skips FAAB / 3-way t
   assert.equal(pickKey(2026, 7, '2026-10-01T00:00:00Z'), 'pk:0:5');
   const base = { id: 1, traded_at: '2026-10-01T00:00:00Z' };
   const t = toFitTrade({ ...base, sides: [{ r: 1, g: [{ p: '1' }] }, { r: 2, g: [{ k: [2027, 2, 2] }] }] });
-  assert.deepEqual(t, { id: 1, a: ['p:1'], b: ['pk:1:2'] });
+  assert.deepEqual(t, { id: 1, a: ['p:1'], b: ['pk:1:2'], weight: 1 });
   assert.equal(toFitTrade({ ...base, sides: [{ r: 1, g: [{ b: 5 }] }, { r: 2, g: [{ p: '1' }] }] }), null);
   assert.equal(toFitTrade({ ...base, sides: [{ r: 1, g: [{ p: '1' }] }, { r: 2, g: [{ p: '2' }] }, { r: 3, g: [{ p: '3' }] }] }), null);
+});
+
+test('trade weights pull the fit toward the heavily weighted trades', () => {
+  // Two conflicting views of X vs Y: light trades say X is worth 3Y, heavy trades say 1Y.
+  const trades: FitTrade[] = [];
+  for (let i = 0; i < 20; i++) trades.push({ id: `l${i}`, a: ['p:x'], b: ['p:y', 'p:y2', 'p:y3'], weight: 0.1 });
+  for (let i = 0; i < 20; i++) trades.push({ id: `h${i}`, a: ['p:x'], b: ['p:y'], weight: 1 });
+  const v = fitValues(trades, { alpha: 1 });
+  const unweighted = fitValues(trades.map((t) => ({ ...t, weight: 1 })), { alpha: 1 });
+  assert.ok(v.get('p:x')! / v.get('p:y')! < unweighted.get('p:x')! / unweighted.get('p:y')!);
 });
