@@ -19,7 +19,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { getAllSeasons, CURRENT_SEASON_NUMBER, FIRST_SEASON_YEAR, LEAGUE_SIZE } from "@/utils/seasonUtils";
+import { getAllSeasons, CURRENT_SEASON_NUMBER, CURRENT_SEASON_YEAR, FIRST_SEASON_YEAR, FIRST_ROOKIE_DRAFT_YEAR, LEAGUE_SIZE } from "@/utils/seasonUtils";
 import { format } from "date-fns";
 import TradeAssetModal from "@/components/TradeAssetModal";
 import { ChevronDown, ChevronRight } from "lucide-react";
@@ -452,14 +452,18 @@ const Trades = () => {
     enabled: needsVorp && unresolvedPickYears.length > 0,
   });
 
-  // Historical slot-average VORP: avg five_yr_vorp by overall_pick across all draft years.
+  // Historical slot-average VORP: avg five_yr_vorp by overall_pick across COMPLETED
+  // draft classes only (a full 5-season window has been played). Recent classes with
+  // 1-4 seasons of data would drag the average down. The startup draft is excluded.
   // Used for picks that were re-traded (receiver passed the pick on rather than drafting with it).
   const { data: slotAvgData } = useQuery({
     queryKey: ["slot-avg-vorp"],
     queryFn: async () => {
       const { data, error } = await supabase
         .from("rookie_draft_grades" as never)
-        .select("overall_pick, five_yr_vorp");
+        .select("overall_pick, five_yr_vorp")
+        .gte("draft_year", FIRST_ROOKIE_DRAFT_YEAR)
+        .lte("draft_year", CURRENT_SEASON_YEAR - 5);
       if (error) throw error;
       const bySlot = new Map<number, number[]>();
       for (const row of data as Array<{ overall_pick: number; five_yr_vorp: number }>) {
