@@ -177,6 +177,18 @@ export async function syncPlayoffBracket(
   ).length;
   if (unmapped > 0) log(`${league.season}: ${unmapped} bracket matches include rosters with no mapped team`, 'warn');
 
+  // Brackets loaded by hand from the league workbook (league_id = 'excel') win
+  // over Sleeper's, which can be wrong or incomplete for some seasons.
+  const { data: existing } = await supabase
+    .from('season_playoffs')
+    .select('league_id')
+    .eq('season_id', seasonId)
+    .maybeSingle();
+  if (existing?.league_id === 'excel') {
+    log(`${league.season}: keeping the manually loaded playoff bracket (not overwriting from Sleeper)`, 'info');
+    return;
+  }
+
   const { error } = await supabase.from('season_playoffs').upsert(
     {
       season_id: seasonId,

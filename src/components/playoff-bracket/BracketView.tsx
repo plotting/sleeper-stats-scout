@@ -104,8 +104,8 @@ function MatchCard({
 }
 
 function BracketColumns({
-  title, matches, config, matchups, teamNames, teamSeeds, seasonId, placeOffset,
-}: Props & { title: string; matches: PlayoffMatch[]; placeOffset: number }) {
+  title, matches, config, matchups, teamNames, teamSeeds, seasonId, placeOffset, plainRounds,
+}: Props & { title: string; matches: PlayoffMatch[]; placeOffset: number; plainRounds?: boolean }) {
   if (matches.length === 0) return null;
   const rounds = [...new Set(matches.map((m) => m.r))].sort((a, b) => a - b);
   const total = Math.max(...rounds);
@@ -118,7 +118,7 @@ function BracketColumns({
           return (
             <div key={r} className="min-w-[220px] flex-1 space-y-3">
               <div className="text-center">
-                <p className="text-sm font-semibold">{roundLabel(r, total)}</p>
+                <p className="text-sm font-semibold">{plainRounds ? `Round ${r}` : roundLabel(r, total)}</p>
                 <p className="text-xs text-slate-500">Week {weeks.join("–")}</p>
               </div>
               {matches
@@ -153,6 +153,7 @@ const BracketView = (props: Props) => (
       title="Consolation Bracket"
       matches={props.config.losers}
       placeOffset={losersPlaceOffset(props.config.winners, props.config.losers)}
+      plainRounds
     />
   </div>
 );
