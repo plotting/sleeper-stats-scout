@@ -3,8 +3,11 @@
 -- current year showed a large negative VORP (e.g. -115 after 3 weeks). The
 -- season length is now capped at the most games anyone has played that year
 -- (= weeks completed), so partial seasons are compared over the same games.
--- Completed seasons are unchanged (max games = 16/17). Same columns as before,
--- so player_vorp_summary and rookie_draft_grades keep working.
+-- Completed seasons keep the 16/17-game basis.
+-- VORP is also floored at 0: a player below replacement level just means you
+-- would have played the replacement instead, so a bust isn't penalised below
+-- zero (five-year sums in rookie_draft_grades and trade values build on this).
+-- Same columns as before, so player_vorp_summary keeps working.
 create or replace view player_vorp as
 with ranked as (
   select player_seasons.player_name,
@@ -44,7 +47,7 @@ select r.player_name,
   r.ppg,
   r.season_rank,
   rt.repl_points,
-  round(r.total_points - rt.repl_points::numeric / rt.repl_games::numeric * sl.games::numeric, 1) as vorp
+  greatest(0::numeric, round(r.total_points - rt.repl_points::numeric / rt.repl_games::numeric * sl.games::numeric, 1)) as vorp
 from ranked r
   join repl rt on r.year = rt.year and r."position" = rt."position"
   join season_len sl on sl.year = r.year;
