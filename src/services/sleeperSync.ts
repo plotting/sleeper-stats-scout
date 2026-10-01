@@ -12,6 +12,7 @@ import {
   fetchLosersBracket,
   buildRosterOwnerMap,
   lookupPlayerNames,
+  LEAGUE_ID,
   type SleeperLeague,
 } from './sleeperApi';
 
@@ -88,14 +89,24 @@ export async function buildTeamMappings(leagueId: string, log?: LogFn): Promise<
 
 /** Persist a user→team mapping to localStorage and Supabase teams.owner_id. */
 export async function saveTeamMappings(
+  leagueId: string,
   mappings: TeamMapping[],
   log: LogFn,
 ): Promise<void> {
   const toSave: Record<string, number> = {};
+  // teams.owner_id means "current owner", and it is what the scheduled job
+  // (which has no browser storage) maps rosters with. Only the current league's
+  // mapping may write it: saving an older season used to overwrite it with that
+  // season's owners and break the scheduled sync.
+  const isCurrentLeague = leagueId === LEAGUE_ID;
 
   for (const m of mappings) {
     if (!m.dbTeamId) continue;
     toSave[m.sleeperUserId] = m.dbTeamId;
+    if (!isCurrentLeague) {
+      log(`Mapped "${m.sleeperDisplayName}" → ${m.dbTeamName}`, 'success');
+      continue;
+    }
     const { error } = await supabase
       .from('teams')
       .update({ owner_id: m.sleeperUserId })
@@ -105,6 +116,9 @@ export async function saveTeamMappings(
     } else {
       log(`Mapped "${m.sleeperDisplayName}" → ${m.dbTeamName}`, 'success');
     }
+  }
+  if (!isCurrentLeague) {
+    log('Older season: saved in this browser only (the current owner of each team was not changed).', 'info');
   }
 
   if (Object.keys(toSave).length) {
@@ -225,7 +239,7 @@ export async function syncScoresAndSchedules(
 
   const rosterMap = await buildRosterToTeamMap(league.league_id);
   if (rosterMap.size === 0) {
-    log('No roster→team mappings found. Run Team Mapping first.', 'error');
+    log('No roster→team mappings found. In Admin → Team Mapping, load the CURRENT season and Save Mappings (that stores each team\'s current owner for the scheduled sync).', 'error');
     return;
   }
 
