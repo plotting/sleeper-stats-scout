@@ -1,4 +1,4 @@
-import { FIRST_ROOKIE_DRAFT_YEAR, CURRENT_SEASON_YEAR } from "@/utils/seasonUtils";
+import { FIRST_ROOKIE_DRAFT_YEAR, CURRENT_SEASON_YEAR, LEAGUE_SIZE } from "@/utils/seasonUtils";
 /**
  * Shared value-estimation helpers for Dynasty Digest and GM Scouting Report.
  * Deliberately simpler than Trades.tsx's precise date-windowed, retrade-aware
@@ -23,7 +23,7 @@ export function parseResolvedPick(description: string): { year: number; round: n
   const m = clean.match(/^(\d{4}) \((\d+)\.(\d+)\)/);
   if (!m) return null;
   const year = Number(m[1]), round = Number(m[2]), pick = Number(m[3]);
-  return { year, round, pick, overall: (round - 1) * 20 + pick };
+  return { year, round, pick, overall: (round - 1) * LEAGUE_SIZE + pick };
 }
 
 export interface HistoricalPick {

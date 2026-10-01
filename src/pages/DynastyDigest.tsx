@@ -510,7 +510,7 @@ const DynastyDigest = () => {
     if (rookieGrades && rookieGrades.length > 0) return rookieGrades;
     // Fall back to raw draft_picks (no VORP data yet for this class) so the pick count still shows.
     return (draftPicksRaw ?? []).map((p) => ({
-      overall_pick: (p.round - 1) * 20 + p.pick_number,
+      overall_pick: p.pick_number, // raw draft_picks.pick_number is already the overall pick
       round: p.round,
       team_name: teamNameById.get(p.team_id) ?? "Unknown",
       player_name: p.player_name,
