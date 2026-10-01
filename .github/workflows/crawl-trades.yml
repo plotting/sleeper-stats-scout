@@ -38,6 +38,7 @@ jobs:
           MAX_MINUTES: ${{ inputs.max_minutes || '300' }}
           TARGET_TRADES: ${{ inputs.target_trades || '50000' }}
       - name: Fit trade values
+        if: ${{ always() }}
         run: npx tsx scripts/fit-trade-values.ts
         env:
           TSX_TSCONFIG_PATH: tsconfig.app.json
