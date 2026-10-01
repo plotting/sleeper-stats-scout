@@ -119,7 +119,19 @@ export async function syncPlayerStats(
     onProgress?.((week / lastWeek) * 80);
   }
 
-  const rows = [...seasons.values()].map((p) => {
+  // The table is unique on player name per year, so two players sharing a name
+  // (e.g. two "Mike Williams") would collide: keep the higher scorer.
+  const byName = new Map<string, PlayerSeason>();
+  for (const p of seasons.values()) {
+    const key = p.player_name.toLowerCase();
+    const cur = byName.get(key);
+    if (!cur) { byName.set(key, p); continue; }
+    const [keep, drop] = p.total_points > cur.total_points ? [p, cur] : [cur, p];
+    byName.set(key, keep);
+    log(`${year}: two players named "${p.player_name}" — kept the ${keep.position} (${keep.total_points.toFixed(1)} pts), dropped the ${drop.position} (${drop.total_points.toFixed(1)})`, 'warn');
+  }
+
+  const rows = [...byName.values()].map((p) => {
     const total = Math.round(p.total_points * 100) / 100;
     return {
       player_name: p.player_name,
