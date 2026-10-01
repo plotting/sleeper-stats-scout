@@ -4,7 +4,7 @@
 // the two sides of as many trades as possible balance. Each asset has a log-value θ, a side is
 // worth the sum of exp(θ) over its assets, and we minimise (log sideA − log sideB)² over all
 // trades with a small ridge toward a prior so rarely-seen assets stay sensible. Values are
-// rescaled so the top five players (5+ trades) average 9000.
+// rescaled so the top five players (10+ trades) average 9000.
 
 import type { Asset, TradeRow } from './tradeMarket';
 
@@ -14,6 +14,7 @@ export interface FitTrade {
   id: number | string;
   a: AssetKey[];
   b: AssetKey[];
+  weight?: number; // how much this trade counts (e.g. similarity of its league's lineup to ours)
 }
 
 /** Pick keys are relative to the trade date so every draft class shares one curve. */
@@ -23,7 +24,7 @@ export function pickKey(season: number, round: number, tradedAt: string): AssetK
 }
 
 /** Two-sided trades without FAAB become a fit row; everything else is skipped. */
-export function toFitTrade(t: Pick<TradeRow, 'sides' | 'traded_at'> & { id: number | string }): FitTrade | null {
+export function toFitTrade(t: Pick<TradeRow, 'sides' | 'traded_at'> & { id: number | string }, weight = 1): FitTrade | null {
   if (t.sides.length !== 2) return null;
   const keys = (g: Asset[]): AssetKey[] | null => {
     const out: AssetKey[] = [];
@@ -36,7 +37,7 @@ export function toFitTrade(t: Pick<TradeRow, 'sides' | 'traded_at'> & { id: numb
   const a = keys(t.sides[0].g);
   const b = keys(t.sides[1].g);
   if (!a || !b || a.length === 0 || b.length === 0) return null;
-  return { id: t.id, a, b };
+  return { id: t.id, a, b, weight };
 }
 
 /** Rough prior before any trade has been seen. */
@@ -74,7 +75,7 @@ export function fitValues(trades: FitTrade[], opts: FitOptions = {}): Map<AssetK
     if (i === undefined) { i = keys.length; index.set(k, i); keys.push(k); }
     return i;
   };
-  const rows = trades.map((t) => ({ a: t.a.map(idx), b: t.b.map(idx) }));
+  const rows = trades.map((t) => ({ a: t.a.map(idx), b: t.b.map(idx), w: t.weight ?? 1 }));
   const n = keys.length;
   const prior = keys.map((k) => Math.log(priorValue(k)));
   const theta = Float64Array.from(prior);
@@ -90,7 +91,7 @@ export function fitValues(trades: FitTrade[], opts: FitOptions = {}): Map<AssetK
       let sa = 0, sb = 0;
       for (const i of r.a) sa += wt[i];
       for (const i of r.b) sb += wt[i];
-      const d = (Math.log(sa) - Math.log(sb)) / alpha; // log of side A over side B
+      const d = ((Math.log(sa) - Math.log(sb)) / alpha) * r.w; // log of side A over side B, weighted
       for (const i of r.a) grad[i] += (2 * d * wt[i]) / sa;
       for (const i of r.b) grad[i] -= (2 * d * wt[i]) / sb;
     }
@@ -102,11 +103,11 @@ export function fitValues(trades: FitTrade[], opts: FitOptions = {}): Map<AssetK
     }
   }
 
-  // Scale so the top players (5+ trades) average TOP_PLAYER_SCALE; fall back to the nearest 1st-round pick.
+  // Scale so the top players (10+ trades) average TOP_PLAYER_SCALE; fall back to the nearest 1st-round pick.
   const appearances = new Float64Array(n);
   for (const r of rows) for (const i of [...r.a, ...r.b]) appearances[i]++;
   const tops = keys.map((k, i) => ({ k, x: Math.exp(theta[i]), c: appearances[i] }))
-    .filter((e) => e.k.startsWith('p:') && e.c >= 5).sort((x, y) => y.x - x.x).slice(0, 5);
+    .filter((e) => e.k.startsWith('p:') && e.c >= 10).sort((x, y) => y.x - x.x).slice(0, 5);
   let scale = 1;
   if (tops.length === 5) {
     scale = TOP_PLAYER_SCALE / (tops.reduce((acc, e) => acc + e.x, 0) / 5);
@@ -155,19 +156,24 @@ export interface FitReport {
 }
 
 // Mean, not median: the prior values every player alike, so most 1-for-1 trades look perfectly even.
-const mean = (xs: number[]) => (xs.length === 0 ? NaN : xs.reduce((a, b) => a + b, 0) / xs.length);
+const mean = (xs: number[], ws?: number[]) => {
+  if (xs.length === 0) return NaN;
+  const w = ws ?? xs.map(() => 1);
+  const total = w.reduce((a, b) => a + b, 0);
+  return total > 0 ? xs.reduce((a, x, i) => a + x * w[i], 0) / total : NaN;
+};
 
-export const ALPHA_GRID = [1, 1.25, 1.5, 2, 2.5, 3];
+export const ALPHA_GRID = [1, 1.5, 2, 3, 4, 5];
 
 function holdoutGap(train: FitTrade[], test: FitTrade[], opts: FitOptions): { gap: number; coverage: number } {
   const alpha = opts.alpha ?? 1;
   const vals = fitValues(train, opts);
-  const gaps: number[] = [];
+  const gaps: number[] = [], ws: number[] = [];
   for (const t of test) {
     const s = scoreTrade(t, vals, false, alpha);
-    if (s) gaps.push(s.diffPct);
+    if (s) { gaps.push(s.diffPct); ws.push(t.weight ?? 1); }
   }
-  return { gap: mean(gaps), coverage: test.length ? gaps.length / test.length : 0 };
+  return { gap: mean(gaps, ws), coverage: test.length ? gaps.length / test.length : 0 };
 }
 
 /** Picks the consolidation exponent α that best predicts held-out trades (one 80/20 split). */
@@ -197,7 +203,7 @@ export function fitAndReport(trades: FitTrade[], opts: FitOptions = {}): { value
   let holdoutCoverage: number | null = null;
   const FOLDS = 5;
   if (trades.length >= FOLDS * 20) {
-    const gaps: number[] = [];
+    const gaps: number[] = [], gws: number[] = [];
     let tested = 0;
     for (let f = 0; f < FOLDS; f++) {
       const train = trades.filter((_, i) => i % FOLDS !== f);
@@ -206,10 +212,10 @@ export function fitAndReport(trades: FitTrade[], opts: FitOptions = {}): { value
       for (const t of test) {
         tested++;
         const s = scoreTrade(t, vals, false, alpha);
-        if (s) gaps.push(s.diffPct);
+        if (s) { gaps.push(s.diffPct); gws.push(t.weight ?? 1); }
       }
     }
-    holdoutMeanGap = mean(gaps);
+    holdoutMeanGap = mean(gaps, gws);
     holdoutCoverage = tested ? gaps.length / tested : null;
   }
   return {
@@ -217,8 +223,8 @@ export function fitAndReport(trades: FitTrade[], opts: FitOptions = {}): { value
     report: {
       trades: trades.length,
       assets: values.size,
-      inSampleMeanGap: mean(scores.map((s) => s.diffPct)),
-      priorMeanGap: mean(priorGaps),
+      inSampleMeanGap: mean(scores.map((s) => s.diffPct), trades.map((t) => t.weight ?? 1)),
+      priorMeanGap: mean(priorGaps, trades.map((t) => t.weight ?? 1)),
       holdoutMeanGap,
       holdoutCoverage,
       alpha,

@@ -31,7 +31,7 @@ interface Score { val_a: number; val_b: number; diff_pct: number; fair_tier: str
 interface FitRun {
   id: number; ran_at: string; format: string; n_trades: number; n_assets: number;
   in_sample_mean_gap: number | null; prior_mean_gap: number | null; holdout_mean_gap: number | null;
-  holdout_coverage: number | null; tiers: Record<string, number> | null;
+  holdout_coverage: number | null; tiers: Record<string, number | string> | null;
 }
 interface ValueRow { asset_key: string; value: number; n_trades: number }
 const SCORE_COLS = "val_a, val_b, diff_pct, fair_tier";
@@ -161,6 +161,7 @@ const FitReview = () => {
             <p>Avg gap: fit {pct(r.in_sample_mean_gap)} (guess-everything-equal {pct(r.prior_mean_gap)})</p>
             <p>Held-out gap: {pct(r.holdout_mean_gap)}{r.holdout_coverage != null && ` · ${Math.round(r.holdout_coverage * 100)}% of held-out trades fully valued`}</p>
             {r.tiers && <p>{Object.entries(r.tiers).filter(([k]) => k in TIER_LABEL).map(([k, n]) => `${TIER_LABEL[k]} ${n}`).join(" · ")}</p>}
+            {r.tiers && typeof r.tiers.lineup === "string" && <p>Weighted toward leagues with a {r.tiers.lineup} lineup</p>}
             {r.tiers && "alpha" in r.tiers && <p>Consolidation exponent {Number(r.tiers.alpha).toFixed(2)} {Number(r.tiers.alpha) > 1 ? "(stars beat several lesser pieces)" : "(plain sum)"}</p>}
           </div>
         ))}

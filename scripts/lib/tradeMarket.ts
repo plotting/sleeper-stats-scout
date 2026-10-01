@@ -10,6 +10,33 @@ export interface SleeperLeagueLite {
   settings?: { type?: number; num_teams?: number };
 }
 
+/** Skill-position starting slots of a league, e.g. {qb:1, rb:2, wr:2, te:1, flex:2, sf:0}. */
+export interface Lineup { qb: number; rb: number; wr: number; te: number; flex: number; sf: number }
+
+export function lineupOf(positions: string[] | undefined | null): Lineup | null {
+  if (!positions?.length) return null;
+  const count = (...names: string[]) => positions.filter((p) => names.includes(p)).length;
+  return {
+    qb: count('QB'), rb: count('RB'), wr: count('WR'), te: count('TE'),
+    flex: count('FLEX', 'WRRB_FLEX', 'REC_FLEX', 'WRRBTE_FLEX'), sf: count('SUPER_FLEX'),
+  };
+}
+
+export const lineupLabel = (l: Lineup) => `${l.qb}QB ${l.rb}RB ${l.wr}WR ${l.te}TE ${l.flex}FLEX${l.sf ? ` ${l.sf}SF` : ''}`;
+
+/**
+ * How much a trade from a league with this lineup should count when valuing assets for `target`.
+ * More flex slots lower the replacement level at RB/WR, so leagues whose lineups differ from ours
+ * price positions differently; each slot of difference cuts the weight.
+ */
+export function lineupWeight(l: Lineup | null | undefined, target: Lineup | null | undefined): number {
+  if (!target) return 1;
+  if (!l) return 0.25;
+  const d = 0.8 * Math.abs(l.qb - target.qb) + 0.4 * (Math.abs(l.rb - target.rb) + Math.abs(l.wr - target.wr) + Math.abs(l.te - target.te))
+    + 0.5 * Math.abs(l.flex - target.flex) + 1.5 * Math.abs(l.sf - target.sf);
+  return Math.exp(-d);
+}
+
 export interface LeagueProfile {
   league_id: string;
   season: number;
@@ -20,6 +47,7 @@ export interface LeagueProfile {
   pass_td: number | null;
   matches: boolean;
   dynasty: boolean;
+  lineup: Lineup | null;
   previous_league_id: string | null;
 }
 
@@ -61,6 +89,7 @@ export function profileLeague(l: SleeperLeagueLite): LeagueProfile {
     pass_td,
     matches,
     dynasty,
+    lineup: lineupOf(l.roster_positions),
     previous_league_id: l.previous_league_id ?? null,
   };
 }

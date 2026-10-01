@@ -47,3 +47,16 @@ test('failed, non-trade and one-sided trades are skipped', () => {
   assert.equal(parseTrade({ ...tx, status: 'failed', adds: { '1': 1, '2': 2 } }, league), null);
   assert.equal(parseTrade({ ...tx, type: 'waiver', adds: { '1': 1, '2': 2 } }, league), null);
 });
+
+test('lineup weights fall as a league’s lineup differs from ours', async () => {
+  const { lineupOf, lineupWeight } = await import('./lib/tradeMarket');
+  const ours = lineupOf(['QB', 'RB', 'RB', 'WR', 'WR', 'TE', 'FLEX', 'FLEX', 'FLEX', 'BN', 'BN', 'K', 'DEF'])!;
+  assert.deepEqual(ours, { qb: 1, rb: 2, wr: 2, te: 1, flex: 3, sf: 0 });
+  assert.equal(lineupWeight(ours, ours), 1);
+  const moreFlex = lineupOf(['QB', 'RB', 'RB', 'WR', 'WR', 'TE', 'FLEX', 'BN'])!;
+  const superflex = lineupOf(['QB', 'RB', 'RB', 'WR', 'WR', 'TE', 'FLEX', 'FLEX', 'FLEX', 'SUPER_FLEX'])!;
+  assert.ok(lineupWeight(moreFlex, ours) < 1);
+  assert.ok(lineupWeight(superflex, ours) < lineupWeight(moreFlex, ours));
+  assert.equal(lineupWeight(null, ours), 0.25);
+  assert.equal(lineupWeight(null, null), 1);
+});
