@@ -27,7 +27,13 @@ export function parseResolvedPick(description: string): { year: number; round: n
 }
 
 /** Name key matching player_vorp.name_key: lowercase, no Jr./II-style suffix, letters and digits only. */
-export function nameKey(name: string): string {
+const NAME_ALIASES: Record<string, string> = {
+  "phillip rivers": "philip rivers", // trades spell it with two L's; the stats use one
+  "robby anderson": "robbie chosen", // renamed; Sleeper lists him as Robbie Chosen for every year
+};
+
+export function nameKey(rawName: string): string {
+  const name = NAME_ALIASES[rawName.trim().toLowerCase()] ?? rawName;
   return name.replace(/\s+(jr|sr|ii|iii|iv|v)\.?$/i, "").replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
 }
 
