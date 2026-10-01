@@ -553,6 +553,7 @@ const Admin = () => {
             </div>
           )}
           <Link to="/trade-market" className="text-sm text-blue-400 hover:underline">Trade Market →</Link>
+          <Link to="/trade-calculator" className="text-sm text-blue-400 hover:underline">Trade Calculator →</Link>
           <Button variant="ghost" size="sm" onClick={() => supabase.auth.signOut()} className="text-slate-400">
             Sign out
           </Button>
