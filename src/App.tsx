@@ -20,6 +20,7 @@ import DynastyDigest from "./pages/DynastyDigest";
 import GMScouting from "./pages/GMScouting";
 import Hall from "./pages/Hall";
 import TradeMarket from "./pages/TradeMarket";
+import TradeCalculator from "./pages/TradeCalculator";
 import NotFound from "./pages/NotFound";
 import PlayoffConfigProvider from "./components/PlayoffConfigProvider";
 import "./App.css";
@@ -64,6 +65,7 @@ function App() {
               <Route path="/admin" element={<Admin />} />
               {/* Hidden like /admin: not in the navigation, admin sign-in required */}
               <Route path="/trade-market" element={<TradeMarket />} />
+              <Route path="/trade-calculator" element={<TradeCalculator />} />
               <Route path="*" element={<NotFound />} />
             </Routes>
           </main>
