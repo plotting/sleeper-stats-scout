@@ -64,3 +64,12 @@ writes are locked to a signed-in admin by row-level security. Reads stay public.
    access; the file ends with an undo block).
 5. Add the GitHub Actions secret `SUPABASE_SERVICE_ROLE_KEY` (Supabase → Project
    Settings → API → service_role) so the scheduled sync can keep writing.
+
+## Trade market (admin only)
+
+`scripts/crawl-trades.ts` (run by `.github/workflows/crawl-trades.yml`) collects completed
+trades from public Sleeper dynasty leagues with settings similar to this one into
+`market_trades` (migration `20260930000017_trade_market.sql`), snowballing out from this
+league's managers. The tables are readable only by the signed-in admin; browse them at
+`/trade-market` (linked from `/admin`, not from the site navigation). The crawler needs the
+`SUPABASE_SERVICE_ROLE_KEY` GitHub secret and stops at `TARGET_TRADES` (default 50,000).

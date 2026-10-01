@@ -19,6 +19,7 @@ import DraftGrades from "./pages/DraftGrades";
 import DynastyDigest from "./pages/DynastyDigest";
 import GMScouting from "./pages/GMScouting";
 import Hall from "./pages/Hall";
+import TradeMarket from "./pages/TradeMarket";
 import NotFound from "./pages/NotFound";
 import PlayoffConfigProvider from "./components/PlayoffConfigProvider";
 import "./App.css";
@@ -61,6 +62,8 @@ function App() {
               <Route path="/current-season" element={<CurrentSeason />} />
               <Route path="/season14" element={<Navigate to="/current-season" replace />} />
               <Route path="/admin" element={<Admin />} />
+              {/* Hidden like /admin: not in the navigation, admin sign-in required */}
+              <Route path="/trade-market" element={<TradeMarket />} />
               <Route path="*" element={<NotFound />} />
             </Routes>
           </main>

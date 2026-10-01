@@ -1,0 +1,39 @@
+name: Crawl trade market
+
+# Collects completed trades from public Sleeper dynasty leagues similar to ours into
+# the market_trades table (see scripts/crawl-trades.ts). Resumable: each run continues
+# where the last stopped and stops by itself at TARGET_TRADES. Needs the
+# SUPABASE_SERVICE_ROLE_KEY secret (the market tables are admin-only).
+on:
+  schedule:
+    - cron: '20 */8 * * *'
+  workflow_dispatch:
+    inputs:
+      max_minutes:
+        description: 'Stop after this many minutes'
+        default: '300'
+      target_trades:
+        description: 'Stop once this many trades are stored'
+        default: '50000'
+
+concurrency:
+  group: crawl-trades
+  cancel-in-progress: false
+
+jobs:
+  crawl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npx tsx scripts/crawl-trades.ts
+        env:
+          TSX_TSCONFIG_PATH: tsconfig.app.json
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          MAX_MINUTES: ${{ inputs.max_minutes || '300' }}
+          TARGET_TRADES: ${{ inputs.target_trades || '50000' }}
