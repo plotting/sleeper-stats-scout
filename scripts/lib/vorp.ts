@@ -3,7 +3,7 @@
 // instead of the (slow) view. scripts/vorp.test.ts pins the numbers; keep both in sync.
 
 export interface SeasonRow { player_name: string; position: string; year: number; total_points: number; games_played: number }
-export interface VorpRow { player_name: string; position: string; year: number; vorp: number }
+export interface VorpRow { player_name: string; position: string; year: number; vorp: number; season_games: number }
 
 const TEAMS = 10;
 const FLEX_SLOTS = 3;
@@ -43,7 +43,7 @@ export function computeVorp(rows: SeasonRow[]): VorpRow[] {
       const repl = players[Math.max(0, Math.min(want, players.length) - 1)];
       const replPpg = repl.total_points / Math.max(repl.games_played, 1);
       for (const r of players) {
-        out.push({ player_name: r.player_name, position: p.position, year, vorp: Math.max(0, Math.round((r.total_points - replPpg * games) * 10) / 10) });
+        out.push({ player_name: r.player_name, position: p.position, year, vorp: Math.max(0, Math.round((r.total_points - replPpg * games) * 10) / 10), season_games: games });
       }
     }
   }

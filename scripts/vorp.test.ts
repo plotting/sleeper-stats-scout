@@ -34,3 +34,8 @@ test('RB and WR replacement sits deeper than the old fixed rank 30, and VORP nev
   assert.ok(v.find((r) => r.player_name === 'RB30')!.vorp > 0);
   assert.ok(v.find((r) => r.player_name === 'RB1')!.vorp > v.find((r) => r.player_name === 'RB30')!.vorp);
 });
+
+test('each row carries the season length used for the VORP baseline', () => {
+  const v = computeVorp(season());
+  assert.ok(v.every((r) => r.season_games === 17));
+});
