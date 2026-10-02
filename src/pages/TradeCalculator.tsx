@@ -1,24 +1,23 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Plus, X } from "lucide-react";
+import { Check, Copy, Link2, Plus, X } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import AdminGate from "@/components/admin/AdminGate";
 import { AssetLine, AssetSearch } from "@/components/market/assetUi";
+import { VerdictMeter, TradeReport } from "@/components/market/TradeReport";
+import { ValueOverTime } from "@/components/market/ValueOverTime";
+import { PriceCheck } from "@/components/market/PriceCheck";
+import { DurabilityCard } from "@/components/market/Durability";
+import { ValuesExplainer } from "@/components/market/ValuesExplainer";
 import { loadDirectory, loadValues, useEntries } from "@/components/market/assetData";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-import { assess, effectiveValue, normalizeTop, sideTotal, suggestToEven, TIER_LABEL, type CalcAsset, type Depth } from "@/utils/marketCalc";
+import { Button } from "@/components/ui/button";
+import { assess, decodeShare, effectiveValue, encodeShare, normalizeTop, sideTotal, suggestToEven, type AgeCurve, type CalcAsset, type Depth } from "@/utils/marketCalc";
 
 // Hidden, admin-only page: prices a trade with the values fitted from completed market trades
 // (market_values). Players only appear once they've been in enough trades to get a value.
 
-
-const TIER_STYLE: Record<string, string> = {
-  even: "text-emerald-400 border-emerald-400/40 bg-emerald-400/10",
-  close: "text-sky-400 border-sky-400/40 bg-sky-400/10",
-  edge: "text-amber-400 border-amber-400/40 bg-amber-400/10",
-  lop: "text-red-400 border-red-400/40 bg-red-400/10",
-};
 
 function Side({ title, assets, depth, onRemove, children }: { title: string; assets: CalcAsset[]; depth: Depth; onRemove: (key: string) => void; children: React.ReactNode }) {
   const total = sideTotal(assets, depth);
@@ -32,7 +31,7 @@ function Side({ title, assets, depth, onRemove, children }: { title: string; ass
       <div className="space-y-1.5 min-h-[3rem]">
         {assets.map((a) => (
           <div key={a.key} className="rounded-lg border border-white/10 px-3 py-2">
-            <AssetLine asset={a} right={<button type="button" onClick={() => onRemove(a.key)} aria-label={`Remove ${a.label}`} className="text-slate-500 hover:text-white"><X className="h-4 w-4" /></button>} />
+            <AssetLine asset={a} right={<button type="button" data-no-capture onClick={() => onRemove(a.key)} aria-label={`Remove ${a.label}`} className="text-slate-500 hover:text-white"><X className="h-4 w-4" /></button>} />
           </div>
         ))}
       </div>
@@ -41,13 +40,18 @@ function Side({ title, assets, depth, onRemove, children }: { title: string; ass
 }
 
 const Calculator = () => {
-  const [format, setFormat] = useState<"1qb" | "sf">("1qb");
+  // A shared link carries the trade and settings in the query string; the assets are filled in once values load.
+  const shared = useRef(typeof window !== "undefined" ? decodeShare(window.location.search) : null);
+  const pendingAssets = useRef<{ receive: string[]; send: string[] } | null>(shared.current && (shared.current.receive.length || shared.current.send.length) ? { receive: shared.current.receive, send: shared.current.send } : null);
+  const [format, setFormat] = useState<"1qb" | "sf">(shared.current?.format === "sf" ? "sf" : "1qb");
   const [receive, setReceive] = useState<CalcAsset[]>([]);
   const [send, setSend] = useState<CalcAsset[]>([]);
   const [vorpPct, setVorpPct] = useState<number>(() => {
+    if (shared.current?.vorp !== undefined && shared.current.vorp >= 0 && shared.current.vorp <= 100) return shared.current.vorp;
     try { const v = Number(localStorage.getItem("calc-vorp-weight")); return Number.isFinite(v) && v >= 0 && v <= 100 && localStorage.getItem("calc-vorp-weight") !== null ? v : 50; } catch { return 50; }
   });
   const [pickPct, setPickPct] = useState<number>(() => {
+    if (shared.current?.pick !== undefined && shared.current.pick >= 50 && shared.current.pick <= 250) return shared.current.pick;
     try { const raw = localStorage.getItem("calc-pick-scale"); const v = Number(raw); return raw !== null && Number.isFinite(v) && v >= 50 && v <= 250 ? v : 100; } catch { return 100; }
   });
   const setPick = (n: number) => { setPickPct(n); try { localStorage.setItem("calc-pick-scale", String(n)); } catch { /* optional */ } };
@@ -87,6 +91,24 @@ const Calculator = () => {
 
   const { data: directory } = useQuery({ queryKey: ["calc-directory"], queryFn: loadDirectory, staleTime: 60 * 60 * 1000 });
   const entries = useEntries(values, directory);
+  useEffect(() => {
+    const pending = pendingAssets.current;
+    if (!pending || entries.length === 0) return;
+    const byKey = new Map(entries.map((a) => [a.key, a]));
+    setReceive(pending.receive.flatMap((k) => byKey.get(k) ?? []));
+    setSend(pending.send.flatMap((k) => byKey.get(k) ?? []));
+    pendingAssets.current = null;
+  }, [entries]);
+  // Value-by-age curves per position (fitted alongside the values)
+  const curves = useMemo(() => {
+    const out = new Map<string, AgeCurve>();
+    if (!raw) return out;
+    for (const pos of ["QB", "RB", "WR", "TE"]) {
+      const b1 = raw.get(`cfg:age:${pos}:b1`)?.value, b2 = raw.get(`cfg:age:${pos}:b2`)?.value;
+      if (b1 !== undefined && b2 !== undefined) out.set(pos, { b1, b2 });
+    }
+    return out;
+  }, [raw]);
   const taken = useMemo(() => new Set([...receive, ...send].map((a) => a.key)), [receive, send]);
   const fitDepth = values?.get("cfg:rho_players")?.value ?? 1;
   const rhoPlayers = fitDepth;
@@ -101,6 +123,39 @@ const Calculator = () => {
     [entries, taken, result.gap, result.tier, hasAssets, receiveP, sendP, depth],
   );
 
+  const captureRef = useRef<HTMLDivElement>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const flash = (msg: string) => { setNotice(msg); setTimeout(() => setNotice(null), 2200); };
+  const shareUrl = () => `${window.location.origin}${window.location.pathname}?${encodeShare({ receive: receive.map((a) => a.key), send: send.map((a) => a.key), format, vorp: vorpPct, pick: pickPct })}`;
+  const copyLink = async () => {
+    try { await navigator.clipboard.writeText(shareUrl()); flash("Link copied"); } catch { window.prompt("Copy this link", shareUrl()); }
+  };
+  const copyImage = async () => {
+    if (!captureRef.current) return;
+    try {
+      const { toBlob } = await import("html-to-image");
+      const blob = await toBlob(captureRef.current, {
+        pixelRatio: 2, cacheBust: true, backgroundColor: "#0b0d14",
+        filter: (n) => !(n instanceof HTMLElement && n.dataset.noCapture !== undefined),
+        imagePlaceholder: "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==", // photos that can't be fetched become blank
+      });
+      if (!blob) throw new Error("no image");
+      try {
+        await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+        flash("Image copied");
+      } catch {
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob); a.download = "trade.png"; a.click();
+        flash("Image saved");
+      }
+    } catch { flash("Couldn't make the image"); }
+  };
+  const clearAll = () => { setReceive([]); setSend([]); };
+  const players = useMemo(() => [...receiveP, ...sendP].filter((a) => a.meta?.playerId), [receiveP, sendP]);
+  const durabilityPlayers = useMemo(
+    () => [...receiveP.filter((a) => a.meta?.playerId).map((a) => ({ ...a, side: "get" as const })), ...sendP.filter((a) => a.meta?.playerId).map((a) => ({ ...a, side: "give" as const }))],
+    [receiveP, sendP],
+  );
   const add = (set: typeof setReceive) => (a: CalcAsset) => set((xs) => (xs.some((x) => x.key === a.key) ? xs : [...xs, a]));
   const remove = (set: typeof setReceive) => (key: string) => set((xs) => xs.filter((x) => x.key !== key));
   const empty = receive.length + send.length === 0;
@@ -141,25 +196,29 @@ const Calculator = () => {
 
       {values && values.size > 0 && (
         <>
-          <Card className="border-white/10 p-5 grid md:grid-cols-2 gap-8">
-            <Side title="You receive" assets={receiveP} depth={depth} onRemove={remove(setReceive)}>
-              <AssetSearch entries={entries} taken={taken} onAdd={add(setReceive)} />
-            </Side>
-            <Side title="You send" assets={sendP} depth={depth} onRemove={remove(setSend)}>
-              <AssetSearch entries={entries} taken={taken} onAdd={add(setSend)} />
-            </Side>
-          </Card>
-
-          {!empty && (
-            <Card className={cn("p-5 border text-center space-y-1", TIER_STYLE[result.tier])}>
-              <p className="text-lg font-bold">{TIER_LABEL[result.tier]} · {result.diffPct.toFixed(1)}% gap</p>
-              <p className="text-sm opacity-90">
-                {result.winner === null ? "Both sides are worth the same."
-                  : result.winner === "you" ? `You come out ahead by ${Math.round(result.gap).toLocaleString()}.`
-                  : `They come out ahead by ${Math.round(-result.gap).toLocaleString()}.`}
-              </p>
+          <div ref={captureRef} className="space-y-4 rounded-2xl">
+            <Card className="border-white/10 p-5 grid md:grid-cols-2 gap-8">
+              <Side title="You receive" assets={receiveP} depth={depth} onRemove={remove(setReceive)}>
+                <AssetSearch entries={entries} taken={taken} onAdd={add(setReceive)} />
+              </Side>
+              <Side title="You send" assets={sendP} depth={depth} onRemove={remove(setSend)}>
+                <AssetSearch entries={entries} taken={taken} onAdd={add(setSend)} />
+              </Side>
             </Card>
-          )}
+            {!empty && (
+              <Card className="border-white/10 p-5">
+                <VerdictMeter recv={result.recv} sent={result.sent} />
+                <p className="text-center text-xs text-slate-500 mt-1">{result.diffPct.toFixed(1)}% gap</p>
+              </Card>
+            )}
+          </div>
+
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            <Button variant="outline" onClick={copyLink} disabled={empty}><Link2 className="h-4 w-4 mr-1.5" />Share link</Button>
+            <Button variant="outline" onClick={copyImage} disabled={empty}><Copy className="h-4 w-4 mr-1.5" />Copy image</Button>
+            <Button variant="ghost" onClick={clearAll} disabled={empty} className="text-slate-400">Clear</Button>
+            {notice && <span className="inline-flex items-center gap-1 text-xs text-emerald-400"><Check className="h-3.5 w-3.5" />{notice}</span>}
+          </div>
 
           {!empty && result.tier !== "even" && names.length > 0 && (
             <Card className="border-white/10 p-4 space-y-2">
@@ -174,6 +233,16 @@ const Calculator = () => {
               </div>
             </Card>
           )}
+
+          {!empty && (
+            <>
+              <TradeReport receive={receiveP} send={sendP} depth={depth} subtitle={`10-team ${format === "sf" ? "Superflex" : "1QB"} · values from completed trades, ${vorpPct}% VORP`} />
+              <ValueOverTime receive={receiveP} send={sendP} depth={depth} curves={curves} />
+              <DurabilityCard players={durabilityPlayers} />
+              <PriceCheck players={players} directory={directory} trade={{ get: receiveP, give: sendP }} />
+            </>
+          )}
+          <ValuesExplainer />
         </>
       )}
     </div>
