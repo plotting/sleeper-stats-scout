@@ -18,6 +18,7 @@ export function tierExpectations(picks: DraftedPick[]): Map<string, { annualVorp
   const add = (key: string, v: number) => { const e = acc.get(key) ?? { sum: 0, n: 0 }; e.sum += v; e.n++; acc.set(key, e); };
   for (const p of picks) {
     add(`${p.round}:any`, p.annualVorp);
+    add(`${p.round}:s${p.slot}`, p.annualVorp); // single slot, for the shape of the curve
     const tier = PICK_TIERS.find((t) => (t.slots as readonly number[]).includes(p.slot));
     if (tier) add(`${p.round}:${tier.key}`, p.annualVorp);
   }
