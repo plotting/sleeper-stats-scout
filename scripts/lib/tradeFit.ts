@@ -49,7 +49,14 @@ export function priorValue(key: AssetKey): number {
   return 300;
 }
 
-export interface FitOptions { iterations?: number; learningRate?: number; ridge?: number; alpha?: number }
+export interface FitOptions {
+  iterations?: number;
+  learningRate?: number;
+  ridge?: number;
+  alpha?: number;
+  /** Log-value each asset is shrunk toward (default: a flat prior for players, a round curve for picks). */
+  priors?: Map<AssetKey, number>;
+}
 
 /** Value of a side: (Σ v^α)^(1/α). α = 1 is a plain sum; larger α lets the best piece dominate, so
  *  stars are worth more than the sum of several lesser players (a consolidation premium). */
@@ -77,7 +84,7 @@ export function fitValues(trades: FitTrade[], opts: FitOptions = {}): Map<AssetK
   };
   const rows = trades.map((t) => ({ a: t.a.map(idx), b: t.b.map(idx), w: t.weight ?? 1 }));
   const n = keys.length;
-  const prior = keys.map((k) => Math.log(priorValue(k)));
+  const prior = keys.map((k) => opts.priors?.get(k) ?? Math.log(priorValue(k)));
   const theta = Float64Array.from(prior);
   const m = new Float64Array(n);
   const v = new Float64Array(n);
@@ -119,7 +126,90 @@ export function fitValues(trades: FitTrade[], opts: FitOptions = {}): Map<AssetK
   }
   const out = new Map<AssetKey, number>();
   keys.forEach((k, i) => out.set(k, Math.exp(theta[i]) * scale));
+  // Assets in the priors that never appear in a trade are valued from their prior alone.
+  for (const [k, p] of opts.priors ?? []) if (!index.has(k)) out.set(k, Math.exp(p) * scale);
   return out;
+}
+
+// ── VORP prior: players are shrunk toward a value implied by recent VORP and age ──────────────
+
+export interface PlayerFeature { vorp: number; age: number | null }
+
+/** Regression row: intercept, ln(1 + recent VORP), age and age² (centred at 26, in 5-year units). */
+export function featureRow(f: PlayerFeature): number[] {
+  const a = ((f.age ?? 26) - 26) / 5;
+  return [1, Math.log(1 + Math.max(0, f.vorp)), a, a * a];
+}
+
+/** Weighted least squares via the normal equations (tiny ridge keeps them solvable). */
+export function olsWeighted(X: number[][], y: number[], w: number[]): number[] {
+  const k = X[0].length;
+  const A = Array.from({ length: k }, () => new Array(k + 1).fill(0));
+  for (let r = 0; r < X.length; r++) {
+    for (let i = 0; i < k; i++) {
+      for (let j = 0; j < k; j++) A[i][j] += w[r] * X[r][i] * X[r][j];
+      A[i][k] += w[r] * X[r][i] * y[r];
+    }
+  }
+  for (let i = 0; i < k; i++) A[i][i] += 1e-6;
+  for (let i = 0; i < k; i++) {
+    let piv = i;
+    for (let r = i + 1; r < k; r++) if (Math.abs(A[r][i]) > Math.abs(A[piv][i])) piv = r;
+    [A[i], A[piv]] = [A[piv], A[i]];
+    for (let r = 0; r < k; r++) {
+      if (r === i) continue;
+      const f = A[r][i] / A[i][i];
+      for (let c = i; c <= k; c++) A[r][c] -= f * A[i][c];
+    }
+  }
+  return A.map((row, i) => row[k] / row[i]);
+}
+
+export interface VorpPriorInfo { r2: number; players: number; slope: number }
+
+/**
+ * Two passes: fit values freely, regress the log-values of well-traded players on VORP and age,
+ * then refit with every player shrunk toward their regression value (so players with few trades
+ * take their VORP-implied value, and players with none are valued from VORP alone).
+ */
+export function fitWithFeatures(
+  trades: FitTrade[], feats: Map<AssetKey, PlayerFeature>, opts: FitOptions = {},
+): { values: Map<AssetKey, number>; info: VorpPriorInfo | null } {
+  const first = fitValues(trades, opts);
+  const counts = new Map<AssetKey, number>();
+  for (const t of trades) for (const k of [...t.a, ...t.b]) counts.set(k, (counts.get(k) ?? 0) + 1);
+
+  const X: number[][] = [], y: number[] = [], w: number[] = [];
+  const noFeat: number[] = [], noFeatW: number[] = [];
+  for (const [k, v] of first) {
+    if (!k.startsWith('p:')) continue;
+    const n = counts.get(k) ?? 0;
+    const f = feats.get(k);
+    if (n < 5) continue;
+    if (f) { X.push(featureRow(f)); y.push(Math.log(v)); w.push(Math.min(n, 40)); }
+    else { noFeat.push(Math.log(v)); noFeatW.push(Math.min(n, 40)); }
+  }
+  if (X.length < 30) return { values: first, info: null };
+
+  const beta = olsWeighted(X, y, w);
+  const pred = (f: PlayerFeature) => featureRow(f).reduce((s, x, i) => s + x * beta[i], 0);
+  const wsum = w.reduce((a, b) => a + b, 0);
+  const ybar = y.reduce((s, v, i) => s + v * w[i], 0) / wsum;
+  let ssRes = 0, ssTot = 0;
+  y.forEach((v, i) => { ssRes += w[i] * (v - X[i].reduce((s, x, j) => s + x * beta[j], 0)) ** 2; ssTot += w[i] * (v - ybar) ** 2; });
+  const unmatched = noFeat.length >= 5
+    ? noFeat.reduce((s, v, i) => s + v * noFeatW[i], 0) / noFeatW.reduce((a, b) => a + b, 0)
+    : ybar;
+
+  const priors = new Map<AssetKey, number>();
+  for (const [k, v] of first) {
+    if (!k.startsWith('p:')) priors.set(k, Math.log(v));
+    else priors.set(k, feats.has(k) ? pred(feats.get(k)!) : unmatched);
+  }
+  for (const [k, f] of feats) if (!priors.has(k)) priors.set(k, pred(f));
+
+  const values = fitValues(trades, { ...opts, ridge: opts.ridge ?? 0.4, priors });
+  return { values, info: { r2: ssTot > 0 ? 1 - ssRes / ssTot : 0, players: X.length, slope: beta[1] } };
 }
 
 export type FairTier = 'even' | 'close' | 'edge' | 'lop';
@@ -151,6 +241,7 @@ export interface FitReport {
   priorMeanGap: number;
   holdoutMeanGap: number | null;
   holdoutCoverage: number | null; // share of held-out trades whose assets were all seen in training
+  vorp: VorpPriorInfo | null;      // how well recent VORP + age explain player values
   alpha: number;
   tiers: Record<FairTier, number>;
 }
@@ -168,10 +259,14 @@ const mean = (xs: number[], ws?: number[]) => {
  * re-labels the same ordering (sides compare identically via Σ v^α) while compressing the displayed
  * values and shrinking measured gaps, so it must not be tuned on the gap.
  */
-export function fitAndReport(trades: FitTrade[], opts: FitOptions = {}): { values: Map<AssetKey, number>; report: FitReport } {
+export function fitAndReport(
+  trades: FitTrade[], opts: FitOptions = {}, feats?: Map<AssetKey, PlayerFeature>,
+): { values: Map<AssetKey, number>; report: FitReport } {
   const alpha = opts.alpha ?? 1;
   const o = { ...opts, alpha };
-  const values = fitValues(trades, o);
+  const model = (tr: FitTrade[]) => (feats ? fitWithFeatures(tr, feats, o) : { values: fitValues(tr, o), info: null });
+  const full = model(trades);
+  const values = full.values;
   const scores = trades.map((t) => scoreTrade(t, values, false, alpha)!);
   const tiers: Record<FairTier, number> = { even: 0, close: 0, edge: 0, lop: 0 };
   for (const s of scores) tiers[s.tier]++;
@@ -186,7 +281,7 @@ export function fitAndReport(trades: FitTrade[], opts: FitOptions = {}): { value
     for (let f = 0; f < FOLDS; f++) {
       const train = trades.filter((_, i) => i % FOLDS !== f);
       const test = trades.filter((_, i) => i % FOLDS === f);
-      const vals = fitValues(train, o);
+      const vals = model(train).values;
       for (const t of test) {
         tested++;
         const s = scoreTrade(t, vals, false, alpha);
@@ -200,12 +295,13 @@ export function fitAndReport(trades: FitTrade[], opts: FitOptions = {}): { value
     values,
     report: {
       trades: trades.length,
-      assets: values.size,
+      assets: new Set(trades.flatMap((t) => [...t.a, ...t.b])).size,
       inSampleMeanGap: mean(scores.map((s) => s.diffPct), trades.map((t) => t.weight ?? 1)),
       priorMeanGap: mean(priorGaps, trades.map((t) => t.weight ?? 1)),
       holdoutMeanGap,
       holdoutCoverage,
       alpha,
+      vorp: full.info,
       tiers,
     },
   };

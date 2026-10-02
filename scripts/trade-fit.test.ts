@@ -87,3 +87,36 @@ test('trade weights pull the fit toward the heavily weighted trades', () => {
   const unweighted = fitValues(trades.map((t) => ({ ...t, weight: 1 })), { alpha: 1 });
   assert.ok(v.get('p:x')! / v.get('p:y')! < unweighted.get('p:x')! / unweighted.get('p:y')!);
 });
+
+test('VORP prior helps sparse players and values players that never traded', () => {
+  let seed = 5;
+  const rand = () => ((seed = (seed * 1664525 + 1013904223) % 4294967296) / 4294967296);
+  const feats = new Map<string, { vorp: number; age: number | null }>();
+  const truth = new Map<string, number>();
+  for (let i = 0; i < 80; i++) {
+    const vorp = 5 + i * 4;
+    feats.set(`p:${i}`, { vorp, age: 24 });
+    truth.set(`p:${i}`, 300 * (1 + Math.log(1 + vorp)) ** 2.2 * (0.9 + 0.2 * rand()));
+  }
+  feats.set('p:untraded', { vorp: 150, age: 24 });
+  const traded = [...truth.keys()];
+  const trades: FitTrade[] = [];
+  while (trades.length < 220) {
+    const a = traded[Math.floor(rand() * 80)];
+    const b: string[] = [];
+    let s = 0;
+    for (let tries = 0; tries < 6 && s < truth.get(a)! * 0.92; tries++) {
+      const k = traded[Math.floor(rand() * 80)];
+      if (k === a || b.includes(k) || s + truth.get(k)! > truth.get(a)! * 1.1) continue;
+      b.push(k); s += truth.get(k)!;
+    }
+    if (b.length) trades.push({ id: trades.length, a: [a], b });
+  }
+  const plain = fitAndReport(trades);
+  const withVorp = fitAndReport(trades, {}, feats);
+  assert.ok(withVorp.report.vorp && withVorp.report.vorp.r2 > 0.5, `r2 ${withVorp.report.vorp?.r2}`);
+  assert.ok(withVorp.report.holdoutMeanGap! <= plain.report.holdoutMeanGap! + 0.5, `holdout ${withVorp.report.holdoutMeanGap} vs ${plain.report.holdoutMeanGap}`);
+  // never traded, but valued from VORP in line with similar traded players
+  const v = withVorp.values.get('p:untraded')!;
+  assert.ok(v > 0 && v > withVorp.values.get('p:5')! && v < withVorp.values.get('p:75')!);
+});
