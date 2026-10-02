@@ -1,10 +1,12 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Search } from "lucide-react";
+import { X } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import AdminGate from "@/components/admin/AdminGate";
+import { AssetLine, AssetSearch } from "@/components/market/assetUi";
+import { loadDirectory, loadValues, useEntries } from "@/components/market/assetData";
+import { pickKeyFor, type CalcAsset } from "@/utils/marketCalc";
 import { Card } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -96,19 +98,7 @@ function Segmented({ label, value, options, onChange }: {
     </div>
   );
 }
-const POS_STYLE: Record<string, string> = {
-  QB: "text-amber-400 bg-amber-400/10 border-amber-400/30",
-  RB: "text-emerald-400 bg-emerald-400/10 border-emerald-400/30",
-  WR: "text-sky-400 bg-sky-400/10 border-sky-400/30",
-  TE: "text-violet-400 bg-violet-400/10 border-violet-400/30",
-};
 const ordinal = (n: number) => (n === 1 ? "1st" : n === 2 ? "2nd" : n === 3 ? "3rd" : `${n}th`);
-
-/** "2027 1st", "2027 round 2" → pick key "2027-1". */
-function parsePickQuery(q: string): string | null {
-  const m = q.trim().match(/^(\d{4})\s*(?:round\s*)?(\d)(?:st|nd|rd|th)?$/i);
-  return m ? `${m[1]}-${m[2]}` : null;
-}
 
 async function countOf(table: string, build?: (q: any) => any): Promise<number> { // eslint-disable-line @typescript-eslint/no-explicit-any
   let q = supabase.from(table as never).select("*", { count: "exact", head: true });
@@ -197,8 +187,7 @@ const FitReview = () => {
 };
 
 const TradeMarketInner = () => {
-  const [input, setInput] = useState("");
-  const [query, setQuery] = useState("");
+  const [asset, setAsset] = useState<CalcAsset | null>(null); // player or pick the trades are filtered to
   const [limit, setLimit] = useState(PAGE);
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
   const setFilter = (key: keyof Filters, value: string) => { setFilters((f) => ({ ...f, [key]: value })); setLimit(PAGE); };
@@ -215,8 +204,14 @@ const TradeMarketInner = () => {
     }),
   });
 
+  const { data: directory } = useQuery({ queryKey: ["calc-directory"], queryFn: loadDirectory, staleTime: 60 * 60 * 1000 });
+  const { data: values } = useQuery({ queryKey: ["calc-values", "1qb"], queryFn: () => loadValues("1qb") });
+  const entries = useEntries(values, directory);
+  const searchable = useMemo(() => entries.filter((a) => a.meta?.playerId || a.meta?.pickKey), [entries]);
+  const rankOf = useMemo(() => new Map(entries.filter((a) => a.meta?.rank).map((a) => [a.key, a.meta!.rank!])), [entries]);
+
   const { data, isLoading, error } = useQuery({
-    queryKey: ["market-trades", query, limit, filters],
+    queryKey: ["market-trades", asset?.key ?? "", limit, filters],
     queryFn: async () => {
       let q = applyFilters(
         supabase.from("market_trades" as never)
@@ -224,56 +219,45 @@ const TradeMarketInner = () => {
         filters,
       );
       let label = "Latest trades";
-      const pickKey = parsePickQuery(query);
-      if (pickKey) {
-        q = q.contains("pick_keys", [pickKey]);
-        label = `Trades involving a ${pickKey.slice(0, 4)} round ${pickKey.slice(5)} pick`;
-      } else if (query.trim()) {
-        const { data: found } = await supabase
-          .from("sleeper_players" as never).select("player_id, name").ilike("name", `%${query.trim()}%`).limit(10);
-        const ids = ((found ?? []) as unknown as Array<{ player_id: string }>).map((p) => p.player_id);
-        if (ids.length === 0) return { label: `No player matches "${query}"`, trades: [] as MarketTrade[], players: new Map<string, PlayerInfo>(), total: 0 };
-        q = q.overlaps("player_ids", ids);
-        label = `Trades involving "${query.trim()}"`;
+      if (asset?.meta?.pickKey) {
+        q = q.contains("pick_keys", [asset.meta.pickKey]);
+        label = `Trades involving a ${asset.label} pick`;
+      } else if (asset?.meta?.playerId) {
+        q = q.contains("player_ids", [asset.meta.playerId]);
+        label = `Trades involving ${asset.label}`;
       }
       const { data: rows, error, count } = await q;
       if (error) throw error;
       const trades = (rows ?? []) as unknown as MarketTrade[];
-      const ids = [...new Set(trades.flatMap((t) => t.player_ids))];
-      const players = new Map<string, PlayerInfo>();
-      for (let i = 0; i < ids.length; i += 100) {
-        const { data: ps } = await supabase.from("sleeper_players" as never).select("player_id, name, position, team").in("player_id", ids.slice(i, i + 100));
-        for (const p of (ps ?? []) as unknown as PlayerInfo[]) players.set(p.player_id, p);
-      }
-      return { label, trades, players, total: count ?? trades.length };
+      return { label, trades, total: count ?? trades.length };
     },
   });
 
-  const renderAsset = (a: Asset, players: Map<string, PlayerInfo>, i: number) => {
-    if ("p" in a) {
-      const info = players.get(a.p);
+  // Same rows as the calculator: headshot, badge, name, rank / team / age and the fitted value.
+  const renderAsset = (a: Asset, t: MarketTrade, i: number) => {
+    if ("b" in a) {
       return (
-        <div key={i} className="flex items-center gap-2 py-1.5 px-2 border-b border-white/[0.04] last:border-0">
-          <span className={cn("text-[10px] font-bold px-1.5 py-0.5 rounded border", POS_STYLE[info?.position ?? ""] ?? "text-slate-400 border-white/10")}>
-            {info?.position ?? "?"}
-          </span>
-          <span className="text-sm text-white">{info?.name ?? `Player ${a.p}`}</span>
-          {info?.team && <span className="text-[10px] text-slate-500">{info.team}</span>}
+        <div key={i} className="flex items-center gap-3 rounded-lg border border-white/10 px-3 py-2 text-sm text-slate-300">
+          <span className="h-11 w-11 shrink-0 rounded-full bg-white/5 flex items-center justify-center text-slate-400 font-bold">$</span>
+          ${a.b} FAAB
         </div>
       );
     }
-    if ("k" in a) {
-      return (
-        <div key={i} className="flex items-center gap-2 py-1.5 px-2 border-b border-white/[0.04] last:border-0">
-          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded border text-indigo-300 bg-indigo-400/10 border-indigo-400/30">PK</span>
-          <span className="text-sm text-white">{a.k[0]} {ordinal(a.k[1])}</span>
-        </div>
-      );
+    let asset: CalcAsset;
+    if ("p" in a) {
+      const key = `p:${a.p}`;
+      const info = directory?.get(a.p);
+      asset = {
+        key, label: info?.name ?? `Player ${a.p}`, value: values?.get(key)?.value ?? 0, nTrades: values?.get(key)?.n_trades ?? 0,
+        meta: { playerId: a.p, position: info?.position, team: info?.team, age: info?.age, rank: rankOf.get(key) },
+      };
+    } else {
+      const key = pickKeyFor(a.k[0], a.k[1], t.traded_at);
+      asset = { key, label: `${a.k[0]} ${ordinal(a.k[1])}`, value: values?.get(key)?.value ?? 0, nTrades: values?.get(key)?.n_trades ?? 0 };
     }
     return (
-      <div key={i} className="flex items-center gap-2 py-1.5 px-2">
-        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded border text-slate-300 border-white/10">$</span>
-        <span className="text-sm text-white">${a.b} FAAB</span>
+      <div key={i} className="rounded-lg border border-white/10 px-3 py-2">
+        <AssetLine asset={asset} />
       </div>
     );
   };
@@ -301,16 +285,20 @@ const TradeMarketInner = () => {
 
       <FitReview />
 
-      <form
-        className="flex gap-2"
-        onSubmit={(e) => { e.preventDefault(); setQuery(input); setLimit(PAGE); }}
-      >
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
-          <Input className="pl-9" placeholder="Search a player or pick (e.g. Breece Hall, 2027 1st)…" value={input} onChange={(e) => setInput(e.target.value)} />
-        </div>
-        <Button type="submit">Search</Button>
-      </form>
+      <div className="space-y-2">
+        <AssetSearch
+          entries={searchable} taken={new Set()} placeholder="Filter trades by a player or pick…"
+          onAdd={(a) => { setAsset(a); setLimit(PAGE); }}
+        />
+        {asset && (
+          <button
+            type="button" onClick={() => { setAsset(null); setLimit(PAGE); }}
+            className="inline-flex items-center gap-1.5 rounded-full border border-white/10 px-3 py-1 text-xs text-slate-200 hover:bg-white/5"
+          >
+            {asset.label} <X className="h-3 w-3" />
+          </button>
+        )}
+      </div>
 
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
         <Segmented value={filters.qb} onChange={(v) => setFilter("qb", v)} options={[["any", "Any"], ["1qb", "1QB"], ["sf", "SF"]]} />
@@ -393,7 +381,7 @@ const TradeMarketInner = () => {
                         <span className="ml-2 font-mono text-slate-400">{(i === 0 ? scoreOf(t)!.val_a : scoreOf(t)!.val_b).toLocaleString()}</span>
                       )}
                     </p>
-                    <div>{s.g.map((a, j) => renderAsset(a, data.players, j))}</div>
+                    <div>{s.g.map((a, j) => renderAsset(a, t, j))}</div>
                   </div>
                 ))}
               </div>

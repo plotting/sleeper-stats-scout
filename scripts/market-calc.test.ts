@@ -53,3 +53,23 @@ test('pick options add early / mid / late slot tiers when the fit has them', () 
   const labels = pickOptions(new Date('2026-10-01T00:00:00Z'), vals).map((p) => p.label);
   assert.deepEqual(labels, ['2027 1st', '2027 Early 1st', '2027 Late 1st', '2027 2nd']);
 });
+
+test('pickKeyFor matches the fit: years ahead of the trade year, clamped, round capped at 5', async () => {
+  const { pickKeyFor } = await import('../src/utils/marketCalc');
+  assert.equal(pickKeyFor(2027, 1, '2026-10-01T00:00:00Z'), 'pk:1:1');
+  assert.equal(pickKeyFor(2026, 7, '2026-10-01T00:00:00Z'), 'pk:0:5');
+  assert.equal(pickKeyFor(2035, 2, '2026-10-01T00:00:00Z'), 'pk:3:2');
+});
+
+test('normalizeTop makes the best well-traded player 10,000 and leaves config rows alone', async () => {
+  const { normalizeTop } = await import('../src/utils/marketCalc');
+  const m = new Map([
+    ['p:1', { value: 7592, n_trades: 115 }], ['p:2', { value: 7322, n_trades: 136 }], ['p:3', { value: 9000, n_trades: 2 }],
+    ['pk:1:1', { value: 3000, n_trades: 900 }], ['cfg:alpha', { value: 1, n_trades: 0 }],
+  ]);
+  normalizeTop(m);
+  assert.equal(Math.round(m.get('p:1')!.value), 10000);
+  assert.ok(m.get('p:2')!.value < 10000 && m.get('p:2')!.value > 9500);
+  assert.equal(Math.round(m.get('pk:1:1')!.value), Math.round(3000 * 10000 / 7592));
+  assert.equal(m.get('cfg:alpha')!.value, 1);
+});
