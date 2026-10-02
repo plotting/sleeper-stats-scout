@@ -30,8 +30,9 @@ if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
 const MIN_TRADES = Number(process.env.MIN_TRADES ?? 30);
 const HALF_LIFE_DAYS = Number(process.env.HALF_LIFE_DAYS ?? 120); // values drift, so older trades count less
 const now = new Date();
-// Depth discount per extra piece on a side (richest first): a setting, calibrated with the shape-bias line in the panel.
-const DEPTH = { players: Number(process.env.DEPTH_PLAYERS ?? 0.85), picks: Number(process.env.DEPTH_PICKS ?? 0.9) };
+// Depth discount per extra piece on a side (richest first). Default 1 = none: values fit to real trades already
+// contain the market's consolidation premium. Only lower it if the panel's uneven-trade line stays consistently positive.
+const DEPTH = { players: Number(process.env.DEPTH_PLAYERS ?? 1), picks: Number(process.env.DEPTH_PICKS ?? 1) };
 const db = supabase as unknown as { from: (t: string) => any }; // eslint-disable-line @typescript-eslint/no-explicit-any
 
 // ── Lineup weighting: trades from leagues whose lineups look like ours count more ──

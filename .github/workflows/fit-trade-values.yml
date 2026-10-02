@@ -8,10 +8,10 @@ on:
     inputs:
       depth_players:
         description: 'Weight of each extra player on a side, richest first (1 = plain sum)'
-        default: '0.85'
+        default: '1'
       depth_picks:
         description: 'Weight of each extra pick on a side'
-        default: '0.9'
+        default: '1'
 
 concurrency:
   group: fit-trade-values
@@ -32,5 +32,5 @@ jobs:
         env:
           TSX_TSCONFIG_PATH: tsconfig.app.json
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          DEPTH_PLAYERS: ${{ inputs.depth_players || '0.85' }}
-          DEPTH_PICKS: ${{ inputs.depth_picks || '0.9' }}
+          DEPTH_PLAYERS: ${{ inputs.depth_players || '1' }}
+          DEPTH_PICKS: ${{ inputs.depth_picks || '1' }}
