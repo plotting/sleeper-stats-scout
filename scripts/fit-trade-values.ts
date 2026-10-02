@@ -41,14 +41,19 @@ const target: Lineup | null = lineupOf((await sleeper<{ roster_positions?: strin
 console.log(target ? `Target lineup: ${lineupLabel(target)}` : 'Could not read our lineup — trades are weighted equally.');
 
 const lineups = new Map<string, Lineup | null>();
+const similar = new Set<string>();
 for (let from = 0; ; from += 1000) {
-  const { data, error } = await db.from('market_leagues').select('league_id, lineup, matches').order('league_id').range(from, from + 999);
+  const { data, error } = await db.from('market_leagues').select('league_id, lineup, matches').eq('matches', true).order('league_id').range(from, from + 999);
   if (error) throw error;
-  for (const l of data as Array<{ league_id: string; lineup: Lineup | null; matches: boolean }>) lineups.set(l.league_id, l.lineup);
+  for (const l of data as Array<{ league_id: string; lineup: Lineup | null; matches: boolean }>) {
+    lineups.set(l.league_id, l.lineup);
+    if (l.matches) similar.add(l.league_id);
+  }
   if (!data || data.length < 1000) break;
 }
 if (target) {
-  const missing = [...lineups].filter(([, l]) => l === null).map(([id]) => id);
+  // Only similar leagues have trades, so only they need a lineup (the rest are ~145k leagues).
+  const missing = [...lineups].filter(([id, l]) => l === null && similar.has(id)).map(([id]) => id);
   const MAX = Number(process.env.MAX_LINEUP_CALLS ?? 4000);
   const throttle = createThrottle(600);
   let filled = 0;
@@ -66,18 +71,30 @@ if (target) {
 }
 
 // ── VORP prior: recent VORP (last three seasons, 50/30/20) and age per Sleeper player ──
-async function pageAll<T>(table: string, cols: string, order: string): Promise<T[]> {
+async function pageAll<T>(table: string, cols: string, order: string, filter?: (q: any) => any): Promise<T[]> { // eslint-disable-line @typescript-eslint/no-explicit-any
   const out: T[] = [];
   for (let from = 0; ; from += 1000) {
-    const { data, error } = await db.from(table).select(cols).order(order).range(from, from + 999);
-    if (error) throw error;
-    out.push(...(data as T[]));
-    if (!data || data.length < 1000) break;
+    let data: T[] | null = null;
+    for (let attempt = 0; attempt < 3 && !data; attempt++) {
+      let q = db.from(table).select(cols).order(order).range(from, from + 999);
+      if (filter) q = filter(q);
+      const res = await q;
+      if (!res.error) data = res.data as T[];
+      else if (attempt === 2) throw res.error;
+      else await new Promise((r) => setTimeout(r, 3000 * (attempt + 1)));
+    }
+    out.push(...data!);
+    if (data!.length < 1000) break;
   }
   return out;
 }
-const vorpRows = await pageAll<{ name_key: string; position: string; year: number; vorp: number }>('player_vorp', 'name_key, position, year, vorp', 'name_key');
-const latestYear = Math.max(...vorpRows.map((r) => r.year));
+// player_vorp is a heavy view: ask only for the seasons we use (the filter is pushed into it).
+const { data: latest, error: latestErr } = await db.from('player_seasons').select('year').order('year', { ascending: false }).limit(1);
+if (latestErr) throw latestErr;
+const latestYear: number = latest[0].year;
+const vorpRows = await pageAll<{ name_key: string; position: string; year: number; vorp: number }>(
+  'player_vorp', 'name_key, position, year, vorp', 'name_key', (q) => q.gte('year', latestYear - 2).order('position').order('year'), // unique paging order
+);
 const recent = new Map<string, number>(); // `${name_key}|${position}` -> weighted VORP
 for (const r of vorpRows) {
   const age = latestYear - r.year;
