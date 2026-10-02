@@ -240,6 +240,7 @@ const Calculator = () => {
           <input type="range" min={50} max={250} step={5} value={pickPct} onChange={(e) => setPick(Number(e.target.value))} className="w-40" aria-label="Pick value multiplier" />
           <span className="font-mono text-slate-200 w-12 text-left">×{(pickPct / 100).toFixed(2)}</span>
         </div>
+        <p className="text-[10px] text-slate-600">build {__BUILD_ID__}</p>
         <p className="text-[11px] text-slate-500">Player values blend what trades pay with what recent VORP + age imply; picks are priced by how rookie picks of that round and slot actually turned out, times the pick multiplier.</p>
       </header>
 
