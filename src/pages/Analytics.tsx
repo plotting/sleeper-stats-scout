@@ -1354,10 +1354,13 @@ function PlayoffSim({
   const nearestWeek = futureWeeks[0] ?? 0;
 
   const [weekProjections, setWeekProjections] = useState<Map<number, Map<number, TeamWeekProjection> | null>>(new Map());
+  // Roster-based projections (today's rosters, injuries, byes) can be switched off to see the plain team-level model.
+  const [useRosterProj, setUseRosterProj] = useState<boolean>(() => { try { return localStorage.getItem("sim-roster-proj") !== "0"; } catch { return true; } });
+  const toggleRosterProj = (on: boolean) => { setUseRosterProj(on); try { localStorage.setItem("sim-roster-proj", on ? "1" : "0"); } catch { /* optional */ } };
   useEffect(() => {
     // Roster-based projections come from today's rosters, so they only belong in the latest view; looking back at an
     // earlier week uses only what was known then (the team-level model, same as the saved snapshots).
-    if (!rosterData || futureWeeks.length === 0 || asOfWeek < latestPlayedWeek) { setWeekProjections(new Map()); return; }
+    if (!rosterData || !useRosterProj || futureWeeks.length === 0 || asOfWeek < latestPlayedWeek) { setWeekProjections(new Map()); return; }
     let cancelled = false;
     const rosterInputs = rosterData.rosters
       .map((r) => {
@@ -1373,7 +1376,7 @@ function PlayoffSim({
       if (!cancelled) setWeekProjections(new Map(entries));
     });
     return () => { cancelled = true; };
-  }, [rosterData, futureWeeks, asOfWeek, latestPlayedWeek]);
+  }, [rosterData, futureWeeks, asOfWeek, latestPlayedWeek, useRosterProj]);
 
   // Week-over-week change in playoff odds, computed live. The headline odds use roster-based projections for the weeks still to
   // play, so last week's odds are replayed with those same projections for the weeks that were still ahead then (the one week
@@ -1384,7 +1387,7 @@ function PlayoffSim({
     const idx = allAsOfWeeks.indexOf(asOfWeek);
     if (idx <= 0 || matchups.length === 0) return;
     // wait for the roster-based projections on the live season so the comparison isn't made on the wrong basis
-    if (isLiveSeason && asOfWeek >= latestPlayedWeek && futureWeeks.length > 0 && weekProjections.size === 0) return;
+    if (isLiveSeason && useRosterProj && asOfWeek >= latestPlayedWeek && futureWeeks.length > 0 && weekProjections.size === 0) return;
     let cancelled = false;
     const prevWeek = allAsOfWeeks[idx - 1];
     const sims = Math.max(100_000, Math.min(numSims, 250_000));
@@ -1394,7 +1397,7 @@ function PlayoffSim({
     }).catch(() => { /* no comparison shown */ });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [asOfWeek, latestPlayedWeek, allAsOfWeeks, matchups, allMatchups, sortedHistIds, effectiveBracketSize, numSims, weekProjections, isLiveSeason, futureWeeks]);
+  }, [asOfWeek, latestPlayedWeek, allAsOfWeeks, matchups, allMatchups, sortedHistIds, effectiveBracketSize, numSims, weekProjections, isLiveSeason, futureWeeks, useRosterProj]);
 
   // Odds after every week at a glance (team-level model for all weeks, so the columns are directly comparable).
   const [byWeek, setByWeek] = useState<Map<number, Map<number, number>> | null>(null);
@@ -1447,6 +1450,17 @@ function PlayoffSim({
   if (teams.length === 0)
     return <p className="text-slate-400 text-sm">No team data for the selected season.</p>;
 
+  // Average projected points per remaining week from today's rosters, per team (what actually drives the headline when roster projections are on)
+  const rosterPpg = new Map<number, number>();
+  if (weekProjections.size > 0) {
+    const acc = new Map<number, { sum: number; n: number }>();
+    for (const perTeam of weekProjections.values()) {
+      for (const [teamId, p] of perTeam ?? []) { const e = acc.get(teamId) ?? { sum: 0, n: 0 }; e.sum += p.mean; e.n++; acc.set(teamId, e); }
+    }
+    for (const [teamId, e] of acc) if (e.n > 0) rosterPpg.set(teamId, e.sum / e.n);
+  }
+  // the headline's roster-based odds are only comparable to the by-week columns when viewing the latest week with them on
+  const showRosterColumn = isLiveSeason && useRosterProj && asOfWeek >= latestPlayedWeek && weekProjections.size > 0 && results.length > 0;
   const weeksLeft = new Set(futureGames.map((g) => g.week)).size;
   const numTeams = teams.length;
 
@@ -1526,6 +1540,11 @@ function PlayoffSim({
                 </>
               );
             })()}
+            {isLiveSeason && (
+              <label className="ml-3 inline-flex items-center gap-1.5 text-xs text-slate-400 cursor-pointer" title="On: the latest week projects the rest of the season from today's rosters (injuries, trades, byes). Off: only scoring so far and past seasons, the same model as the earlier weeks and the by-week table.">
+                <input type="checkbox" checked={useRosterProj} onChange={(e) => toggleRosterProj(e.target.checked)} /> Roster projections
+              </label>
+            )}
           </div>
         )}
 
@@ -1571,7 +1590,8 @@ function PlayoffSim({
               <TableHead>Team</TableHead>
               <TableHead className="text-right">Record</TableHead>
               <TableHead className="text-right">PF</TableHead>
-              <TableHead className="text-right">Proj PPG</TableHead>
+              <TableHead className="text-right" title="Team-level projection: this season's scoring blended with past seasons">Proj PPG</TableHead>
+              {rosterPpg.size > 0 && <TableHead className="text-right" title="Average projected points per remaining week from today's rosters (injuries, trades, byes); this is what drives the odds when Roster projections is on">Roster PPG</TableHead>}
               <TableHead className="text-right">±</TableHead>
               <TableHead className="text-right">Proj W</TableHead>
               <TableHead className="text-right">Proj Seed</TableHead>
@@ -1605,6 +1625,16 @@ function PlayoffSim({
                   </TableCell>
                   <TableCell className="text-right font-mono text-sm text-slate-400">{fmt(t.pf, 1)}</TableCell>
                   <TableCell className="text-right font-mono text-sm text-slate-300">{fmt(t.projMean, 1)}</TableCell>
+                  {rosterPpg.size > 0 && (() => {
+                    const rp = rosterPpg.get(r.teamId);
+                    const diff = rp != null ? rp - t.projMean : null;
+                    return (
+                      <TableCell className="text-right font-mono text-sm text-slate-300">
+                        {rp == null ? "–" : fmt(rp, 1)}
+                        {diff != null && Math.abs(diff) >= 3 && <span className={cn("ml-1 text-[10px]", diff > 0 ? "text-emerald-500" : "text-red-500")}>{diff > 0 ? "+" : "−"}{fmt(Math.abs(diff), 0)}</span>}
+                      </TableCell>
+                    );
+                  })()}
                   <TableCell className="text-right font-mono text-sm text-slate-500">±{fmt(t.projStd, 1)}</TableCell>
                   <TableCell className="text-right font-mono text-sm text-slate-400">{fmt(r.avgProjectedWins, 1)}</TableCell>
                   <TableCell className="text-right font-mono text-sm text-slate-300">
@@ -1641,7 +1671,7 @@ function PlayoffSim({
         <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
           <div>
             <h3 className="text-sm font-semibold text-slate-300">Playoff odds by week</h3>
-            <p className="text-xs text-slate-500">Each team's odds as they stood after every week (top {effectiveBracketSize}), all on the team-level model so the columns compare directly. The latest week's headline above also uses roster projections, so it can differ a little.</p>
+            <p className="text-xs text-slate-500">Each team's odds as they stood after every week (top {effectiveBracketSize}), all on the team-level model (scoring so far plus past seasons) so the columns compare directly. The Roster column, when shown, is the headline above, which projects the rest of the season from today's rosters (injuries, trades, byes) and can differ a lot from the team model.</p>
           </div>
           <button
             type="button" onClick={runByWeek} disabled={byWeekProgress != null || allAsOfWeeks.length < 2}
@@ -1659,6 +1689,7 @@ function PlayoffSim({
                   {allAsOfWeeks.map((w) => (
                     <TableHead key={w} className={cn("text-center w-14", w === asOfWeek && "text-white")}>{w === 0 ? "Pre" : `Wk ${w}`}</TableHead>
                   ))}
+                  {showRosterColumn && <TableHead className="text-center w-20 border-l border-white/10" title="The headline above: rest of the season projected from today's rosters">Roster</TableHead>}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -1676,6 +1707,10 @@ function PlayoffSim({
                         </TableCell>
                       );
                     })}
+                    {showRosterColumn && (() => {
+                      const v = results.find((r) => r.teamId === t.teamId)?.playoffPct;
+                      return <TableCell className={cn("text-center font-mono text-xs border-l border-white/10", v != null && pctColor(v))}>{v == null ? "–" : fmt(v * 100, 0)}</TableCell>;
+                    })()}
                   </TableRow>
                 ))}
               </TableBody>
