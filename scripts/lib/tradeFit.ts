@@ -163,35 +163,13 @@ const mean = (xs: number[], ws?: number[]) => {
   return total > 0 ? xs.reduce((a, x, i) => a + x * w[i], 0) / total : NaN;
 };
 
-export const ALPHA_GRID = [1, 1.5, 2, 3, 4, 5];
-
-function holdoutGap(train: FitTrade[], test: FitTrade[], opts: FitOptions): { gap: number; coverage: number } {
-  const alpha = opts.alpha ?? 1;
-  const vals = fitValues(train, opts);
-  const gaps: number[] = [], ws: number[] = [];
-  for (const t of test) {
-    const s = scoreTrade(t, vals, false, alpha);
-    if (s) { gaps.push(s.diffPct); ws.push(t.weight ?? 1); }
-  }
-  return { gap: mean(gaps, ws), coverage: test.length ? gaps.length / test.length : 0 };
-}
-
-/** Picks the consolidation exponent α that best predicts held-out trades (one 80/20 split). */
-export function chooseAlpha(trades: FitTrade[], opts: FitOptions = {}): number {
-  if (trades.length < 100) return 1;
-  const train = trades.filter((_, i) => i % 5 !== 0);
-  const test = trades.filter((_, i) => i % 5 === 0);
-  let best = 1, bestGap = Infinity;
-  for (const alpha of ALPHA_GRID) {
-    const { gap } = holdoutGap(train, test, { ...opts, alpha });
-    if (gap < bestGap) { best = alpha; bestGap = gap; }
-  }
-  return best;
-}
-
-/** Fit on everything (α chosen by held-out error unless given), plus a 5-fold check on unseen trades. */
+/**
+ * Fit on everything, plus a 5-fold check on unseen trades. α stays 1 (plain sums): any other α only
+ * re-labels the same ordering (sides compare identically via Σ v^α) while compressing the displayed
+ * values and shrinking measured gaps, so it must not be tuned on the gap.
+ */
 export function fitAndReport(trades: FitTrade[], opts: FitOptions = {}): { values: Map<AssetKey, number>; report: FitReport } {
-  const alpha = opts.alpha ?? chooseAlpha(trades, opts);
+  const alpha = opts.alpha ?? 1;
   const o = { ...opts, alpha };
   const values = fitValues(trades, o);
   const scores = trades.map((t) => scoreTrade(t, values, false, alpha)!);
