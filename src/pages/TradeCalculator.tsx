@@ -101,7 +101,9 @@ function AssetSearch({ entries, taken, onAdd }: { entries: CalcAsset[]; taken: S
     <div className="relative">
       <Input
         placeholder="Search players & picks…" value={text}
-        onChange={(e) => setText(e.target.value)} onFocus={() => setOpen(true)} onBlur={() => setOpen(false)}
+        onChange={(e) => { setText(e.target.value); setOpen(true); }}
+        onFocus={() => setOpen(true)} onClick={() => setOpen(true)} // click too: after a pick the box keeps focus, so no focus event fires
+        onBlur={() => setOpen(false)} onKeyDown={(e) => { if (e.key === "Escape") setOpen(false); }}
       />
       {open && (
         <div
