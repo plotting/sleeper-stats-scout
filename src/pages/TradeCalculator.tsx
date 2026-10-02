@@ -8,12 +8,13 @@ import { VerdictMeter, TradeReport } from "@/components/market/TradeReport";
 import { ValueOverTime } from "@/components/market/ValueOverTime";
 import { PriceCheck } from "@/components/market/PriceCheck";
 import { DurabilityCard } from "@/components/market/Durability";
+import { OutcomeRangeCard } from "@/components/market/OutcomeRange";
 import { ValuesExplainer } from "@/components/market/ValuesExplainer";
 import { loadDirectory, loadValues, useEntries } from "@/components/market/assetData";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { assess, decodeShare, effectiveValue, encodeShare, normalizeTop, sideTotal, suggestToEven, type AgeCurve, type CalcAsset, type Depth } from "@/utils/marketCalc";
+import { assess, decodeShare, effectiveValue, encodeShare, normalizeTop, sideTotal, suggestToEven, type AgeCurve, type CalcAsset, type Depth, type Outcome } from "@/utils/marketCalc";
 
 // Hidden, admin-only page: prices a trade with the values fitted from completed market trades
 // (market_values). Players only appear once they've been in enough trades to get a value.
@@ -106,6 +107,19 @@ const Calculator = () => {
     for (const pos of ["QB", "RB", "WR", "TE"]) {
       const b1 = raw.get(`cfg:age:${pos}:b1`)?.value, b2 = raw.get(`cfg:age:${pos}:b2`)?.value;
       if (b1 !== undefined && b2 !== undefined) out.set(pos, { b1, b2 });
+    }
+    return out;
+  }, [raw]);
+  // Next-season value change distributions per position and age group (fitted with the values)
+  const vol = useMemo(() => {
+    const out = new Map<string, Outcome>();
+    if (!raw) return out;
+    for (const pos of ["QB", "RB", "WR", "TE"]) {
+      for (const bucket of ["young", "prime", "vet"]) {
+        const g = (stat: string) => raw.get(`cfg:vol:${pos}:${bucket}:${stat}`);
+        const p10 = g("p10"), p50 = g("p50"), p90 = g("p90"), up = g("up"), down = g("down");
+        if (p10 && p50 && p90 && up && down) out.set(`${pos}:${bucket}`, { p10: p10.value, p50: p50.value, p90: p90.value, up: up.value, down: down.value, n: p50.n_trades });
+      }
     }
     return out;
   }, [raw]);
@@ -238,6 +252,7 @@ const Calculator = () => {
             <>
               <TradeReport receive={receiveP} send={sendP} depth={depth} subtitle={`10-team ${format === "sf" ? "Superflex" : "1QB"} · values from completed trades, ${vorpPct}% VORP`} />
               <ValueOverTime receive={receiveP} send={sendP} depth={depth} curves={curves} />
+              <OutcomeRangeCard players={durabilityPlayers} entries={entries} vol={vol} />
               <DurabilityCard players={durabilityPlayers} />
               <PriceCheck players={players} directory={directory} trade={{ get: receiveP, give: sendP }} />
             </>

@@ -52,3 +52,19 @@ test('share links round-trip and ignore junk keys', () => {
   assert.deepEqual(decodeShare('?r=p:1,evil,pk:9:9&f=zz').receive, ['p:1']);
   assert.equal(decodeShare('?f=zz').format, undefined);
 });
+
+test('outcome range applies the percentile changes to the value, capped at 10,000, with a position rank for each', async () => {
+  const { outcomeRange, rankEquivalent, ageBucketOf } = await import('../src/utils/marketCalc');
+  const vol = new Map([['WR:prime', { p10: Math.log(0.5), p50: 0, p90: Math.log(1.2), up: 0.4, down: 0.15, n: 300 }]]);
+  const mk = (v: number, pos: string, age: number, id: string): CalcAsset => ({ key: `p:${id}`, label: id, value: v, nTrades: 40, meta: { playerId: id, position: pos, age } });
+  const r = outcomeRange(mk(5000, 'WR', 26, '1'), vol)!;
+  assert.equal(Math.round(r.floor), 2500); assert.equal(Math.round(r.expected), 5000); assert.equal(Math.round(r.ceiling), 6000);
+  assert.equal(outcomeRange(mk(9000, 'WR', 26, '1'), vol)!.ceiling, 10000);
+  assert.equal(outcomeRange(mk(5000, 'WR', 31, '1'), vol), null);     // no data for that group
+  assert.equal(outcomeRange({ key: 'pk:1:1', label: 'x', value: 3000, nTrades: 9 }, vol), null);
+  assert.deepEqual([21, 24, 25, 28, 29].map(ageBucketOf), ['young', 'young', 'prime', 'prime', 'vet']);
+  const entries = [mk(9000, 'WR', 25, 'a'), mk(8000, 'WR', 25, 'b'), mk(7000, 'RB', 25, 'c'), mk(4000, 'WR', 25, 'd')];
+  assert.equal(rankEquivalent(entries, 'WR', 8500), 'WR2');
+  assert.equal(rankEquivalent(entries, 'WR', 2500), 'WR4');
+  assert.equal(rankEquivalent(entries, 'RB', 10000), 'RB1');
+});
