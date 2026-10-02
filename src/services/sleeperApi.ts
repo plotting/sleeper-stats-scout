@@ -216,6 +216,10 @@ export const fetchLeagueUsers = (id: string) =>
 export const fetchLeagueRosters = (id: string) =>
   get<SleeperRoster[]>(`/league/${id}/rosters`);
 
+/** Picks that have changed hands: season, round, original owner (roster_id) and current owner (owner_id). */
+export const fetchTradedPicks = (id: string) =>
+  get<SleeperTradedPick[]>(`/league/${id}/traded_picks`);
+
 export const fetchMatchups = (id: string, week: number) =>
   get<SleeperMatchup[]>(`/league/${id}/matchups/${week}`);
 

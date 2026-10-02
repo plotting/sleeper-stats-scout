@@ -206,6 +206,10 @@ for (const format of ['1qb', 'sf'] as const) {
   for (const [k, value] of baseline) {
     valueRows.push({ format, asset_key: `v:${k.slice(2)}`, value: Math.round(value * 10) / 10, n_trades: 0, updated_at: new Date().toISOString() });
   }
+  // Recent annual VORP per player ('cr:' = current production), used for lineup impact in the calculator's league mode.
+  for (const [k, f] of feats) {
+    valueRows.push({ format, asset_key: `cr:${k.slice(2)}`, value: Math.round(f.vorp * 10) / 10, n_trades: 0, updated_at: new Date().toISOString() });
+  }
   // Pick baselines from outcomes (vp:<round>:<early|mid|late|any>), on the same scale as player values.
   if (predictValue) {
     for (const [key, e] of pickExpect) {
