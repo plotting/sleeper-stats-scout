@@ -15,4 +15,5 @@ test('tier expectations average annual VORP by round and slot tier, counting mis
   assert.equal(e.get('1:any')!.annualVorp, 17.5);
   assert.equal(e.get('2:early')!.n, 1);
   assert.ok(!e.has('2:mid'));
+  assert.equal(e.get('1:s3')!.annualVorp, 20);
 });

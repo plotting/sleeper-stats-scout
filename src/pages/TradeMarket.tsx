@@ -108,6 +108,52 @@ async function countOf(table: string, build?: (q: any) => any): Promise<number> 
 }
 
 
+/** Pick prices three ways, each with the player rank it is equivalent to ("≈ #27" = priced like the 27th most valuable player). */
+const PickTable = ({ rows, playerValues }: { rows: Map<string, { value: number; n: number }>; playerValues: number[] }) => {
+  const rank = (v: number) => `≈ #${playerValues.filter((x) => x > v).length + 1}`;
+  const cell = (key: string) => {
+    const r = rows.get(key);
+    return r ? (
+      <span className="font-mono">{Math.round(r.value).toLocaleString()} <span className="text-slate-600">{rank(r.value)}</span></span>
+    ) : <span className="text-slate-700">–</span>;
+  };
+  const rounds = [1, 2, 3].filter((r) => rows.has(`pk:0:${r}`) || rows.has(`pk:1:${r}`) || rows.has(`vp:${r}:any`));
+  const head = "text-[10px] uppercase tracking-wide text-slate-500";
+  return (
+    <div className="space-y-3 text-xs text-slate-400">
+      <div>
+        <p className={head}>What trades pay (market fit)</p>
+        <div className="grid grid-cols-[3rem_1fr_1fr_1fr] gap-x-2 gap-y-0.5 mt-1">
+          <span /><span className={head}>This class</span><span className={head}>+1 yr</span><span className={head}>+2 yr</span>
+          {rounds.map((r) => (
+            <div key={r} className="contents">
+              <span className="text-slate-300">{ordinal(r)}</span>{cell(`pk:0:${r}`)}{cell(`pk:1:${r}`)}{cell(`pk:2:${r}`)}
+            </div>
+          ))}
+        </div>
+      </div>
+      <div>
+        <p className={head}>What picks actually produced (your drafts, as trade value)</p>
+        <div className="grid grid-cols-[3rem_1fr_1fr_1fr_1fr] gap-x-2 gap-y-0.5 mt-1">
+          <span /><span className={head}>Early 1-3</span><span className={head}>Mid 4-6</span><span className={head}>Late 7-10</span><span className={head}>Average</span>
+          {rounds.map((r) => (
+            <div key={r} className="contents">
+              <span className="text-slate-300">{ordinal(r)}</span>{cell(`vp:${r}:early`)}{cell(`vp:${r}:mid`)}{cell(`vp:${r}:late`)}{cell(`vp:${r}:any`)}
+            </div>
+          ))}
+        </div>
+        <p className={cn(head, "mt-2")}>By slot, 1st round</p>
+        <div className="grid grid-cols-5 gap-x-2 gap-y-0.5 mt-1">
+          {Array.from({ length: 10 }, (_, i) => i + 1).map((slot) => (
+            <div key={slot}><span className="text-slate-600">1.{String(slot).padStart(2, "0")}</span> {cell(`vp:1:s${slot}`)}</div>
+          ))}
+        </div>
+        <p className="text-slate-600 mt-1">Picks behind each average: {rounds.map((r) => `${ordinal(r)} ${rows.get(`vp:${r}:any`)?.n ?? 0}`).join(" · ")}</p>
+      </div>
+    </div>
+  );
+};
+
 /** Latest fit quality per format plus the top fitted values, for reviewing the model as data grows. */
 const FitReview = () => {
   const [open, setOpen] = useState(false);
@@ -131,13 +177,21 @@ const FitReview = () => {
       const { data: ps } = await supabase.from("sleeper_players" as never).select("player_id, name, position")
         .in("player_id", players.map((p) => p.asset_key.slice(2)));
       const names = new Map(((ps ?? []) as unknown as PlayerInfo[]).map((p) => [p.player_id, p]));
-      return { players, picks, names };
+      const allPlayerValues = rows.filter((r) => r.asset_key.startsWith("p:") && r.n_trades >= 10).map((r) => Number(r.value)).sort((x, y) => y - x);
+      return { players, picks, names, allPlayerValues };
+    },
+  });
+  const { data: pickRows } = useQuery({
+    queryKey: ["market-pick-rows"],
+    enabled: open,
+    queryFn: async () => {
+      const { data } = await supabase.from("market_values" as never).select("asset_key, value, n_trades").eq("format", "1qb").or("asset_key.like.pk:*,asset_key.like.vp:*");
+      return new Map(((data ?? []) as unknown as ValueRow[]).map((r) => [r.asset_key, { value: Number(r.value), n: r.n_trades }]));
     },
   });
   if (!runs || runs.length === 0) {
     return <p className="text-xs text-slate-500 text-center">No value fit yet — it runs after each crawl once there are enough trades.</p>;
   }
-  const pickLabel = (k: string) => { const [, off, rd] = k.split(":").map(Number); return `${off === 0 ? "This" : `+${off}yr`} ${ordinal(rd)}`; };
   return (
     <Card className="p-4 border-white/10 space-y-3">
       <div className="flex items-center justify-between">
@@ -172,13 +226,8 @@ const FitReview = () => {
             ))}
           </div>
           <div>
-            <p className="text-xs font-semibold text-sky-400 mb-1">Pick curve</p>
-            {values.picks.sort((a, b) => a.asset_key.localeCompare(b.asset_key)).map((p) => (
-              <div key={p.asset_key} className="flex justify-between text-xs py-0.5">
-                <span>{pickLabel(p.asset_key)}</span>
-                <span className="font-mono text-slate-400">{Math.round(p.value).toLocaleString()} <span className="text-slate-600">({p.n_trades})</span></span>
-              </div>
-            ))}
+            <p className="text-xs font-semibold text-sky-400 mb-1">Pick values</p>
+            {pickRows ? <PickTable rows={pickRows} playerValues={values.players.length ? values.allPlayerValues : []} /> : <p className="text-xs text-slate-500">Loading…</p>}
           </div>
         </div>
       )}
