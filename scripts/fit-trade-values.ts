@@ -5,6 +5,7 @@
 // Env: MIN_TRADES (default 30) per format before a fit is stored.
 
 import { fitAndReport, scoreTrade, toFitTrade, type FitTrade, type PlayerFeature } from './lib/tradeFit';
+import { computeVorp, type SeasonRow } from './lib/vorp';
 import { createThrottle, lineupLabel, lineupOf, lineupWeight, type Lineup, type TradeRow } from './lib/tradeMarket';
 
 const store = new Map<string, string>();
@@ -88,13 +89,17 @@ async function pageAll<T>(table: string, cols: string, order: string, filter?: (
   }
   return out;
 }
-// player_vorp is a heavy view: ask only for the seasons we use (the filter is pushed into it).
+// VORP comes from player_seasons via computeVorp (a twin of the player_vorp view, which is too slow to
+// query from here); only the last three seasons are used.
 const { data: latest, error: latestErr } = await db.from('player_seasons').select('year').order('year', { ascending: false }).limit(1);
 if (latestErr) throw latestErr;
 const latestYear: number = latest[0].year;
-const vorpRows = await pageAll<{ name_key: string; position: string; year: number; vorp: number }>(
-  'player_vorp', 'name_key, position, year, vorp', 'name_key', (q) => q.gte('year', latestYear - 2).order('position').order('year'), // unique paging order
+const seasonRows = await pageAll<SeasonRow & { id?: number }>(
+  'player_seasons', 'player_name, position, year, total_points, games_played', 'year',
+  (q) => q.gte('year', latestYear - 2).order('player_name').order('position'), // unique paging order
 );
+const vorpRows = computeVorp(seasonRows.map((r) => ({ ...r, total_points: Number(r.total_points) })))
+  .map((r) => ({ ...r, name_key: nameKey(r.player_name) }));
 const recent = new Map<string, number>(); // `${name_key}|${position}` -> weighted VORP
 for (const r of vorpRows) {
   const age = latestYear - r.year;
