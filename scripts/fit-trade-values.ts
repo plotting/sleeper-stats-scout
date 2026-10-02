@@ -4,7 +4,7 @@
 //   SUPABASE_SERVICE_ROLE_KEY=... TSX_TSCONFIG_PATH=tsconfig.app.json npx tsx scripts/fit-trade-values.ts
 // Env: MIN_TRADES (default 30) per format before a fit is stored.
 
-import { fitAndReport, recencyWeight, recentAnnualVorp, scoreTrade, toFitTrade, type FitTrade, type PlayerFeature } from './lib/tradeFit';
+import { fitAndReport, recencyWeight, recentAnnualVorp, scoreTrade, shapeWeight, toFitTrade, type FitTrade, type PlayerFeature } from './lib/tradeFit';
 import { computeVorp, type SeasonRow } from './lib/vorp';
 import { tierExpectations, type DraftedPick } from './lib/pickCurve';
 import { createThrottle, lineupLabel, lineupOf, lineupWeight, type Lineup, type TradeRow } from './lib/tradeMarket';
@@ -30,6 +30,9 @@ if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
 const MIN_TRADES = Number(process.env.MIN_TRADES ?? 30);
 const HALF_LIFE_DAYS = Number(process.env.HALF_LIFE_DAYS ?? 120); // values drift, so older trades count less
 const now = new Date();
+// Depth discount per extra piece on a side (richest first). Default 1 = none: values fit to real trades already
+// contain the market's consolidation premium. Only lower it if the panel's uneven-trade line stays consistently positive.
+const DEPTH = { players: Number(process.env.DEPTH_PLAYERS ?? 1), picks: Number(process.env.DEPTH_PICKS ?? 1) };
 const db = supabase as unknown as { from: (t: string) => any }; // eslint-disable-line @typescript-eslint/no-explicit-any
 
 // ── Lineup weighting: trades from leagues whose lineups look like ours count more ──
@@ -161,13 +164,13 @@ for (const format of ['1qb', 'sf'] as const) {
   for (const r of rows) {
     if (r.superflex !== (format === 'sf')) continue;
     const t = toFitTrade(r, lineupWeight(lineups.get(r.league_id), target) * recencyWeight(r.traded_at, now, HALF_LIFE_DAYS));
-    if (t) trades.push(t);
+    if (t) { t.weight = (t.weight ?? 1) * shapeWeight(t.a.length, t.b.length); trades.push(t); }
   }
   if (trades.length < MIN_TRADES) {
     console.log(`${format}: ${trades.length} usable trades (< ${MIN_TRADES}), skipping`);
     continue;
   }
-  const { values, baseline, predictValue, report } = fitAndReport(trades, {}, feats);
+  const { values, baseline, predictValue, report } = fitAndReport(trades, { depth: DEPTH }, feats);
   console.log(`${format}:`, JSON.stringify(report));
 
   const counts = new Map<string, number>();
@@ -185,10 +188,13 @@ for (const format of ['1qb', 'sf'] as const) {
       valueRows.push({ format, asset_key: `vp:${key}`, value: Math.round(predictValue({ vorp: e.annualVorp, age: 24 }) * 10) / 10, n_trades: e.n, updated_at: new Date().toISOString() });
     }
   }
-  // The consolidation exponent travels with the values (the calculator needs it to price a side).
-  valueRows.push({ format, asset_key: 'cfg:alpha', value: report.alpha, n_trades: 0, updated_at: new Date().toISOString() });
+  // The depth discounts travel with the values (the calculator needs them to price a side).
+  valueRows.push(
+    { format, asset_key: 'cfg:rho_players', value: Math.round(report.depth.players * 1000) / 1000, n_trades: 0, updated_at: new Date().toISOString() },
+    { format, asset_key: 'cfg:rho_picks', value: Math.round(report.depth.picks * 1000) / 1000, n_trades: 0, updated_at: new Date().toISOString() },
+  );
   const scoreRows = trades.map((t) => {
-    const s = scoreTrade(t, values, false, report.alpha)!;
+    const s = scoreTrade(t, values, false, report.depth)!;
     return { trade_id: t.id, val_a: Math.round(s.valA), val_b: Math.round(s.valB), diff_pct: Math.round(s.diffPct * 10) / 10, fair_tier: s.tier };
   });
   for (const [table, batch, conflict] of [
@@ -203,7 +209,8 @@ for (const format of ['1qb', 'sf'] as const) {
   const { error } = await db.from('market_fit_runs').insert({
     format, n_trades: report.trades, n_assets: report.assets,
     in_sample_mean_gap: report.inSampleMeanGap, prior_mean_gap: report.priorMeanGap,
-    holdout_mean_gap: report.holdoutMeanGap, holdout_coverage: report.holdoutCoverage, tiers: { ...report.tiers, alpha: report.alpha, ...(report.vorp ? { vorp_r2: Math.round(report.vorp.r2 * 1000) / 1000, vorp_players: report.vorp.players, ...Object.fromEntries(Object.entries(report.vorp.marketVsVorp).map(([pos, pct]) => [`mv_${pos}`, pct])) } : {}), ...(target ? { lineup: lineupLabel(target) } : {}) },
+    holdout_mean_gap: report.holdoutMeanGap, holdout_coverage: report.holdoutCoverage, tiers: { ...report.tiers, rho_players: Math.round(report.depth.players * 1000) / 1000, rho_picks: Math.round(report.depth.picks * 1000) / 1000,
+    ...Object.fromEntries(Object.entries(report.shapeBias).flatMap(([shape, b]) => [[`sb_${shape}`, b.pct], [`sbn_${shape}`, b.n]])), ...(report.vorp ? { vorp_r2: Math.round(report.vorp.r2 * 1000) / 1000, vorp_players: report.vorp.players, ...Object.fromEntries(Object.entries(report.vorp.marketVsVorp).map(([pos, pct]) => [`mv_${pos}`, pct])) } : {}), ...(target ? { lineup: lineupLabel(target) } : {}) },
   });
   if (error) throw error;
 }

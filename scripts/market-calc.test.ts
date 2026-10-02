@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assess, pickOptions, suggestToEven, type CalcAsset } from '../src/utils/marketCalc';
+import { assess, pickOptions, sideTotal, suggestToEven, type CalcAsset } from '../src/utils/marketCalc';
 
 const a = (key: string, value: number, nTrades = 5): CalcAsset => ({ key, label: key, value, nTrades });
 
@@ -23,15 +23,27 @@ test('pick options skip the already-drafted class after June and need fitted val
 
 test('suggestions are the closest values with enough history, excluding assets already in the trade', () => {
   const pool = [a('p', 520), a('q', 480, 1), a('r', 900), a('s', 505)];
-  assert.deepEqual(suggestToEven(500, pool, new Set(['s']), 3, 2).map((x) => x.key), ['p', 'r']);
-  assert.deepEqual(suggestToEven(0.2, pool, new Set()), []);
+  assert.deepEqual(suggestToEven(500, pool, new Set(['s']), [], undefined, 3, 2).map((x) => x.key), ['p', 'r']);
+  assert.deepEqual(suggestToEven(0.2, pool, new Set(), []), []);
 });
 
-test('a higher consolidation exponent makes one star worth more than the sum of lesser pieces', () => {
+test('depth discount: the richest player counts fully, each extra one a fraction of the one before', () => {
   const star = [a('s', 1000)];
   const parts = [a('x', 600), a('y', 600)];
-  assert.equal(assess(star, parts, 1).winner, 'them'); // 1000 vs 1200
-  assert.equal(assess(star, parts, 3).winner, 'you');  // 1000 vs ~756
+  assert.equal(assess(star, parts).winner, 'them');                           // plain sum: 1000 vs 1200
+  assert.equal(assess(star, parts, { players: 0.5, picks: 1 }).winner, 'you'); // 1000 vs 600 + 300
+  assert.equal(sideTotal([a('p:1', 2000), a('p:2', 2000), a('p:3', 2000), a('p:4', 2000)], { players: 0.85, picks: 1 }).toFixed(0), String(Math.round(2000 * (1 + 0.85 + 0.85 ** 2 + 0.85 ** 3))));
+  // picks have their own discount and don't use up the player ranks
+  assert.equal(sideTotal([a('p:1', 1000), a('pk:1:1', 1000), a('pk:1:2', 1000)], { players: 0.5, picks: 0.5 }), 1000 + 1000 + 500);
+});
+
+test('suggestions account for the discount: an extra piece on a full side adds less', () => {
+  const pool = [a('q', 2000), a('r', 1000)];
+  const side = [a('p:a', 3000), a('p:b', 2900)];
+  const d = { players: 0.5, picks: 1 };
+  // adding 2000 to a side that already has two players is worth only 2000 × 0.25 = 500; the 1000 piece adds 250
+  assert.deepEqual(suggestToEven(500, pool, new Set(), side, d, 0, 1).map((x) => x.key), ['q']);
+  assert.deepEqual(suggestToEven(500, pool, new Set(), [], d, 0, 1).map((x) => x.key), ['r']);
 });
 
 test('VORP weight blends market and baseline; untraded players use the baseline; picks stay market-only', async () => {

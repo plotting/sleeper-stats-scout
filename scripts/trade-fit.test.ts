@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fitAndReport, fitValues, pickKey, recencyWeight, recentAnnualVorp, scoreTrade, toFitTrade, type FitTrade } from './lib/tradeFit';
+import { fitAndReport, fitValues, pickKey, recencyWeight, recentAnnualVorp, scoreTrade, shapeWeight, toFitTrade, NO_DEPTH, type FitTrade } from './lib/tradeFit';
 
 // Synthetic market: hidden true values, trades that are roughly even under them.
 function synthetic(n: number) {
@@ -47,18 +47,47 @@ test('scales the most valuable player (10+ trades) to exactly 10,000', () => {
   assert.ok(Math.abs(top - 10000) < 1e-6);
 });
 
-test('values are plain sums (alpha 1) unless asked, so published gaps are not compressed', () => {
+test('no depth discount by default; the discount changes which trades balance', () => {
   const { trades } = synthetic(300);
-  assert.equal(fitAndReport(trades).report.alpha, 1);
-  // alpha only re-labels: values v under alpha equal plain sums of r = v^alpha (same ordering, same trade)
+  assert.deepEqual(fitAndReport(trades).report.depth, NO_DEPTH);
   const v = new Map([['p:a', 900], ['p:b', 500], ['p:c', 500]]);
-  const r = new Map([...v].map(([k, x]) => [k, x ** 4]));
   const t = { id: 1, a: ['p:a'], b: ['p:b', 'p:c'] };
-  const asAlpha4 = scoreTrade(t, v, false, 4)!, asPlain = scoreTrade(t, r, false, 1)!;
-  assert.ok(Math.abs(asAlpha4.valA ** 4 - asPlain.valA) / asPlain.valA < 1e-9);
-  assert.equal(asAlpha4.valA > asAlpha4.valB, asPlain.valA > asPlain.valB);
-  // ...but the displayed gap shrinks as alpha grows, which is why alpha can't be tuned on the gap
-  assert.ok(asAlpha4.diffPct < asPlain.diffPct);
+  assert.equal(scoreTrade(t, v)!.valA < scoreTrade(t, v)!.valB, true);                       // plain: 900 vs 1000
+  assert.equal(scoreTrade(t, v, false, { players: 0.5, picks: 1 })!.valB, 750);              // 500 + 250
+});
+
+test('a depth discount in the fit gives multi-piece sides less credit (stars worth more per piece)', () => {
+  // data: one star is accepted for three equal mids, so with a discount the star is worth less than 3 mids
+  const trades: FitTrade[] = [];
+  for (let i = 0; i < 40; i++) trades.push({ id: `t${i}`, a: ['p:star'], b: ['p:m1', 'p:m2', 'p:m3'] });
+  for (let i = 0; i < 40; i++) trades.push({ id: `u${i}`, a: ['p:m1'], b: ['p:m2'] }, { id: `v${i}`, a: ['p:m2'], b: ['p:m3'] });
+  const plain = fitValues(trades);
+  const disc = fitValues(trades, { depth: { players: 0.5, picks: 1 } });
+  const ratio = (m: Map<string, number>) => m.get('p:star')! / m.get('p:m1')!;
+  assert.ok(Math.abs(ratio(plain) - 3) < 0.35, `plain ratio ${ratio(plain)}`);       // 1 + 1 + 1
+  assert.ok(Math.abs(ratio(disc) - 1.75) < 0.25, `discounted ratio ${ratio(disc)}`); // 1 + 0.5 + 0.25
+});
+
+test('one wildly lopsided trade cannot drag values (robust loss)', () => {
+  const trades: FitTrade[] = [];
+  for (let i = 0; i < 60; i++) trades.push({ id: `a${i}`, a: ['p:x'], b: ['p:y'] });
+  trades.push({ id: 'outlier', a: ['p:x'], b: ['p:y', 'p:z'] }, { id: 'wild', a: ['p:x'], b: ['p:z'] });
+  const v = fitValues(trades);
+  assert.ok(Math.abs(Math.log(v.get('p:x')! / v.get('p:y')!)) < 0.2);
+});
+
+test('clean 1-for-1 trades weigh most; bigger trades less', () => {
+  assert.equal(shapeWeight(1, 1), 1);
+  assert.ok(shapeWeight(2, 1) < 1 && shapeWeight(4, 1) < shapeWeight(2, 1) && shapeWeight(2, 2) < 1);
+});
+
+test('shape bias shows whether the many-piece side looks richer than it was accepted as', () => {
+  const trades: FitTrade[] = [];
+  for (let i = 0; i < 80; i++) trades.push({ id: `a${i}`, a: ['p:star'], b: ['p:m1', 'p:m2', 'p:m3'] });
+  for (let i = 0; i < 80; i++) trades.push({ id: `b${i}`, a: ['p:m1'], b: ['p:m2'] }, { id: `c${i}`, a: ['p:m2'], b: ['p:m3'] });
+  const { report } = fitAndReport(trades, { depth: { players: 0.5, picks: 1 } });
+  assert.ok(report.shapeBias['3-1'].n === 80);
+  assert.ok(Math.abs(report.shapeBias['3-1'].pct) < 15, `bias ${report.shapeBias['3-1'].pct}%`);
 });
 
 test('tiers follow the gap thresholds and unknown assets give no score', () => {

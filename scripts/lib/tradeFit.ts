@@ -1,10 +1,15 @@
 // Fits a value to every player and pick from the completed trades in the market database.
 //
 // Idea: managers accept trades they think are roughly even, so we look for values that make
-// the two sides of as many trades as possible balance. Each asset has a log-value θ, a side is
-// worth the sum of exp(θ) over its assets, and we minimise (log sideA − log sideB)² over all
-// trades with a small ridge toward a prior so rarely-seen assets stay sensible. Values are
-// rescaled so the most valuable player (10+ trades) is 10,000.
+// the two sides of as many trades as possible balance. Each asset has a log-value θ. A side is
+// worth its assets' values added up, but with a depth discount: the richest player counts fully,
+// the next ×ρ, then ×ρ², … (you can only start so many, and someone gets cut), and the same for
+// picks with their own ρ. We minimise (log sideA − log sideB)² over all trades with a small ridge
+// toward a prior so rarely-seen assets stay sensible. ρ is a setting, not something the fit learns:
+// every trade is balanced by construction, so values that are all equal with ρ = 0 would explain
+// the data just as well (the spread of values and ρ trade off and trades alone can't separate them).
+// fitAndReport therefore reports how lopsided each trade shape looks under the chosen ρ so it can
+// be calibrated. Values are rescaled so the most valuable player (10+ trades) is 10,000.
 
 import type { Asset, TradeRow } from './tradeMarket';
 
@@ -53,16 +58,34 @@ export interface FitOptions {
   iterations?: number;
   learningRate?: number;
   ridge?: number;
-  alpha?: number;
+  /** Trades whose sides differ by more than this (in log terms) pull with a capped force (Huber), so outliers can't drag values. */
+  huber?: number;
+  /** Depth discount per extra asset on a side (default: none). A setting, see the header. */
+  depth?: Depth;
   /** Log-value each asset is shrunk toward (default: a flat prior for players, a round curve for picks). */
   priors?: Map<AssetKey, number>;
 }
 
-/** Value of a side: (Σ v^α)^(1/α). α = 1 is a plain sum; larger α lets the best piece dominate, so
- *  stars are worth more than the sum of several lesser players (a consolidation premium). */
-export function sideValue(vals: number[], alpha: number): number {
-  if (alpha === 1) return vals.reduce((a, b) => a + b, 0);
-  return Math.pow(vals.reduce((a, b) => a + Math.pow(b, alpha), 0), 1 / alpha);
+/** Weight multiplier for each additional asset on a side, richest first (1 = no discount). */
+export interface Depth { players: number; picks: number }
+export const NO_DEPTH: Depth = { players: 1, picks: 1 };
+
+/** Side total with the depth discount: richest player ×1, next ×ρ, then ×ρ², …; picks likewise with their own ρ. */
+export function sideTotalDepth(items: Array<{ value: number; pick: boolean }>, depth: Depth): number {
+  let total = 0;
+  for (const isPick of [false, true]) {
+    const rho = isPick ? depth.picks : depth.players;
+    const vals = items.filter((x) => x.pick === isPick).map((x) => x.value).sort((x, y) => y - x);
+    let w = 1;
+    for (const v of vals) { total += w * v; w *= rho; }
+  }
+  return total;
+}
+
+/** Cleaner trades say more about values: 1-for-1 counts fully, bigger trades less (more going on in them). */
+export function shapeWeight(aCount: number, bCount: number): number {
+  const extra = Math.abs(aCount - bCount) + Math.max(0, Math.min(aCount, bCount) - 1);
+  return Math.pow(0.8, extra); // 1-1: 1, 2-1: 0.8, 2-2: 0.8, 3-1: 0.64, 4-1: 0.51, 3-2: 0.64 ...
 }
 
 /** Trades lose weight as they age (half-life in days): values drift as players break out or fade. */
@@ -92,12 +115,13 @@ export function recentAnnualVorp(seasons: Array<{ yearsAgo: number; vorp: number
 /** The most valuable player (10+ trades) is worth this, like the 0-10,000 scale other trade tools use. */
 export const TOP_PLAYER_SCALE = 10000;
 
-/** Fits values (top players scaled to ~9000). Returns value per asset key. */
-export function fitValues(trades: FitTrade[], opts: FitOptions = {}): Map<AssetKey, number> {
+/** Fits values for a given depth discount. */
+export function fitCore(trades: FitTrade[], opts: FitOptions = {}): { values: Map<AssetKey, number>; depth: Depth } {
   const iterations = opts.iterations ?? 2500;
   const lr = opts.learningRate ?? 0.05;
   const ridge = opts.ridge ?? 0.005;
-  const alpha = opts.alpha ?? 1;
+  const depthSetting = opts.depth ?? NO_DEPTH;
+  const huber = opts.huber ?? 0.6;
 
   const index = new Map<AssetKey, number>();
   const keys: AssetKey[] = [];
@@ -106,53 +130,79 @@ export function fitValues(trades: FitTrade[], opts: FitOptions = {}): Map<AssetK
     if (i === undefined) { i = keys.length; index.set(k, i); keys.push(k); }
     return i;
   };
-  const rows = trades.map((t) => ({ a: t.a.map(idx), b: t.b.map(idx), w: t.weight ?? 1 }));
+  // Each side is kept as two lists (players, picks) that are re-sorted richest-first every iteration.
+  const split = (side: AssetKey[]) => ({ pl: side.filter((k) => !k.startsWith('pk:')).map(idx), pk: side.filter((k) => k.startsWith('pk:')).map(idx) });
+  const rows = trades.map((t) => ({ a: split(t.a), b: split(t.b), w: t.weight ?? 1 }));
   const n = keys.length;
   const prior = keys.map((k) => opts.priors?.get(k) ?? Math.log(priorValue(k)));
-  const theta = Float64Array.from(prior);
+  const P = Float64Array.from(prior); // log-values
   const m = new Float64Array(n);
-  const v = new Float64Array(n);
+  const v2 = new Float64Array(n);
   const grad = new Float64Array(n);
   const val = new Float64Array(n);
+  const byValueDesc = (x: number, y: number) => val[y] - val[x];
 
-  const wt = new Float64Array(n); // v^α = exp(α·θ), each asset's weight inside its side
+  const rhoP = depthSetting.players, rhoK = depthSetting.picks;
+  // Sorts the side richest-first and returns its discounted total.
+  const evalSide = (side: { pl: number[]; pk: number[] }): number => {
+    if (side.pl.length > 1) side.pl.sort(byValueDesc);
+    if (side.pk.length > 1) side.pk.sort(byValueDesc);
+    let S = 0, c = 1;
+    for (const i of side.pl) { S += c * val[i]; c *= rhoP; }
+    c = 1;
+    for (const i of side.pk) { S += c * val[i]; c *= rhoK; }
+    return S;
+  };
+  const addGrad = (side: { pl: number[]; pk: number[] }, factor: number) => {
+    let c = 1;
+    for (const i of side.pl) { grad[i] += factor * c * val[i]; c *= rhoP; }
+    c = 1;
+    for (const i of side.pk) { grad[i] += factor * c * val[i]; c *= rhoK; }
+  };
+
   for (let it = 1; it <= iterations; it++) {
-    for (let i = 0; i < n; i++) { wt[i] = Math.exp(alpha * theta[i]); grad[i] = 2 * ridge * (theta[i] - prior[i]); }
+    for (let i = 0; i < n; i++) { val[i] = Math.exp(P[i]); grad[i] = 2 * ridge * (P[i] - prior[i]); }
     for (const r of rows) {
-      let sa = 0, sb = 0;
-      for (const i of r.a) sa += wt[i];
-      for (const i of r.b) sb += wt[i];
-      const d = ((Math.log(sa) - Math.log(sb)) / alpha) * r.w; // log of side A over side B, weighted
-      for (const i of r.a) grad[i] += (2 * d * wt[i]) / sa;
-      for (const i of r.b) grad[i] -= (2 * d * wt[i]) / sb;
+      const SA = evalSide(r.a);
+      const SB = evalSide(r.b);
+      const raw = Math.log(SA) - Math.log(SB); // log of side A over side B
+      const d = Math.max(-huber, Math.min(huber, raw)) * r.w; // capped, then weighted
+      addGrad(r.a, (2 * d) / SA);
+      addGrad(r.b, (-2 * d) / SB);
     }
     const b1 = 0.9, b2 = 0.999;
     for (let i = 0; i < n; i++) {
       m[i] = b1 * m[i] + (1 - b1) * grad[i];
-      v[i] = b2 * v[i] + (1 - b2) * grad[i] * grad[i];
-      theta[i] -= (lr * (m[i] / (1 - Math.pow(b1, it)))) / (Math.sqrt(v[i] / (1 - Math.pow(b2, it))) + 1e-8);
+      v2[i] = b2 * v2[i] + (1 - b2) * grad[i] * grad[i];
+      P[i] -= (lr * (m[i] / (1 - Math.pow(b1, it)))) / (Math.sqrt(v2[i] / (1 - Math.pow(b2, it))) + 1e-8);
     }
   }
+  for (let i = 0; i < n; i++) val[i] = Math.exp(P[i]);
 
   // Scale so the most valuable player (10+ trades) is TOP_PLAYER_SCALE; fall back to the nearest 1st-round pick.
   const appearances = new Float64Array(n);
-  for (const r of rows) for (const i of [...r.a, ...r.b]) appearances[i]++;
+  for (const r of rows) for (const i of [...r.a.pl, ...r.a.pk, ...r.b.pl, ...r.b.pk]) appearances[i]++;
   let topX = 0;
-  keys.forEach((k, i) => { if (k.startsWith('p:') && appearances[i] >= 10) topX = Math.max(topX, Math.exp(theta[i])); });
+  keys.forEach((k, i) => { if (k.startsWith('p:') && appearances[i] >= 10) topX = Math.max(topX, val[i]); });
   let scale = 1;
   if (topX > 0) {
     scale = TOP_PLAYER_SCALE / topX;
   } else {
     for (let off = 0; off <= 3; off++) {
       const i = index.get(`pk:${off}:1`);
-      if (i !== undefined) { scale = priorValue(`pk:${off}:1`) / Math.exp(theta[i]); break; }
+      if (i !== undefined) { scale = priorValue(`pk:${off}:1`) / val[i]; break; }
     }
   }
   const out = new Map<AssetKey, number>();
-  keys.forEach((k, i) => out.set(k, Math.exp(theta[i]) * scale));
+  keys.forEach((k, i) => out.set(k, val[i] * scale));
   // Assets in the priors that never appear in a trade are valued from their prior alone.
   for (const [k, p] of opts.priors ?? []) if (!index.has(k)) out.set(k, Math.exp(p) * scale);
-  return out;
+  return { values: out, depth: depthSetting };
+}
+
+/** Fits values (top player scaled to 10,000). Returns value per asset key. */
+export function fitValues(trades: FitTrade[], opts: FitOptions = {}): Map<AssetKey, number> {
+  return fitCore(trades, opts).values;
 }
 
 // ── VORP prior: players are shrunk toward a value implied by recent VORP and age ──────────────
@@ -204,8 +254,9 @@ export interface VorpPriorInfo {
  */
 export function fitWithFeatures(
   trades: FitTrade[], feats: Map<AssetKey, PlayerFeature>, opts: FitOptions = {},
-): { values: Map<AssetKey, number>; info: VorpPriorInfo | null; baseline: Map<AssetKey, number>; predictValue: ((f: PlayerFeature) => number) | null } {
-  const first = fitValues(trades, opts);
+): { values: Map<AssetKey, number>; depth: Depth; info: VorpPriorInfo | null; baseline: Map<AssetKey, number>; predictValue: ((f: PlayerFeature) => number) | null } {
+  const firstFit = fitCore(trades, opts);
+  const first = firstFit.values;
   const counts = new Map<AssetKey, number>();
   for (const t of trades) for (const k of [...t.a, ...t.b]) counts.set(k, (counts.get(k) ?? 0) + 1);
 
@@ -219,7 +270,7 @@ export function fitWithFeatures(
     if (f) { X.push(featureRow(f)); y.push(Math.log(v)); w.push(Math.min(n, 40)); }
     else { noFeat.push(Math.log(v)); noFeatW.push(Math.min(n, 40)); }
   }
-  if (X.length < 30) return { values: first, info: null, baseline: new Map(), predictValue: null };
+  if (X.length < 30) return { values: first, depth: firstFit.depth, info: null, baseline: new Map(), predictValue: null };
 
   const beta = olsWeighted(X, y, w);
   const pred = (f: PlayerFeature) => featureRow(f).reduce((s, x, i) => s + x * beta[i], 0);
@@ -238,7 +289,7 @@ export function fitWithFeatures(
   }
   for (const [k, f] of feats) if (!priors.has(k)) priors.set(k, pred(f));
 
-  const values = fitValues(trades, { ...opts, ridge: opts.ridge ?? 0.4, priors });
+  const values = fitCore(trades, { ...opts, ridge: opts.ridge ?? 0.4, priors, depth: firstFit.depth }).values;
 
   // The pure VORP baseline for every player with features, on the same scale as the fitted values
   // (offset = how far the fitted values of well-traded players sit from the regression line, on average).
@@ -262,7 +313,7 @@ export function fitWithFeatures(
     if (pos !== '?' && e.w >= 100) marketVsVorp[pos] = Math.round((Math.exp(e.sum / e.w - offset) - 1) * 100);
   }
   const predictValue = (f: PlayerFeature) => Math.exp(pred(f) + offset);
-  return { values, baseline, predictValue, info: { r2: ssTot > 0 ? 1 - ssRes / ssTot : 0, players: X.length, slope: beta[1], marketVsVorp } };
+  return { values, depth: firstFit.depth, baseline, predictValue, info: { r2: ssTot > 0 ? 1 - ssRes / ssTot : 0, players: X.length, slope: beta[1], marketVsVorp } };
 }
 
 export type FairTier = 'even' | 'close' | 'edge' | 'lop';
@@ -270,15 +321,15 @@ export type FairTier = 'even' | 'close' | 'edge' | 'lop';
 export interface TradeScore { valA: number; valB: number; diffPct: number; tier: FairTier }
 
 /** Gap between the sides as a share of the bigger one; null if any asset has no value. */
-export function scoreTrade(t: FitTrade, values: Map<AssetKey, number>, fallbackToPrior = false, alpha = 1): TradeScore | null {
+export function scoreTrade(t: FitTrade, values: Map<AssetKey, number>, fallbackToPrior = false, depth: Depth = NO_DEPTH): TradeScore | null {
   const side = (keys: AssetKey[]) => {
-    const xs: number[] = [];
+    const xs: Array<{ value: number; pick: boolean }> = [];
     for (const k of keys) {
       const x = values.get(k) ?? (fallbackToPrior ? priorValue(k) : undefined);
       if (x === undefined) return null;
-      xs.push(x);
+      xs.push({ value: x, pick: k.startsWith('pk:') });
     }
-    return sideValue(xs, alpha);
+    return sideTotalDepth(xs, depth);
   };
   const valA = side(t.a);
   const valB = side(t.b);
@@ -295,7 +346,9 @@ export interface FitReport {
   holdoutMeanGap: number | null;
   holdoutCoverage: number | null; // share of held-out trades whose assets were all seen in training
   vorp: VorpPriorInfo | null;      // how well recent VORP + age explain player values
-  alpha: number;
+  depth: Depth;                    // the depth discount used (a setting)
+  /** For trades with different asset counts: how much more the bigger side is worth than the smaller one, on average (%), by shape. */
+  shapeBias: Record<string, { n: number; pct: number }>;
   tiers: Record<FairTier, number>;
 }
 
@@ -307,23 +360,23 @@ const mean = (xs: number[], ws?: number[]) => {
   return total > 0 ? xs.reduce((a, x, i) => a + x * w[i], 0) / total : NaN;
 };
 
-/**
- * Fit on everything, plus a 5-fold check on unseen trades. α stays 1 (plain sums): any other α only
- * re-labels the same ordering (sides compare identically via Σ v^α) while compressing the displayed
- * values and shrinking measured gaps, so it must not be tuned on the gap.
- */
+/** Fit on everything (values and depth discounts together), plus a 5-fold check on unseen trades. */
 export function fitAndReport(
   trades: FitTrade[], opts: FitOptions = {}, feats?: Map<AssetKey, PlayerFeature>,
-): { values: Map<AssetKey, number>; baseline: Map<AssetKey, number>; predictValue: ((f: PlayerFeature) => number) | null; report: FitReport } {
-  const alpha = opts.alpha ?? 1;
-  const o = { ...opts, alpha };
-  const model = (tr: FitTrade[]) => (feats ? fitWithFeatures(tr, feats, o) : { values: fitValues(tr, o), info: null, baseline: new Map<AssetKey, number>(), predictValue: null });
+): { values: Map<AssetKey, number>; depth: Depth; baseline: Map<AssetKey, number>; predictValue: ((f: PlayerFeature) => number) | null; report: FitReport } {
+  const o = opts;
+  const model = (tr: FitTrade[]) => {
+    if (feats) return fitWithFeatures(tr, feats, o);
+    const f = fitCore(tr, o);
+    return { values: f.values, depth: f.depth, info: null, baseline: new Map<AssetKey, number>(), predictValue: null };
+  };
   const full = model(trades);
   const values = full.values;
-  const scores = trades.map((t) => scoreTrade(t, values, false, alpha)!);
+  const depth = full.depth;
+  const scores = trades.map((t) => scoreTrade(t, values, false, depth)!);
   const tiers: Record<FairTier, number> = { even: 0, close: 0, edge: 0, lop: 0 };
   for (const s of scores) tiers[s.tier]++;
-  const priorGaps = trades.map((t) => scoreTrade(t, new Map(), true, 1)!.diffPct);
+  const priorGaps = trades.map((t) => scoreTrade(t, new Map(), true, NO_DEPTH)!.diffPct);
 
   let holdoutMeanGap: number | null = null;
   let holdoutCoverage: number | null = null;
@@ -334,18 +387,36 @@ export function fitAndReport(
     for (let f = 0; f < FOLDS; f++) {
       const train = trades.filter((_, i) => i % FOLDS !== f);
       const test = trades.filter((_, i) => i % FOLDS === f);
-      const vals = model(train).values;
+      const fold = model(train);
       for (const t of test) {
         tested++;
-        const s = scoreTrade(t, vals, false, alpha);
+        const s = scoreTrade(t, fold.values, false, fold.depth);
         if (s) { gaps.push(s.diffPct); gws.push(t.weight ?? 1); }
       }
     }
     holdoutMeanGap = mean(gaps, gws);
     holdoutCoverage = tested ? gaps.length / tested : null;
   }
+  // Calibration check for the depth setting: in uneven trades (e.g. 4-for-1) the side with more pieces
+  // should not be worth systematically more or less than the other. Positive = the many-piece side
+  // looks richer than it was accepted as, i.e. the depth discount is too weak.
+  const biasAcc = new Map<string, { sum: number; w: number; n: number }>();
+  trades.forEach((t, i) => {
+    const sc = scores[i];
+    if (t.a.length === t.b.length) return;
+    const manyIsA = t.a.length > t.b.length;
+    const shape = `${Math.max(t.a.length, t.b.length)}-${Math.min(t.a.length, t.b.length)}`;
+    const logRatio = Math.log((manyIsA ? sc.valA : sc.valB) / (manyIsA ? sc.valB : sc.valA));
+    const e = biasAcc.get(shape) ?? { sum: 0, w: 0, n: 0 };
+    const w = t.weight ?? 1;
+    e.sum += w * logRatio; e.w += w; e.n++; biasAcc.set(shape, e);
+  });
+  const shapeBias: Record<string, { n: number; pct: number }> = {};
+  for (const [shape, e] of biasAcc) if (e.n >= 30) shapeBias[shape] = { n: e.n, pct: Math.round((Math.exp(e.sum / e.w) - 1) * 100) };
+
   return {
     values,
+    depth,
     baseline: full.baseline,
     predictValue: full.predictValue,
     report: {
@@ -355,7 +426,8 @@ export function fitAndReport(
       priorMeanGap: mean(priorGaps, trades.map((t) => t.weight ?? 1)),
       holdoutMeanGap,
       holdoutCoverage,
-      alpha,
+      depth,
+      shapeBias,
       vorp: full.info,
       tiers,
     },

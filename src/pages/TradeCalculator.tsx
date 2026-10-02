@@ -7,7 +7,7 @@ import { AssetLine, AssetSearch } from "@/components/market/assetUi";
 import { loadDirectory, loadValues, useEntries } from "@/components/market/assetData";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-import { assess, effectiveValue, normalizeTop, sideTotal, suggestToEven, TIER_LABEL, type CalcAsset } from "@/utils/marketCalc";
+import { assess, effectiveValue, normalizeTop, sideTotal, suggestToEven, TIER_LABEL, type CalcAsset, type Depth } from "@/utils/marketCalc";
 
 // Hidden, admin-only page: prices a trade with the values fitted from completed market trades
 // (market_values). Players only appear once they've been in enough trades to get a value.
@@ -20,8 +20,8 @@ const TIER_STYLE: Record<string, string> = {
   lop: "text-red-400 border-red-400/40 bg-red-400/10",
 };
 
-function Side({ title, assets, alpha, onRemove, children }: { title: string; assets: CalcAsset[]; alpha: number; onRemove: (key: string) => void; children: React.ReactNode }) {
-  const total = sideTotal(assets, alpha);
+function Side({ title, assets, depth, onRemove, children }: { title: string; assets: CalcAsset[]; depth: Depth; onRemove: (key: string) => void; children: React.ReactNode }) {
+  const total = sideTotal(assets, depth);
   return (
     <div className="space-y-3">
       <div className="flex items-baseline justify-between">
@@ -88,13 +88,17 @@ const Calculator = () => {
   const { data: directory } = useQuery({ queryKey: ["calc-directory"], queryFn: loadDirectory, staleTime: 60 * 60 * 1000 });
   const entries = useEntries(values, directory);
   const taken = useMemo(() => new Set([...receive, ...send].map((a) => a.key)), [receive, send]);
-  const alpha = values?.get("cfg:alpha")?.value ?? 1;
+  const fitDepth = values?.get("cfg:rho_players")?.value ?? 1;
+  const rhoPlayers = fitDepth;
+  const rhoPicks = values?.get("cfg:rho_picks")?.value ?? 1;
+  const depth: Depth = useMemo(() => ({ players: rhoPlayers, picks: rhoPicks }), [rhoPlayers, rhoPicks]);
   const receiveP = receive.map(reprice);
   const sendP = send.map(reprice);
-  const result = assess(receiveP, sendP, alpha);
+  const result = assess(receiveP, sendP, depth);
+  const hasAssets = receive.length + send.length > 0;
   const names = useMemo(
-    () => (receive.length + send.length > 0 && result.tier !== "even" ? suggestToEven(result.gap, entries, taken) : []),
-    [entries, taken, result.gap, result.tier, receive.length, send.length],
+    () => (hasAssets && result.tier !== "even" ? suggestToEven(result.gap, entries, taken, result.gap > 0 ? sendP : receiveP, depth) : []),
+    [entries, taken, result.gap, result.tier, hasAssets, receiveP, sendP, depth],
   );
 
   const add = (set: typeof setReceive) => (a: CalcAsset) => set((xs) => (xs.some((x) => x.key === a.key) ? xs : [...xs, a]));
@@ -138,10 +142,10 @@ const Calculator = () => {
       {values && values.size > 0 && (
         <>
           <Card className="border-white/10 p-5 grid md:grid-cols-2 gap-8">
-            <Side title="You receive" assets={receiveP} alpha={alpha} onRemove={remove(setReceive)}>
+            <Side title="You receive" assets={receiveP} depth={depth} onRemove={remove(setReceive)}>
               <AssetSearch entries={entries} taken={taken} onAdd={add(setReceive)} />
             </Side>
-            <Side title="You send" assets={sendP} alpha={alpha} onRemove={remove(setSend)}>
+            <Side title="You send" assets={sendP} depth={depth} onRemove={remove(setSend)}>
               <AssetSearch entries={entries} taken={taken} onAdd={add(setSend)} />
             </Side>
           </Card>

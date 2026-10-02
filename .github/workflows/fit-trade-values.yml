@@ -5,6 +5,13 @@ name: Fit trade values
 # e.g. after changing the model, or while a long crawl is still running.
 on:
   workflow_dispatch:
+    inputs:
+      depth_players:
+        description: 'Weight of each extra player on a side, richest first (1 = plain sum)'
+        default: '1'
+      depth_picks:
+        description: 'Weight of each extra pick on a side'
+        default: '1'
 
 concurrency:
   group: fit-trade-values
@@ -25,3 +32,5 @@ jobs:
         env:
           TSX_TSCONFIG_PATH: tsconfig.app.json
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          DEPTH_PLAYERS: ${{ inputs.depth_players || '1' }}
+          DEPTH_PICKS: ${{ inputs.depth_picks || '1' }}
