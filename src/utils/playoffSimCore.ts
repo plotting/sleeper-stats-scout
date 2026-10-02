@@ -1,17 +1,14 @@
 /**
- * Monte Carlo playoff simulation, run off the main thread so a high iteration
- * count (up to 1,000,000) doesn't freeze the UI.
+ * Monte Carlo playoff simulation core. Run by the scheduled job (scripts/sim-playoff-odds.ts), which saves the
+ * results; the site only displays them.
  *
- * Methodology: each team's remaining games are simulated by sampling a score
- * from a normal distribution (team's blended projected mean/std — see
- * computeSimTeams in Analytics.tsx, which already blends historical and
- * current-season performance, weighted toward current as the season
- * progresses). Higher score wins each simulated game. After simulating every
- * remaining week, final standings (wins, then points-for) determine playoff
- * seeding for that simulated season. Repeated `numSims` times.
+ * Methodology: each remaining game is simulated by sampling a score for each team from a normal distribution
+ * (that team's projected mean/std for the week — roster- and injury-aware, see playerProjections.ts and
+ * computeSimTeams). Higher score wins. After every remaining week, final standings (wins, then points-for)
+ * determine the simulated seeding. Repeated `numSims` times.
  */
 
-export interface WorkerSimTeam {
+export interface SimTeamInput {
   teamId: number;
   wins: number;
   losses: number;
@@ -19,7 +16,7 @@ export interface WorkerSimTeam {
   pf: number;
 }
 
-export interface WorkerFutureGame {
+export interface SimFutureGame {
   homeId: number;
   awayId: number;
   week: number;
@@ -33,29 +30,19 @@ export interface WorkerFutureGame {
 }
 
 export interface SimRequest {
-  /** Echoed back verbatim in the response so a caller with multiple
-   *  overlapping run() calls on this shared, persistent worker can tell
-   *  which reply belongs to which request instead of just taking the next
-   *  message off the wire (which may be a stale reply to an earlier call). */
-  requestId: number;
-  teams: WorkerSimTeam[];
-  futureGames: WorkerFutureGame[];
+  teams: SimTeamInput[];
+  futureGames: SimFutureGame[];
   numSims: number;
   bracketSize: number;
 }
 
-export interface WorkerSimResult {
+export interface SimResult {
   teamId: number;
   avgProjectedWins: number;
   avgRank: number;
   playoffPct: number;
   /** seedPct[i] = probability of finishing in place i+1 (0-indexed) */
   seedPct: number[];
-}
-
-export interface WorkerSimResponse {
-  requestId: number;
-  results: WorkerSimResult[];
 }
 
 // Single-game win% is computed analytically elsewhere (exact for the
@@ -81,7 +68,7 @@ function sampleNormal(mean: number, std: number): number {
   return mean + std * (u * mul);
 }
 
-function runSim(req: SimRequest): WorkerSimResult[] {
+export function runSim(req: SimRequest): SimResult[] {
   const { teams, futureGames, numSims, bracketSize } = req;
   const n = teams.length;
   if (n === 0) return [];
@@ -175,9 +162,3 @@ function runSim(req: SimRequest): WorkerSimResult[] {
     seedPct: Array.from(seedCount[i], (c) => c / numSims),
   }));
 }
-
-self.onmessage = (e: MessageEvent<SimRequest>) => {
-  const results = runSim(e.data);
-  const response: WorkerSimResponse = { requestId: e.data.requestId, results };
-  (self as unknown as Worker).postMessage(response);
-};
