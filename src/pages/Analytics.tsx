@@ -1249,8 +1249,8 @@ function PlayoffSim({
   // Saving sim snapshots is a database write, which is admin-only.
   const adminSession = useAdminSession();
 
-  /** Replays the sim as it stood after `week` (team-level projections only, so any two weeks are directly comparable). */
-  async function simulateAsOf(week: number, numSimsForRun: number, bracketSize: number) {
+  /** Replays the sim as it stood after `week`. `projections` are the roster-based weekly projections for weeks still ahead (the backfill passes none). */
+  async function simulateAsOf(week: number, numSimsForRun: number, bracketSize: number, projections: Map<number, Map<number, TeamWeekProjection> | null> = new Map()) {
     const truncated = truncateMatchupsAsOf(matchups, week);
     const weekTeams = computeSimTeams(truncated, allMatchups, sortedHistIds);
     const weekFutureGames = getFutureGames(truncated, weekTeams);
@@ -1260,8 +1260,8 @@ function PlayoffSim({
     const enrichedGames = weekFutureGames.map((g) => {
       const home = weekTeamMap.get(g.homeId);
       const away = weekTeamMap.get(g.awayId);
-      const homeStat = getEffectiveTeamWeekStat(new Map(), g.homeId, g.week, weekNearestWeek, home?.projMean ?? 0, home?.projStd ?? 20);
-      const awayStat = getEffectiveTeamWeekStat(new Map(), g.awayId, g.week, weekNearestWeek, away?.projMean ?? 0, away?.projStd ?? 20);
+      const homeStat = getEffectiveTeamWeekStat(projections, g.homeId, g.week, weekNearestWeek, home?.projMean ?? 0, home?.projStd ?? 20);
+      const awayStat = getEffectiveTeamWeekStat(projections, g.awayId, g.week, weekNearestWeek, away?.projMean ?? 0, away?.projStd ?? 20);
       return {
         homeId: g.homeId, awayId: g.awayId, week: g.week,
         homeMean: homeStat.mean, homeStd: homeStat.std,
@@ -1310,27 +1310,6 @@ function PlayoffSim({
       queryClient.invalidateQueries({ queryKey: ["playoff-sim-history", currentSeasonId] });
     }
   }
-
-  // Week-over-week change in playoff odds, computed live: the sim as of this week vs as of the previous week, both with the
-  // same method, bracket size and a shared sim count, so nothing has to be backfilled and the Top 4/5/6 choice is respected.
-  const [wow, setWow] = useState<{ vsWeek: number; delta: Map<number, number> } | null>(null);
-  useEffect(() => {
-    const idx = allAsOfWeeks.indexOf(asOfWeek);
-    if (idx <= 0 || matchups.length === 0) { setWow(null); return; }
-    let cancelled = false;
-    const prevWeek = allAsOfWeeks[idx - 1];
-    const sims = Math.min(numSims, 250_000); // enough that a few tenths of a point is real, quick enough to feel instant
-    (async () => {
-      const [cur, prev] = [await simulateAsOf(asOfWeek, sims, effectiveBracketSize), await simulateAsOf(prevWeek, sims, effectiveBracketSize)];
-      if (cancelled || !cur || !prev) { if (!cancelled) setWow(null); return; }
-      const before = new Map(prev.results.map((r) => [r.teamId, r.playoffPct]));
-      const delta = new Map<number, number>();
-      for (const r of cur.results) { const b0 = before.get(r.teamId); if (b0 != null) delta.set(r.teamId, (r.playoffPct - b0) * 100); }
-      setWow({ vsWeek: prevWeek, delta });
-    })().catch(() => { if (!cancelled) setWow(null); });
-    return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [asOfWeek, allAsOfWeeks, matchups, allMatchups, sortedHistIds, effectiveBracketSize, numSims]);
 
   const { data: rosterData } = useQuery({
     queryKey: ["sleeper-rosters-for-sim"],
@@ -1393,6 +1372,28 @@ function PlayoffSim({
     });
     return () => { cancelled = true; };
   }, [rosterData, futureWeeks]);
+
+  // Week-over-week change in playoff odds, computed live. The headline odds use roster-based projections for the weeks still to
+  // play, so last week's odds are replayed with those same projections for the weeks that were still ahead then (the one week
+  // that has since been played falls back to the team model). Headline minus change is then last week's number on the same basis.
+  const [prevOdds, setPrevOdds] = useState<{ vsWeek: number; sims: number; pct: Map<number, number> } | null>(null);
+  useEffect(() => {
+    setPrevOdds(null);
+    const idx = allAsOfWeeks.indexOf(asOfWeek);
+    if (idx <= 0 || matchups.length === 0) return;
+    // wait for the roster-based projections on the live season so the comparison isn't made on the wrong basis
+    if (isLiveSeason && futureWeeks.length > 0 && weekProjections.size === 0) return;
+    let cancelled = false;
+    const prevWeek = allAsOfWeeks[idx - 1];
+    const sims = Math.max(100_000, Math.min(numSims, 250_000));
+    simulateAsOf(prevWeek, sims, effectiveBracketSize, weekProjections).then((prev) => {
+      if (cancelled || !prev) return;
+      setPrevOdds({ vsWeek: prevWeek, sims, pct: new Map(prev.results.map((r) => [r.teamId, r.playoffPct])) });
+    }).catch(() => { /* no comparison shown */ });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [asOfWeek, allAsOfWeeks, matchups, allMatchups, sortedHistIds, effectiveBracketSize, numSims, weekProjections, isLiveSeason, futureWeeks]);
+
 
   // simKey lets the user force a fresh re-randomization without changing inputs
   useEffect(() => {
@@ -1542,8 +1543,8 @@ function PlayoffSim({
               <TableHead className="text-right">±</TableHead>
               <TableHead className="text-right">Proj W</TableHead>
               <TableHead className="text-right">Proj Seed</TableHead>
-              <TableHead className="text-right" title="Change in playoff odds since the previous week (same method, same bracket size; under 0.3 points is simulation noise)">
-                Playoff %{wow && <span className="block text-[10px] font-normal text-slate-500">Δ vs after Wk {wow.vsWeek}</span>}
+              <TableHead className="text-right" title="Change in playoff odds since the previous week: last week replayed with the same projections and bracket size. Changes within the simulation noise show as ±0.0">
+                Playoff %{prevOdds && <span className="block text-[10px] font-normal text-slate-500">Δ vs after Wk {prevOdds.vsWeek}</span>}
               </TableHead>
             </TableRow>
           </TableHeader>
@@ -1580,12 +1581,13 @@ function PlayoffSim({
                   <TableCell className={cn("text-right font-mono font-semibold text-sm", pctColor(r.playoffPct))}>
                     {fmt(r.playoffPct * 100, 1)}%
                     {(() => {
-                      const live = wow?.delta.get(r.teamId);
+                      const before = prevOdds?.pct.get(r.teamId);
                       const saved = prevWeekPlayoffPct?.get(r.teamId);
-                      const delta = live ?? (saved != null ? r.playoffPct * 100 - saved * 100 : null);
+                      const delta = before != null ? (r.playoffPct - before) * 100 : saved != null ? (r.playoffPct - saved) * 100 : null;
                       if (delta == null) return null;
-                      // under ~0.3 points is within the simulation's own noise
-                      if (Math.abs(delta) < 0.3) {
+                      // within ~2 standard errors of the two simulations' own noise, the change isn't real
+                      const noise = 200 * Math.sqrt(0.25 / numSims + 0.25 / (prevOdds?.sims ?? numSims));
+                      if (Math.abs(delta) < Math.max(0.3, noise)) {
                         return <span className="ml-1.5 text-[10px] font-normal text-slate-600">±0.0</span>;
                       }
                       return (
