@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fitAndReport, fitValues, pickKey, scoreTrade, toFitTrade, type FitTrade } from './lib/tradeFit';
+import { fitAndReport, fitValues, pickKey, recencyWeight, recentAnnualVorp, scoreTrade, toFitTrade, type FitTrade } from './lib/tradeFit';
 
 // Synthetic market: hidden true values, trades that are roughly even under them.
 function synthetic(n: number) {
@@ -149,4 +149,24 @@ test('reports how far the market sits above VORP by position and a baseline for 
   assert.equal(baseline.size, 90);
   const mv = report.vorp!.marketVsVorp;
   assert.ok(mv.QB > mv.WR + 10, `QB ${mv.QB}% vs WR ${mv.WR}%`);
+});
+
+test('trade weights halve every half-life', () => {
+  const now = new Date('2026-10-01T00:00:00Z');
+  assert.ok(Math.abs(recencyWeight('2026-10-01T00:00:00Z', now, 120) - 1) < 1e-9);
+  assert.ok(Math.abs(recencyWeight('2026-06-03T00:00:00Z', now, 120) - 0.5) < 0.01); // 120 days earlier
+  assert.ok(recencyWeight('2023-10-01T00:00:00Z', now, 120) < 0.01);
+});
+
+test('a barely-started season does not drag recent VORP down', () => {
+  // full seasons: 150 VORP last year, 60 the year before; this season is 4 games old with 12 VORP (= 51 annualised)
+  const v = recentAnnualVorp([
+    { yearsAgo: 0, vorp: 12, seasonGames: 4 },
+    { yearsAgo: 1, vorp: 150, seasonGames: 17 },
+    { yearsAgo: 2, vorp: 60, seasonGames: 17 },
+  ])!;
+  const naive = 0.5 * 12 + 0.3 * 150 + 0.2 * 60; // the old calculation
+  assert.ok(v > naive * 1.5, `${v} vs naive ${naive}`);
+  assert.ok(v > 90 && v < 150);
+  assert.equal(recentAnnualVorp([]), null);
 });

@@ -4,7 +4,7 @@
 //   SUPABASE_SERVICE_ROLE_KEY=... TSX_TSCONFIG_PATH=tsconfig.app.json npx tsx scripts/fit-trade-values.ts
 // Env: MIN_TRADES (default 30) per format before a fit is stored.
 
-import { fitAndReport, scoreTrade, toFitTrade, type FitTrade, type PlayerFeature } from './lib/tradeFit';
+import { fitAndReport, recencyWeight, recentAnnualVorp, scoreTrade, toFitTrade, type FitTrade, type PlayerFeature } from './lib/tradeFit';
 import { computeVorp, type SeasonRow } from './lib/vorp';
 import { createThrottle, lineupLabel, lineupOf, lineupWeight, type Lineup, type TradeRow } from './lib/tradeMarket';
 
@@ -27,6 +27,8 @@ if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
   process.exit(1);
 }
 const MIN_TRADES = Number(process.env.MIN_TRADES ?? 30);
+const HALF_LIFE_DAYS = Number(process.env.HALF_LIFE_DAYS ?? 120); // values drift, so older trades count less
+const now = new Date();
 const db = supabase as unknown as { from: (t: string) => any }; // eslint-disable-line @typescript-eslint/no-explicit-any
 
 // ── Lineup weighting: trades from leagues whose lineups look like ours count more ──
@@ -71,7 +73,7 @@ if (target) {
   console.log(`Lineups: ${filled} filled now, ${Math.max(0, missing.length - MAX)} still missing`);
 }
 
-// ── VORP prior: recent VORP (last three seasons, 50/30/20) and age per Sleeper player ──
+// ── VORP prior: recent VORP (last three seasons, 50/30/20, annualised) and age per Sleeper player ──
 async function pageAll<T>(table: string, cols: string, order: string, filter?: (q: any) => any): Promise<T[]> { // eslint-disable-line @typescript-eslint/no-explicit-any
   const out: T[] = [];
   for (let from = 0; ; from += 1000) {
@@ -100,12 +102,15 @@ const seasonRows = await pageAll<SeasonRow & { id?: number }>(
 );
 const vorpRows = computeVorp(seasonRows.map((r) => ({ ...r, total_points: Number(r.total_points) })))
   .map((r) => ({ ...r, name_key: nameKey(r.player_name) }));
-const recent = new Map<string, number>(); // `${name_key}|${position}` -> weighted VORP
+const seasonsByPlayer = new Map<string, Array<{ yearsAgo: number; vorp: number; seasonGames: number }>>();
 for (const r of vorpRows) {
-  const age = latestYear - r.year;
-  if (age > 2) continue;
   const key = `${r.name_key}|${r.position}`;
-  recent.set(key, (recent.get(key) ?? 0) + [0.5, 0.3, 0.2][age] * Number(r.vorp));
+  (seasonsByPlayer.get(key) ?? seasonsByPlayer.set(key, []).get(key)!).push({ yearsAgo: latestYear - r.year, vorp: Number(r.vorp), seasonGames: r.season_games });
+}
+const recent = new Map<string, number>(); // `${name_key}|${position}` -> annualised, recency-weighted VORP
+for (const [key, list] of seasonsByPlayer) {
+  const v = recentAnnualVorp(list);
+  if (v !== null) recent.set(key, v);
 }
 const sleeperPlayers = await pageAll<{ player_id: string; name: string; position: string | null; age: number | null }>('sleeper_players', 'player_id, name, position, age', 'player_id');
 const feats = new Map<string, PlayerFeature>();
@@ -129,7 +134,7 @@ for (const format of ['1qb', 'sf'] as const) {
   const trades: FitTrade[] = [];
   for (const r of rows) {
     if (r.superflex !== (format === 'sf')) continue;
-    const t = toFitTrade(r, lineupWeight(lineups.get(r.league_id), target));
+    const t = toFitTrade(r, lineupWeight(lineups.get(r.league_id), target) * recencyWeight(r.traded_at, now, HALF_LIFE_DAYS));
     if (t) trades.push(t);
   }
   if (trades.length < MIN_TRADES) {

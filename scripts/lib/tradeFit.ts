@@ -65,6 +65,30 @@ export function sideValue(vals: number[], alpha: number): number {
   return Math.pow(vals.reduce((a, b) => a + Math.pow(b, alpha), 0), 1 / alpha);
 }
 
+/** Trades lose weight as they age (half-life in days): values drift as players break out or fade. */
+export function recencyWeight(tradedAt: string, now: Date, halfLifeDays: number): number {
+  const days = Math.max(0, (now.getTime() - new Date(tradedAt).getTime()) / 86_400_000);
+  return Math.pow(0.5, days / halfLifeDays);
+}
+
+/**
+ * Recent VORP per season, annualised: each of the last three seasons (50/30/20) is scaled to a full
+ * 17 games and weighted by how much of that season has been played, so a season that is only a few
+ * games old can't drag a player down.
+ */
+export function recentAnnualVorp(seasons: Array<{ yearsAgo: number; vorp: number; seasonGames: number }>): number | null {
+  const base = [0.5, 0.3, 0.2];
+  let num = 0, den = 0;
+  for (const s of seasons) {
+    if (s.yearsAgo < 0 || s.yearsAgo > 2 || s.seasonGames <= 0) continue;
+    const reliability = Math.min(1, s.seasonGames / 17);
+    const w = base[s.yearsAgo] * reliability;
+    num += w * s.vorp * (17 / s.seasonGames);
+    den += w;
+  }
+  return den > 0 ? num / den : null;
+}
+
 /** Top players (with some trade history) average this, like the 0-10,000 scale other trade tools use. */
 export const TOP_PLAYER_SCALE = 9000;
 
