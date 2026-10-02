@@ -162,6 +162,7 @@ const FitReview = () => {
             <p>Held-out gap: {pct(r.holdout_mean_gap)}{r.holdout_coverage != null && ` · ${Math.round(r.holdout_coverage * 100)}% of held-out trades fully valued`}</p>
             {r.tiers && <p>{Object.entries(r.tiers).filter(([k]) => k in TIER_LABEL).map(([k, n]) => `${TIER_LABEL[k]} ${n}`).join(" · ")}</p>}
             {r.tiers && typeof r.tiers.lineup === "string" && <p>Weighted toward leagues with a {r.tiers.lineup} lineup</p>}
+            {r.tiers && "vorp_r2" in r.tiers && <p>Recent VORP + age explain {Math.round(Number(r.tiers.vorp_r2) * 100)}% of player value ({String(r.tiers.vorp_players)} players); players with few trades lean on it</p>}
             {r.tiers && "alpha" in r.tiers && Number(r.tiers.alpha) !== 1 && <p>Consolidation exponent {Number(r.tiers.alpha).toFixed(2)} {Number(r.tiers.alpha) > 1 ? "(stars beat several lesser pieces)" : "(plain sum)"}</p>}
           </div>
         ))}

@@ -4,7 +4,7 @@
 //   SUPABASE_SERVICE_ROLE_KEY=... TSX_TSCONFIG_PATH=tsconfig.app.json npx tsx scripts/fit-trade-values.ts
 // Env: MIN_TRADES (default 30) per format before a fit is stored.
 
-import { fitAndReport, scoreTrade, toFitTrade, type FitTrade } from './lib/tradeFit';
+import { fitAndReport, scoreTrade, toFitTrade, type FitTrade, type PlayerFeature } from './lib/tradeFit';
 import { createThrottle, lineupLabel, lineupOf, lineupWeight, type Lineup, type TradeRow } from './lib/tradeMarket';
 
 const store = new Map<string, string>();
@@ -19,6 +19,7 @@ const store = new Map<string, string>();
 
 const { supabase } = await import('../src/integrations/supabase/client');
 const { LEAGUE_ID } = await import('../src/services/sleeperApi');
+const { nameKey } = await import('../src/utils/dynastyValue');
 
 if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
   console.error('SUPABASE_SERVICE_ROLE_KEY is not set — the market tables are admin-only.');
@@ -64,6 +65,34 @@ if (target) {
   console.log(`Lineups: ${filled} filled now, ${Math.max(0, missing.length - MAX)} still missing`);
 }
 
+// ── VORP prior: recent VORP (last three seasons, 50/30/20) and age per Sleeper player ──
+async function pageAll<T>(table: string, cols: string, order: string): Promise<T[]> {
+  const out: T[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await db.from(table).select(cols).order(order).range(from, from + 999);
+    if (error) throw error;
+    out.push(...(data as T[]));
+    if (!data || data.length < 1000) break;
+  }
+  return out;
+}
+const vorpRows = await pageAll<{ name_key: string; position: string; year: number; vorp: number }>('player_vorp', 'name_key, position, year, vorp', 'name_key');
+const latestYear = Math.max(...vorpRows.map((r) => r.year));
+const recent = new Map<string, number>(); // `${name_key}|${position}` -> weighted VORP
+for (const r of vorpRows) {
+  const age = latestYear - r.year;
+  if (age > 2) continue;
+  const key = `${r.name_key}|${r.position}`;
+  recent.set(key, (recent.get(key) ?? 0) + [0.5, 0.3, 0.2][age] * Number(r.vorp));
+}
+const sleeperPlayers = await pageAll<{ player_id: string; name: string; position: string | null; age: number | null }>('sleeper_players', 'player_id, name, position, age', 'player_id');
+const feats = new Map<string, PlayerFeature>();
+for (const p of sleeperPlayers) {
+  const vorp = recent.get(`${nameKey(p.name)}|${p.position}`);
+  if (vorp !== undefined) feats.set(`p:${p.player_id}`, { vorp, age: p.age });
+}
+console.log(`VORP prior: ${feats.size} of ${sleeperPlayers.length} Sleeper players matched to recent VORP (latest season ${latestYear})`);
+
 type Row = Pick<TradeRow, 'sides' | 'traded_at' | 'superflex' | 'league_id'> & { id: number };
 const rows: Row[] = [];
 for (let from = 0; ; from += 1000) {
@@ -85,7 +114,7 @@ for (const format of ['1qb', 'sf'] as const) {
     console.log(`${format}: ${trades.length} usable trades (< ${MIN_TRADES}), skipping`);
     continue;
   }
-  const { values, report } = fitAndReport(trades);
+  const { values, report } = fitAndReport(trades, {}, feats);
   console.log(`${format}:`, JSON.stringify(report));
 
   const counts = new Map<string, number>();
@@ -111,7 +140,7 @@ for (const format of ['1qb', 'sf'] as const) {
   const { error } = await db.from('market_fit_runs').insert({
     format, n_trades: report.trades, n_assets: report.assets,
     in_sample_mean_gap: report.inSampleMeanGap, prior_mean_gap: report.priorMeanGap,
-    holdout_mean_gap: report.holdoutMeanGap, holdout_coverage: report.holdoutCoverage, tiers: { ...report.tiers, alpha: report.alpha, ...(target ? { lineup: lineupLabel(target) } : {}) },
+    holdout_mean_gap: report.holdoutMeanGap, holdout_coverage: report.holdoutCoverage, tiers: { ...report.tiers, alpha: report.alpha, ...(report.vorp ? { vorp_r2: Math.round(report.vorp.r2 * 1000) / 1000, vorp_players: report.vorp.players } : {}), ...(target ? { lineup: lineupLabel(target) } : {}) },
   });
   if (error) throw error;
 }
