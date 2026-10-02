@@ -8,7 +8,7 @@ export interface CalcAsset {
   value: number;
   nTrades: number;
   baseline?: number | null; // VORP + age baseline (players only)
-  meta?: { playerId?: string; position?: string | null; team?: string | null; age?: number | null; rank?: string; pickKey?: string };
+  meta?: { playerId?: string; position?: string | null; team?: string | null; age?: number | null; rank?: string; pickKey?: string; priceKey?: string };
 }
 
 export type FairTier = 'even' | 'close' | 'edge' | 'lop';
