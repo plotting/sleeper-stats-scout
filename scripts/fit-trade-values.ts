@@ -7,6 +7,7 @@
 import { fitAndReport, recencyWeight, recentAnnualVorp, scoreTrade, shapeWeight, toFitTrade, type FitTrade, type PlayerFeature } from './lib/tradeFit';
 import { computeVorp, type SeasonRow } from './lib/vorp';
 import { tierExpectations, type DraftedPick } from './lib/pickCurve';
+import { fitAgeCurves } from './lib/aging';
 import { createThrottle, lineupLabel, lineupOf, lineupWeight, type Lineup, type TradeRow } from './lib/tradeMarket';
 
 const store = new Map<string, string>();
@@ -187,6 +188,19 @@ for (const format of ['1qb', 'sf'] as const) {
     for (const [key, e] of pickExpect) {
       valueRows.push({ format, asset_key: `vp:${key}`, value: Math.round(predictValue({ vorp: e.annualVorp, age: 24 }) * 10) / 10, n_trades: e.n, updated_at: new Date().toISOString() });
     }
+  }
+  // Value-by-age curves per position (for the calculator's value-over-time chart).
+  const tradeCounts = new Map<string, number>();
+  for (const t of trades) for (const k of [...t.a, ...t.b]) tradeCounts.set(k, (tradeCounts.get(k) ?? 0) + 1);
+  const agePoints = sleeperPlayers.flatMap((p) => {
+    const value = values.get(`p:${p.player_id}`);
+    return p.age && p.position && value ? [{ position: p.position, age: p.age, value, trades: tradeCounts.get(`p:${p.player_id}`) ?? 0 }] : [];
+  });
+  for (const [pos, c] of fitAgeCurves(agePoints)) {
+    valueRows.push(
+      { format, asset_key: `cfg:age:${pos}:b1`, value: Math.round(c.b1 * 10000) / 10000, n_trades: 0, updated_at: new Date().toISOString() },
+      { format, asset_key: `cfg:age:${pos}:b2`, value: Math.round(c.b2 * 10000) / 10000, n_trades: 0, updated_at: new Date().toISOString() },
+    );
   }
   // The depth discounts travel with the values (the calculator needs them to price a side).
   valueRows.push(

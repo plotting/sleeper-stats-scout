@@ -56,7 +56,7 @@ export function AssetSearch({ entries, taken, onAdd, placeholder = "Search playe
     [entries, taken, q],
   );
   return (
-    <div className="relative">
+    <div className="relative" data-no-capture>
       <Input
         placeholder={placeholder} value={text}
         onChange={(e) => { setText(e.target.value); setOpen(true); }}

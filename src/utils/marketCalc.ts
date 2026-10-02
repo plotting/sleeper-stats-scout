@@ -117,3 +117,97 @@ export function normalizeTop(values: Map<string, { value: number; n_trades: numb
   const k = top / max;
   for (const [key, v] of values) if (key.startsWith('p:') || key.startsWith('pk:')) values.set(key, { ...v, value: v.value * k });
 }
+
+// ── Verdict ──────────────────────────────────────────────────────────────────────────────────
+
+export interface Verdict {
+  segment: number;            // 0 = Smash for you ... 3 = Even ... 6 = Robbery against you
+  label: string;              // short name of the active segment
+  headline: string;           // e.g. "Clear win for you"
+  tone: 'win' | 'even' | 'lose';
+}
+
+/** Seven steps from "Smash" to "Robbery" by the gap as a share of the bigger side (same 10 / 25 / 50% cut-offs as the fairness tiers). */
+export function verdictOf(recv: number, sent: number): Verdict {
+  const big = Math.max(recv, sent);
+  const s = big > 0 ? (recv - sent) / big : 0; // + = you come out ahead
+  const a = Math.abs(s);
+  if (a <= 0.1) return { segment: 3, label: 'Even', headline: 'Fair deal', tone: 'even' };
+  const step = a <= 0.25 ? 1 : a <= 0.5 ? 2 : 3; // 1 = small edge, 2 = clear, 3 = lopsided
+  if (s > 0) {
+    return { segment: 3 - step, label: ['Win', 'Clear win', 'Smash'][step - 1], headline: ['Win for you', 'Clear win for you', 'Smash — you win big'][step - 1], tone: 'win' };
+  }
+  return { segment: 3 + step, label: ['Lose', 'Clear loss', 'Robbery'][step - 1], headline: ['You lose a little', 'Clear loss for you', 'Robbery — they win big'][step - 1], tone: 'lose' };
+}
+
+// ── Aging ────────────────────────────────────────────────────────────────────────────────────
+
+/** Cross-sectional value-by-age curve for a position: ln(value) = c + b1·a + b2·a², a = (age − 26) / 5. */
+export interface AgeCurve { b1: number; b2: number }
+
+/** How much a player's value changes going from `age` to `age + years` along the curve (clamped to sane limits). */
+export function ageFactor(curve: AgeCurve | null | undefined, age: number | null | undefined, years: number): number {
+  if (!curve || age == null || years === 0) return 1;
+  const a = (x: number) => (Math.min(36, Math.max(20, x)) - 26) / 5;
+  const f = (x: number) => curve.b1 * a(x) + curve.b2 * a(x) ** 2;
+  return Math.min(1.6, Math.max(0.15, Math.exp(f(age + years) - f(age))));
+}
+
+/** Value of an asset `years` from now: players follow their position's age curve; picks stay flat. */
+export function projectValue(asset: CalcAsset, years: number, curves: Map<string, AgeCurve>): number {
+  const m = asset.meta;
+  if (!m?.playerId || years === 0) return asset.value;
+  return asset.value * ageFactor(curves.get(m.position ?? ''), m.age, years);
+}
+
+export function trend(gaps: number[]): 'Always ahead' | 'Always behind' | 'Flips' {
+  const nonZero = gaps.filter((g) => Math.abs(g) > 1);
+  if (nonZero.length === 0) return 'Always ahead';
+  if (nonZero.every((g) => g > 0)) return 'Always ahead';
+  if (nonZero.every((g) => g < 0)) return 'Always behind';
+  return 'Flips';
+}
+
+// ── Durability ───────────────────────────────────────────────────────────────────────────────
+
+export interface Durability { avgMissed: number; seasons: number; score: number; label: 'Ironman' | 'Durable' | 'Some risk' | 'Injury-prone' }
+
+/** Games missed per season over a player's NFL seasons (seasons with no stats between his first and last count as fully missed). */
+export function durabilityOf(rows: Array<{ year: number; games_played: number }>, currentYear: number): Durability | null {
+  const done = rows.filter((r) => r.year < currentYear); // this season is still being played
+  if (done.length === 0) return null;
+  const first = Math.min(...done.map((r) => r.year));
+  const last = Math.max(...done.map((r) => r.year));
+  let missed = 0;
+  for (let y = first; y <= last; y++) {
+    const len = y >= 2021 ? 17 : 16;
+    const played = done.find((r) => r.year === y)?.games_played ?? 0;
+    missed += Math.max(0, len - played);
+  }
+  const seasons = last - first + 1;
+  const avgMissed = missed / seasons;
+  const label = avgMissed <= 1.5 ? 'Ironman' : avgMissed <= 3 ? 'Durable' : avgMissed <= 5 ? 'Some risk' : 'Injury-prone';
+  return { avgMissed, seasons, score: Math.max(0, Math.round(100 - 15 * avgMissed)), label };
+}
+
+// ── Share links ──────────────────────────────────────────────────────────────────────────────
+
+export interface ShareState { receive: string[]; send: string[]; format?: string; vorp?: number; pick?: number }
+
+export function encodeShare(s: ShareState): string {
+  const p = new URLSearchParams();
+  if (s.receive.length) p.set('r', s.receive.join(','));
+  if (s.send.length) p.set('s', s.send.join(','));
+  if (s.format) p.set('f', s.format);
+  if (s.vorp != null) p.set('v', String(s.vorp));
+  if (s.pick != null) p.set('k', String(s.pick));
+  return p.toString();
+}
+
+export function decodeShare(search: string): ShareState {
+  const p = new URLSearchParams(search);
+  const list = (k: string) => (p.get(k) ?? '').split(',').filter((x) => /^(p:\d+|pk:[0-3]:[1-5](:(early|mid|late))?)$/.test(x));
+  const num = (k: string) => { const v = Number(p.get(k)); return p.has(k) && Number.isFinite(v) ? v : undefined; };
+  const f = p.get('f');
+  return { receive: list('r'), send: list('s'), format: f === '1qb' || f === 'sf' ? f : undefined, vorp: num('v'), pick: num('k') };
+}
