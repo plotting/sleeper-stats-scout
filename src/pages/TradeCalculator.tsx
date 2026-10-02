@@ -6,7 +6,7 @@ import AdminGate from "@/components/admin/AdminGate";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import { assess, sideTotal, pickOptions, suggestToEven, TIER_LABEL, type CalcAsset } from "@/utils/marketCalc";
+import { assess, effectiveValue, sideTotal, pickOptions, suggestToEven, TIER_LABEL, type CalcAsset } from "@/utils/marketCalc";
 
 // Hidden, admin-only page: prices a trade with the values fitted from completed market trades
 // (market_values). Players only appear once they've been in enough trades to get a value.
@@ -109,18 +109,37 @@ const Calculator = () => {
   const [format, setFormat] = useState<"1qb" | "sf">("1qb");
   const [receive, setReceive] = useState<CalcAsset[]>([]);
   const [send, setSend] = useState<CalcAsset[]>([]);
-  const { data: values, isLoading, error } = useQuery({ queryKey: ["calc-values", format], queryFn: () => loadValues(format) });
+  const [vorpPct, setVorpPct] = useState<number>(() => {
+    try { const v = Number(localStorage.getItem("calc-vorp-weight")); return Number.isFinite(v) && v >= 0 && v <= 100 && localStorage.getItem("calc-vorp-weight") !== null ? v : 50; } catch { return 50; }
+  });
+  const setVorp = (n: number) => { setVorpPct(n); try { localStorage.setItem("calc-vorp-weight", String(n)); } catch { /* optional */ } };
+  const { data: raw, isLoading, error } = useQuery({ queryKey: ["calc-values", format], queryFn: () => loadValues(format) });
+  // Player values blended between the market (fit to trades) and the VORP + age baseline.
+  const values = useMemo(() => {
+    if (!raw) return undefined;
+    const out = new Map<string, { value: number; n_trades: number }>();
+    for (const [key, v] of raw) {
+      if (key.startsWith("v:")) continue;
+      const baseline = key.startsWith("p:") ? raw.get(`v:${key.slice(2)}`)?.value : undefined;
+      out.set(key, { value: effectiveValue({ key, value: v.value, nTrades: v.n_trades, baseline }, vorpPct / 100), n_trades: v.n_trades });
+    }
+    for (const [key, v] of raw) if (key.startsWith("v:") && !out.has(`p:${key.slice(2)}`)) out.set(`p:${key.slice(2)}`, { value: v.value, n_trades: 0 });
+    return out;
+  }, [raw, vorpPct]);
+  const reprice = (a: CalcAsset): CalcAsset => ({ ...a, value: values?.get(a.key)?.value ?? a.value });
 
   const picks = useMemo(() => (values ? pickOptions(new Date(), values) : []), [values]);
   const taken = useMemo(() => new Set([...receive, ...send].map((a) => a.key)), [receive, send]);
   const alpha = values?.get("cfg:alpha")?.value ?? 1;
-  const result = assess(receive, send, alpha);
+  const receiveP = receive.map(reprice);
+  const sendP = send.map(reprice);
+  const result = assess(receiveP, sendP, alpha);
   const pool = useMemo(() => {
     if (!values) return [] as CalcAsset[];
     return [...values].map(([key, v]) => ({ key, label: key, value: v.value, nTrades: v.n_trades })).filter((a) => a.key.startsWith("p:") || picks.some((p) => p.key === a.key));
   }, [values, picks]);
   const { data: names } = useQuery({
-    queryKey: ["calc-suggest-names", result.gap > 0 ? "send" : "recv", Math.round(result.gap)],
+    queryKey: ["calc-suggest-names", result.gap > 0 ? "send" : "recv", Math.round(result.gap), vorpPct],
     enabled: values !== undefined && receive.length + send.length > 0 && result.tier !== "even",
     queryFn: async () => {
       const top = suggestToEven(result.gap, pool, taken);
@@ -155,6 +174,13 @@ const Calculator = () => {
             </button>
           ))}
         </div>
+        <div className="flex items-center justify-center gap-3 text-xs text-slate-400">
+          <span>Market</span>
+          <input type="range" min={0} max={100} step={5} value={vorpPct} onChange={(e) => setVorp(Number(e.target.value))} className="w-40" aria-label="VORP weight" />
+          <span>VORP</span>
+          <span className="font-mono text-slate-200 w-10 text-left">{vorpPct}%</span>
+        </div>
+        <p className="text-[11px] text-slate-500">Player values blend what trades pay with what recent VORP + age imply; picks are market-only.</p>
       </header>
 
       {isLoading && <p className="text-center text-slate-500 text-sm animate-pulse">Loading values…</p>}
@@ -164,10 +190,10 @@ const Calculator = () => {
       {values && values.size > 0 && (
         <>
           <Card className="border-white/10 p-5 grid md:grid-cols-2 gap-8">
-            <Side title="You receive" assets={receive} alpha={alpha} onRemove={remove(setReceive)}>
+            <Side title="You receive" assets={receiveP} alpha={alpha} onRemove={remove(setReceive)}>
               <AssetSearch values={values} picks={picks} taken={taken} onAdd={add(setReceive)} />
             </Side>
-            <Side title="You send" assets={send} alpha={alpha} onRemove={remove(setSend)}>
+            <Side title="You send" assets={sendP} alpha={alpha} onRemove={remove(setSend)}>
               <AssetSearch values={values} picks={picks} taken={taken} onAdd={add(setSend)} />
             </Side>
           </Card>

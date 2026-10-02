@@ -33,3 +33,14 @@ test('a higher consolidation exponent makes one star worth more than the sum of 
   assert.equal(assess(star, parts, 1).winner, 'them'); // 1000 vs 1200
   assert.equal(assess(star, parts, 3).winner, 'you');  // 1000 vs ~756
 });
+
+test('VORP weight blends market and baseline; untraded players use the baseline; picks stay market-only', async () => {
+  const { effectiveValue } = await import('../src/utils/marketCalc');
+  const qb = { key: 'p:1', value: 8000, nTrades: 50, baseline: 4000 };
+  assert.equal(effectiveValue(qb, 0), 8000);
+  assert.ok(Math.abs(effectiveValue(qb, 1) - 4000) < 1e-6);
+  assert.ok(Math.abs(effectiveValue(qb, 0.5) - Math.sqrt(8000 * 4000)) < 1e-6);
+  assert.equal(effectiveValue({ key: 'p:2', value: 3000, nTrades: 0, baseline: 2500 }, 0), 2500);
+  assert.equal(effectiveValue({ key: 'pk:0:1', value: 4000, nTrades: 99, baseline: 100 }, 1), 4000);
+  assert.equal(effectiveValue({ key: 'p:3', value: 3000, nTrades: 20 }, 1), 3000);
+});

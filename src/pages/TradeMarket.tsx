@@ -163,6 +163,9 @@ const FitReview = () => {
             {r.tiers && <p>{Object.entries(r.tiers).filter(([k]) => k in TIER_LABEL).map(([k, n]) => `${TIER_LABEL[k]} ${n}`).join(" · ")}</p>}
             {r.tiers && typeof r.tiers.lineup === "string" && <p>Weighted toward leagues with a {r.tiers.lineup} lineup</p>}
             {r.tiers && "vorp_r2" in r.tiers && <p>Recent VORP + age explain {Math.round(Number(r.tiers.vorp_r2) * 100)}% of player value ({String(r.tiers.vorp_players)} players); players with few trades lean on it</p>}
+            {r.tiers && Object.keys(r.tiers).some((k) => k.startsWith("mv_")) && (
+              <p>Market vs VORP: {Object.entries(r.tiers).filter(([k]) => k.startsWith("mv_")).map(([k, n]) => `${k.slice(3)} ${Number(n) > 0 ? "+" : ""}${n}%`).join(" · ")}</p>
+            )}
             {r.tiers && "alpha" in r.tiers && Number(r.tiers.alpha) !== 1 && <p>Consolidation exponent {Number(r.tiers.alpha).toFixed(2)} {Number(r.tiers.alpha) > 1 ? "(stars beat several lesser pieces)" : "(plain sum)"}</p>}
           </div>
         ))}
