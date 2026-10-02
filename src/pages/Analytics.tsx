@@ -1355,7 +1355,9 @@ function PlayoffSim({
 
   const [weekProjections, setWeekProjections] = useState<Map<number, Map<number, TeamWeekProjection> | null>>(new Map());
   useEffect(() => {
-    if (!rosterData || futureWeeks.length === 0) { setWeekProjections(new Map()); return; }
+    // Roster-based projections come from today's rosters, so they only belong in the latest view; looking back at an
+    // earlier week uses only what was known then (the team-level model, same as the saved snapshots).
+    if (!rosterData || futureWeeks.length === 0 || asOfWeek < latestPlayedWeek) { setWeekProjections(new Map()); return; }
     let cancelled = false;
     const rosterInputs = rosterData.rosters
       .map((r) => {
@@ -1371,7 +1373,7 @@ function PlayoffSim({
       if (!cancelled) setWeekProjections(new Map(entries));
     });
     return () => { cancelled = true; };
-  }, [rosterData, futureWeeks]);
+  }, [rosterData, futureWeeks, asOfWeek, latestPlayedWeek]);
 
   // Week-over-week change in playoff odds, computed live. The headline odds use roster-based projections for the weeks still to
   // play, so last week's odds are replayed with those same projections for the weeks that were still ahead then (the one week
@@ -1382,7 +1384,7 @@ function PlayoffSim({
     const idx = allAsOfWeeks.indexOf(asOfWeek);
     if (idx <= 0 || matchups.length === 0) return;
     // wait for the roster-based projections on the live season so the comparison isn't made on the wrong basis
-    if (isLiveSeason && futureWeeks.length > 0 && weekProjections.size === 0) return;
+    if (isLiveSeason && asOfWeek >= latestPlayedWeek && futureWeeks.length > 0 && weekProjections.size === 0) return;
     let cancelled = false;
     const prevWeek = allAsOfWeeks[idx - 1];
     const sims = Math.max(100_000, Math.min(numSims, 250_000));
@@ -1392,7 +1394,27 @@ function PlayoffSim({
     }).catch(() => { /* no comparison shown */ });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [asOfWeek, allAsOfWeeks, matchups, allMatchups, sortedHistIds, effectiveBracketSize, numSims, weekProjections, isLiveSeason, futureWeeks]);
+  }, [asOfWeek, latestPlayedWeek, allAsOfWeeks, matchups, allMatchups, sortedHistIds, effectiveBracketSize, numSims, weekProjections, isLiveSeason, futureWeeks]);
+
+  // Odds after every week at a glance (team-level model for all weeks, so the columns are directly comparable).
+  const [byWeek, setByWeek] = useState<Map<number, Map<number, number>> | null>(null);
+  const [byWeekProgress, setByWeekProgress] = useState<{ done: number; total: number } | null>(null);
+  // The table is tied to a season and bracket size; clear it when either changes
+  useEffect(() => { setByWeek(null); setByWeekProgress(null); }, [currentSeasonId, effectiveBracketSize]);
+  async function runByWeek() {
+    const out = new Map<number, Map<number, number>>();
+    setByWeekProgress({ done: 0, total: allAsOfWeeks.length });
+    try {
+      for (let i = 0; i < allAsOfWeeks.length; i++) {
+        const sim = await simulateAsOf(allAsOfWeeks[i], 100_000, effectiveBracketSize);
+        if (sim) out.set(allAsOfWeeks[i], new Map(sim.results.map((r) => [r.teamId, r.playoffPct])));
+        setByWeekProgress({ done: i + 1, total: allAsOfWeeks.length });
+      }
+      setByWeek(out);
+    } finally {
+      setByWeekProgress(null);
+    }
+  }
 
 
   // simKey lets the user force a fresh re-randomization without changing inputs
@@ -1494,6 +1516,16 @@ function PlayoffSim({
                 </option>
               ))}
             </select>
+            {(() => {
+              const idx = allAsOfWeeks.indexOf(asOfWeek);
+              const step = "text-xs rounded-md border border-white/10 px-2 py-1 text-slate-300 hover:bg-white/5 disabled:opacity-30 disabled:hover:bg-transparent";
+              return (
+                <>
+                  <button type="button" className={step} disabled={idx <= 0} onClick={() => setAsOfWeek(allAsOfWeeks[idx - 1])} aria-label="Previous week">◀</button>
+                  <button type="button" className={step} disabled={idx < 0 || idx >= allAsOfWeeks.length - 1} onClick={() => setAsOfWeek(allAsOfWeeks[idx + 1])} aria-label="Next week">▶</button>
+                </>
+              );
+            })()}
           </div>
         )}
 
@@ -1528,7 +1560,7 @@ function PlayoffSim({
         {asOfWeek < latestPlayedWeek && (
           asOfWeek === 0
             ? " Showing preseason odds — no games played yet, based purely on historical projections."
-            : ` Showing odds as they stood after Week ${asOfWeek} — later results aren't factored in.`
+            : ` Showing odds as they stood after Week ${asOfWeek} — later results aren't factored in, and only the team-level model is used (roster-based projections, which use today's rosters, apply to the latest week only).`
         )}
       </p>
       <div className="overflow-x-auto">
@@ -1602,6 +1634,54 @@ function PlayoffSim({
             })}
           </TableBody>
         </Table>
+      </div>
+
+      {/* Playoff odds after every week */}
+      <div className="mt-6 border-t border-white/10 pt-6">
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+          <div>
+            <h3 className="text-sm font-semibold text-slate-300">Playoff odds by week</h3>
+            <p className="text-xs text-slate-500">Each team's odds as they stood after every week (top {effectiveBracketSize}), all on the team-level model so the columns compare directly. The latest week's headline above also uses roster projections, so it can differ a little.</p>
+          </div>
+          <button
+            type="button" onClick={runByWeek} disabled={byWeekProgress != null || allAsOfWeeks.length < 2}
+            className="text-xs rounded-md border border-white/10 px-3 py-1.5 text-slate-200 hover:bg-white/5 disabled:opacity-50"
+          >
+            {byWeekProgress ? `Simulating week ${byWeekProgress.done}/${byWeekProgress.total}…` : byWeek ? "Re-run" : "Show odds for every week"}
+          </button>
+        </div>
+        {byWeek && (
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Team</TableHead>
+                  {allAsOfWeeks.map((w) => (
+                    <TableHead key={w} className={cn("text-center w-14", w === asOfWeek && "text-white")}>{w === 0 ? "Pre" : `Wk ${w}`}</TableHead>
+                  ))}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {[...teams].sort((a, b) => {
+                  const last = allAsOfWeeks.filter((w) => byWeek.has(w)).pop();
+                  return (byWeek.get(last ?? -1)?.get(b.teamId) ?? 0) - (byWeek.get(last ?? -1)?.get(a.teamId) ?? 0);
+                }).map((t) => (
+                  <TableRow key={t.teamId}>
+                    <TableCell className="text-sm font-medium">{t.teamName}</TableCell>
+                    {allAsOfWeeks.map((w) => {
+                      const v = byWeek.get(w)?.get(t.teamId);
+                      return (
+                        <TableCell key={w} className={cn("text-center font-mono text-xs", v != null && pctColor(v), w === asOfWeek && "bg-white/[0.04]")}>
+                          {v == null ? <span className="text-slate-700">–</span> : fmt(v * 100, 0)}
+                        </TableCell>
+                      );
+                    })}
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
       </div>
 
       {/* Seed distribution matrix */}
