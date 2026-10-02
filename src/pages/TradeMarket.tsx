@@ -136,7 +136,7 @@ const FitReview = () => {
     queryFn: async () => {
       const { data } = await supabase.from("market_values" as never).select("asset_key, value, n_trades").eq("format", "1qb").order("value", { ascending: false }).limit(400);
       const rows = (data ?? []) as unknown as ValueRow[];
-      const players = rows.filter((r) => r.asset_key.startsWith("p:") && r.n_trades >= 3).slice(0, 25);
+      const players = rows.filter((r) => r.asset_key.startsWith("p:") && r.n_trades >= 10).slice(0, 25);
       const picks = rows.filter((r) => r.asset_key.startsWith("pk:"));
       const { data: ps } = await supabase.from("sleeper_players" as never).select("player_id, name, position")
         .in("player_id", players.map((p) => p.asset_key.slice(2)));
@@ -162,14 +162,14 @@ const FitReview = () => {
             <p>Held-out gap: {pct(r.holdout_mean_gap)}{r.holdout_coverage != null && ` · ${Math.round(r.holdout_coverage * 100)}% of held-out trades fully valued`}</p>
             {r.tiers && <p>{Object.entries(r.tiers).filter(([k]) => k in TIER_LABEL).map(([k, n]) => `${TIER_LABEL[k]} ${n}`).join(" · ")}</p>}
             {r.tiers && typeof r.tiers.lineup === "string" && <p>Weighted toward leagues with a {r.tiers.lineup} lineup</p>}
-            {r.tiers && "alpha" in r.tiers && <p>Consolidation exponent {Number(r.tiers.alpha).toFixed(2)} {Number(r.tiers.alpha) > 1 ? "(stars beat several lesser pieces)" : "(plain sum)"}</p>}
+            {r.tiers && "alpha" in r.tiers && Number(r.tiers.alpha) !== 1 && <p>Consolidation exponent {Number(r.tiers.alpha).toFixed(2)} {Number(r.tiers.alpha) > 1 ? "(stars beat several lesser pieces)" : "(plain sum)"}</p>}
           </div>
         ))}
       </div>
       {open && values && (
         <div className="grid md:grid-cols-2 gap-6 pt-2 border-t border-white/5">
           <div>
-            <p className="text-xs font-semibold text-sky-400 mb-1">Top players (1QB, 3+ trades)</p>
+            <p className="text-xs font-semibold text-sky-400 mb-1">Top players (1QB, 10+ trades)</p>
             {values.players.map((p) => (
               <div key={p.asset_key} className="flex justify-between text-xs py-0.5">
                 <span>{values.names.get(p.asset_key.slice(2))?.name ?? p.asset_key} <span className="text-slate-500">{values.names.get(p.asset_key.slice(2))?.position}</span></span>

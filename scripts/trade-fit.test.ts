@@ -47,28 +47,18 @@ test('scales the five biggest players (5+ trades) to an average of 9000', () => 
   assert.ok(Math.abs(top.reduce((a, b) => a + b, 0) / 5 - 9000) < 1e-6);
 });
 
-test('a consolidation exponent is chosen when stars are worth more than the sum of parts', () => {
-  // truth: side value = sqrt-free p-norm with alpha 2 — two 1000s are worth ~1414, not 2000
-  let seed = 11;
-  const rand = () => ((seed = (seed * 1664525 + 1013904223) % 4294967296) / 4294967296);
-  const truth = new Map<string, number>();
-  for (let i = 0; i < 30; i++) truth.set(`p:${i}`, 200 + i * 150);
-  const keys = [...truth.keys()];
-  const side = (ks: string[]) => Math.sqrt(ks.reduce((s, k) => s + truth.get(k)! ** 2, 0));
-  const trades: FitTrade[] = [];
-  while (trades.length < 800) {
-    const a = [keys[Math.floor(rand() * keys.length)]];
-    const b: string[] = [];
-    for (let tries = 0; tries < 8 && b.length < 3; tries++) {
-      const k = keys[Math.floor(rand() * keys.length)];
-      if (k === a[0] || b.includes(k)) continue;
-      if (side([...b, k]) <= side(a) * 1.05) b.push(k);
-    }
-    if (b.length && side(b) > side(a) * 0.9) trades.push({ id: trades.length, a, b });
-  }
-  const { report } = fitAndReport(trades);
-  assert.ok(report.alpha >= 1.5, `alpha ${report.alpha}`);
-  assert.ok(report.holdoutMeanGap! < 20, `holdout ${report.holdoutMeanGap}`);
+test('values are plain sums (alpha 1) unless asked, so published gaps are not compressed', () => {
+  const { trades } = synthetic(300);
+  assert.equal(fitAndReport(trades).report.alpha, 1);
+  // alpha only re-labels: values v under alpha equal plain sums of r = v^alpha (same ordering, same trade)
+  const v = new Map([['p:a', 900], ['p:b', 500], ['p:c', 500]]);
+  const r = new Map([...v].map(([k, x]) => [k, x ** 4]));
+  const t = { id: 1, a: ['p:a'], b: ['p:b', 'p:c'] };
+  const asAlpha4 = scoreTrade(t, v, false, 4)!, asPlain = scoreTrade(t, r, false, 1)!;
+  assert.ok(Math.abs(asAlpha4.valA ** 4 - asPlain.valA) / asPlain.valA < 1e-9);
+  assert.equal(asAlpha4.valA > asAlpha4.valB, asPlain.valA > asPlain.valB);
+  // ...but the displayed gap shrinks as alpha grows, which is why alpha can't be tuned on the gap
+  assert.ok(asAlpha4.diffPct < asPlain.diffPct);
 });
 
 test('tiers follow the gap thresholds and unknown assets give no score', () => {
