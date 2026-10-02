@@ -1,9 +1,12 @@
 name: Fit trade values
 
 # Refits trade values from the trades already stored (scripts/fit-trade-values.ts) without
-# crawling. The crawl workflow also runs this after it finishes; use this one to refit on demand,
-# e.g. after changing the model, or while a long crawl is still running.
+# crawling. Runs daily (recent trades count more, so values drift as the market moves); the crawl
+# workflow also runs it after it finishes. Run it by hand to refit on demand, e.g. after changing
+# the model, or while a long crawl is still running.
 on:
+  schedule:
+    - cron: '37 9 * * *' # daily, early morning US time, so the calculator values stay fresh
   workflow_dispatch:
     inputs:
       depth_players:
