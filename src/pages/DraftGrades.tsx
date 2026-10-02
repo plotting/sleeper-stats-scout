@@ -1172,7 +1172,7 @@ const DraftGrades = () => {
                   <p className="text-slate-500 leading-relaxed">
                     <span className="font-mono text-slate-400">VORP = player's pts − (replacement PPG × 17 games)</span>
                     {" "}· Injured players are held to a full season baseline — missed games contribute 0 pts against a 17-game replacement floor.
-                    Summed over 5 seasons from draft year. Replacement levels: QB10 · RB30 · WR30 · TE10
+                    Summed over 5 seasons from draft year. Replacement = the first player left after filling every starting slot every week (slots × teams × games ÷ average games played, flex assigned to the best RB/WR/TE), so positions with more injuries have a deeper replacement.
                   </p>
                 </div>
                 <div className="border-t border-white/10 pt-3 flex flex-wrap items-center gap-3 text-xs text-slate-500">
