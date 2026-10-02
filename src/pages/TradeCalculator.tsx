@@ -94,7 +94,9 @@ const Calculator = () => {
   const entries = useEntries(values, directory);
   const taken = useMemo(() => new Set([...receive, ...send].map((a) => a.key)), [receive, send]);
   const fitDepth = values?.get("cfg:rho_players")?.value ?? 1;
-  const depth: Depth = { players: depthPct !== null ? depthPct / 100 : fitDepth, picks: values?.get("cfg:rho_picks")?.value ?? 1 };
+  const rhoPlayers = depthPct !== null ? depthPct / 100 : fitDepth;
+  const rhoPicks = values?.get("cfg:rho_picks")?.value ?? 1;
+  const depth: Depth = useMemo(() => ({ players: rhoPlayers, picks: rhoPicks }), [rhoPlayers, rhoPicks]);
   const receiveP = receive.map(reprice);
   const sendP = send.map(reprice);
   const result = assess(receiveP, sendP, depth);
