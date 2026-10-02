@@ -4,7 +4,7 @@
 // the two sides of as many trades as possible balance. Each asset has a log-value θ, a side is
 // worth the sum of exp(θ) over its assets, and we minimise (log sideA − log sideB)² over all
 // trades with a small ridge toward a prior so rarely-seen assets stay sensible. Values are
-// rescaled so the top five players (10+ trades) average 9000.
+// rescaled so the most valuable player (10+ trades) is 10,000.
 
 import type { Asset, TradeRow } from './tradeMarket';
 
@@ -89,8 +89,8 @@ export function recentAnnualVorp(seasons: Array<{ yearsAgo: number; vorp: number
   return den > 0 ? num / den : null;
 }
 
-/** Top players (with some trade history) average this, like the 0-10,000 scale other trade tools use. */
-export const TOP_PLAYER_SCALE = 9000;
+/** The most valuable player (10+ trades) is worth this, like the 0-10,000 scale other trade tools use. */
+export const TOP_PLAYER_SCALE = 10000;
 
 /** Fits values (top players scaled to ~9000). Returns value per asset key. */
 export function fitValues(trades: FitTrade[], opts: FitOptions = {}): Map<AssetKey, number> {
@@ -134,14 +134,14 @@ export function fitValues(trades: FitTrade[], opts: FitOptions = {}): Map<AssetK
     }
   }
 
-  // Scale so the top players (10+ trades) average TOP_PLAYER_SCALE; fall back to the nearest 1st-round pick.
+  // Scale so the most valuable player (10+ trades) is TOP_PLAYER_SCALE; fall back to the nearest 1st-round pick.
   const appearances = new Float64Array(n);
   for (const r of rows) for (const i of [...r.a, ...r.b]) appearances[i]++;
-  const tops = keys.map((k, i) => ({ k, x: Math.exp(theta[i]), c: appearances[i] }))
-    .filter((e) => e.k.startsWith('p:') && e.c >= 10).sort((x, y) => y.x - x.x).slice(0, 5);
+  let topX = 0;
+  keys.forEach((k, i) => { if (k.startsWith('p:') && appearances[i] >= 10) topX = Math.max(topX, Math.exp(theta[i])); });
   let scale = 1;
-  if (tops.length === 5) {
-    scale = TOP_PLAYER_SCALE / (tops.reduce((acc, e) => acc + e.x, 0) / 5);
+  if (topX > 0) {
+    scale = TOP_PLAYER_SCALE / topX;
   } else {
     for (let off = 0; off <= 3; off++) {
       const i = index.get(`pk:${off}:1`);
@@ -204,7 +204,7 @@ export interface VorpPriorInfo {
  */
 export function fitWithFeatures(
   trades: FitTrade[], feats: Map<AssetKey, PlayerFeature>, opts: FitOptions = {},
-): { values: Map<AssetKey, number>; info: VorpPriorInfo | null; baseline: Map<AssetKey, number> } {
+): { values: Map<AssetKey, number>; info: VorpPriorInfo | null; baseline: Map<AssetKey, number>; predictValue: ((f: PlayerFeature) => number) | null } {
   const first = fitValues(trades, opts);
   const counts = new Map<AssetKey, number>();
   for (const t of trades) for (const k of [...t.a, ...t.b]) counts.set(k, (counts.get(k) ?? 0) + 1);
@@ -219,7 +219,7 @@ export function fitWithFeatures(
     if (f) { X.push(featureRow(f)); y.push(Math.log(v)); w.push(Math.min(n, 40)); }
     else { noFeat.push(Math.log(v)); noFeatW.push(Math.min(n, 40)); }
   }
-  if (X.length < 30) return { values: first, info: null, baseline: new Map() };
+  if (X.length < 30) return { values: first, info: null, baseline: new Map(), predictValue: null };
 
   const beta = olsWeighted(X, y, w);
   const pred = (f: PlayerFeature) => featureRow(f).reduce((s, x, i) => s + x * beta[i], 0);
@@ -261,7 +261,8 @@ export function fitWithFeatures(
   for (const [pos, e] of resid) {
     if (pos !== '?' && e.w >= 100) marketVsVorp[pos] = Math.round((Math.exp(e.sum / e.w - offset) - 1) * 100);
   }
-  return { values, baseline, info: { r2: ssTot > 0 ? 1 - ssRes / ssTot : 0, players: X.length, slope: beta[1], marketVsVorp } };
+  const predictValue = (f: PlayerFeature) => Math.exp(pred(f) + offset);
+  return { values, baseline, predictValue, info: { r2: ssTot > 0 ? 1 - ssRes / ssTot : 0, players: X.length, slope: beta[1], marketVsVorp } };
 }
 
 export type FairTier = 'even' | 'close' | 'edge' | 'lop';
@@ -313,10 +314,10 @@ const mean = (xs: number[], ws?: number[]) => {
  */
 export function fitAndReport(
   trades: FitTrade[], opts: FitOptions = {}, feats?: Map<AssetKey, PlayerFeature>,
-): { values: Map<AssetKey, number>; baseline: Map<AssetKey, number>; report: FitReport } {
+): { values: Map<AssetKey, number>; baseline: Map<AssetKey, number>; predictValue: ((f: PlayerFeature) => number) | null; report: FitReport } {
   const alpha = opts.alpha ?? 1;
   const o = { ...opts, alpha };
-  const model = (tr: FitTrade[]) => (feats ? fitWithFeatures(tr, feats, o) : { values: fitValues(tr, o), info: null, baseline: new Map<AssetKey, number>() });
+  const model = (tr: FitTrade[]) => (feats ? fitWithFeatures(tr, feats, o) : { values: fitValues(tr, o), info: null, baseline: new Map<AssetKey, number>(), predictValue: null });
   const full = model(trades);
   const values = full.values;
   const scores = trades.map((t) => scoreTrade(t, values, false, alpha)!);
@@ -346,6 +347,7 @@ export function fitAndReport(
   return {
     values,
     baseline: full.baseline,
+    predictValue: full.predictValue,
     report: {
       trades: trades.length,
       assets: new Set(trades.flatMap((t) => [...t.a, ...t.b])).size,

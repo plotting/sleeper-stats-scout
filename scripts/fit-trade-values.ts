@@ -6,6 +6,7 @@
 
 import { fitAndReport, recencyWeight, recentAnnualVorp, scoreTrade, toFitTrade, type FitTrade, type PlayerFeature } from './lib/tradeFit';
 import { computeVorp, type SeasonRow } from './lib/vorp';
+import { tierExpectations, type DraftedPick } from './lib/pickCurve';
 import { createThrottle, lineupLabel, lineupOf, lineupWeight, type Lineup, type TradeRow } from './lib/tradeMarket';
 
 const store = new Map<string, string>();
@@ -92,13 +93,13 @@ async function pageAll<T>(table: string, cols: string, order: string, filter?: (
   return out;
 }
 // VORP comes from player_seasons via computeVorp (a twin of the player_vorp view, which is too slow to
-// query from here); only the last three seasons are used.
+// query from here). The last three seasons feed the player baseline; all seasons feed the pick curve.
 const { data: latest, error: latestErr } = await db.from('player_seasons').select('year').order('year', { ascending: false }).limit(1);
 if (latestErr) throw latestErr;
 const latestYear: number = latest[0].year;
 const seasonRows = await pageAll<SeasonRow & { id?: number }>(
   'player_seasons', 'player_name, position, year, total_points, games_played', 'year',
-  (q) => q.gte('year', latestYear - 2).order('player_name').order('position'), // unique paging order
+  (q) => q.gte('year', 2013).order('player_name').order('position'), // unique paging order
 );
 const vorpRows = computeVorp(seasonRows.map((r) => ({ ...r, total_points: Number(r.total_points) })))
   .map((r) => ({ ...r, name_key: nameKey(r.player_name) }));
@@ -119,6 +120,31 @@ for (const p of sleeperPlayers) {
   if (vorp !== undefined) feats.set(`p:${p.player_id}`, { vorp, age: p.age, position: p.position });
 }
 console.log(`VORP prior: ${feats.size} of ${sleeperPlayers.length} Sleeper players matched to recent VORP (latest season ${latestYear})`);
+
+// ── Pick outcomes: annual VORP over each rookie pick's first five seasons, by round and slot tier ──
+const vorpByNameYear = new Map<string, number>();
+for (const r of vorpRows) {
+  const k = `${r.name_key}|${r.year}`;
+  vorpByNameYear.set(k, (vorpByNameYear.get(k) ?? 0) + Number(r.vorp));
+}
+const seasonYears = new Map<number, number>(
+  (await pageAll<{ id: number; year: number }>('seasons', 'id, year', 'id')).map((x) => [x.id, x.year]),
+);
+const draftRows = await pageAll<{ season_id: number | null; round: number; pick_number: number; player_name: string }>(
+  'draft_picks', 'season_id, round, pick_number, player_name', 'id',
+);
+const LEAGUE_TEAMS = 10;
+const draftedPicks: DraftedPick[] = [];
+for (const d of draftRows) {
+  const year = d.season_id != null ? seasonYears.get(d.season_id) : undefined;
+  // the startup draft (first season) isn't a rookie draft; only classes with five seasons of data count
+  if (year === undefined || year <= 2013 || year > latestYear - 4) continue;
+  let total = 0;
+  for (let y = year; y < year + 5; y++) total += vorpByNameYear.get(`${nameKey(d.player_name)}|${y}`) ?? 0;
+  draftedPicks.push({ round: d.round, slot: ((d.pick_number - 1) % LEAGUE_TEAMS) + 1, annualVorp: total / 5 });
+}
+const pickExpect = tierExpectations(draftedPicks);
+console.log(`Pick outcomes: ${draftedPicks.length} picks from completed rookie classes`);
 
 type Row = Pick<TradeRow, 'sides' | 'traded_at' | 'superflex' | 'league_id'> & { id: number };
 const rows: Row[] = [];
@@ -141,7 +167,7 @@ for (const format of ['1qb', 'sf'] as const) {
     console.log(`${format}: ${trades.length} usable trades (< ${MIN_TRADES}), skipping`);
     continue;
   }
-  const { values, baseline, report } = fitAndReport(trades, {}, feats);
+  const { values, baseline, predictValue, report } = fitAndReport(trades, {}, feats);
   console.log(`${format}:`, JSON.stringify(report));
 
   const counts = new Map<string, number>();
@@ -152,6 +178,12 @@ for (const format of ['1qb', 'sf'] as const) {
   // Pure VORP + age baseline per player ('v:' keys) so the calculator can blend market and VORP.
   for (const [k, value] of baseline) {
     valueRows.push({ format, asset_key: `v:${k.slice(2)}`, value: Math.round(value * 10) / 10, n_trades: 0, updated_at: new Date().toISOString() });
+  }
+  // Pick baselines from outcomes (vp:<round>:<early|mid|late|any>), on the same scale as player values.
+  if (predictValue) {
+    for (const [key, e] of pickExpect) {
+      valueRows.push({ format, asset_key: `vp:${key}`, value: Math.round(predictValue({ vorp: e.annualVorp, age: 24 }) * 10) / 10, n_trades: e.n, updated_at: new Date().toISOString() });
+    }
   }
   // The consolidation exponent travels with the values (the calculator needs it to price a side).
   valueRows.push({ format, asset_key: 'cfg:alpha', value: report.alpha, n_trades: 0, updated_at: new Date().toISOString() });

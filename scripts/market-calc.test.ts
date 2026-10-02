@@ -44,3 +44,12 @@ test('VORP weight blends market and baseline; untraded players use the baseline;
   assert.equal(effectiveValue({ key: 'pk:0:1', value: 4000, nTrades: 99, baseline: 100 }, 1), 4000);
   assert.equal(effectiveValue({ key: 'p:3', value: 3000, nTrades: 20 }, 1), 3000);
 });
+
+test('pick options add early / mid / late slot tiers when the fit has them', () => {
+  const vals = new Map([
+    ['pk:1:1', { value: 3000, n_trades: 900 }], ['pk:1:1:early', { value: 6000, n_trades: 900 }],
+    ['pk:1:1:late', { value: 1500, n_trades: 900 }], ['pk:1:2', { value: 1500, n_trades: 800 }],
+  ]);
+  const labels = pickOptions(new Date('2026-10-01T00:00:00Z'), vals).map((p) => p.label);
+  assert.deepEqual(labels, ['2027 1st', '2027 1st · early (1-3)', '2027 1st · late (7-10)', '2027 2nd']);
+});

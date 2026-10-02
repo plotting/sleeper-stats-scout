@@ -36,6 +36,8 @@ const ordinal = (n: number) => (n === 1 ? '1st' : n === 2 ? '2nd' : n === 3 ? '3
  * Picks you can trade today. Fitted pick keys are relative to the trade's calendar year, so
  * after the draft (June on) this year's class is gone and the next three are offered.
  */
+export const PICK_TIER_LABELS = { early: 'early (1-3)', mid: 'mid (4-6)', late: 'late (7-10)' } as const;
+
 export function pickOptions(now: Date, values: Map<string, { value: number; n_trades: number }>): CalcAsset[] {
   const year = now.getUTCFullYear();
   const first = now.getUTCMonth() >= 5 ? 1 : 0;
@@ -46,6 +48,11 @@ export function pickOptions(now: Date, values: Map<string, { value: number; n_tr
       const v = values.get(key);
       if (!v) continue;
       out.push({ key, label: `${year + offset} ${ordinal(round)}`, sub: 'Pick', value: v.value, nTrades: v.n_trades });
+      // slot tiers (from how early / mid / late picks actually turned out), when the fit has them
+      for (const tier of Object.keys(PICK_TIER_LABELS) as Array<keyof typeof PICK_TIER_LABELS>) {
+        const t = values.get(`${key}:${tier}`);
+        if (t) out.push({ key: `${key}:${tier}`, label: `${year + offset} ${ordinal(round)} · ${PICK_TIER_LABELS[tier]}`, sub: 'Pick', value: t.value, nTrades: v.n_trades });
+      }
     }
   }
   return out;

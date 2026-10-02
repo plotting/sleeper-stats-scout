@@ -112,20 +112,39 @@ const Calculator = () => {
   const [vorpPct, setVorpPct] = useState<number>(() => {
     try { const v = Number(localStorage.getItem("calc-vorp-weight")); return Number.isFinite(v) && v >= 0 && v <= 100 && localStorage.getItem("calc-vorp-weight") !== null ? v : 50; } catch { return 50; }
   });
+  const [pickPct, setPickPct] = useState<number>(() => {
+    try { const raw = localStorage.getItem("calc-pick-scale"); const v = Number(raw); return raw !== null && Number.isFinite(v) && v >= 50 && v <= 250 ? v : 100; } catch { return 100; }
+  });
+  const setPick = (n: number) => { setPickPct(n); try { localStorage.setItem("calc-pick-scale", String(n)); } catch { /* optional */ } };
   const setVorp = (n: number) => { setVorpPct(n); try { localStorage.setItem("calc-vorp-weight", String(n)); } catch { /* optional */ } };
   const { data: raw, isLoading, error } = useQuery({ queryKey: ["calc-values", format], queryFn: () => loadValues(format) });
   // Player values blended between the market (fit to trades) and the VORP + age baseline.
   const values = useMemo(() => {
     if (!raw) return undefined;
     const out = new Map<string, { value: number; n_trades: number }>();
+    const w = vorpPct / 100;
     for (const [key, v] of raw) {
-      if (key.startsWith("v:")) continue;
+      if (key.startsWith("v:") || key.startsWith("vp:")) continue;
       const baseline = key.startsWith("p:") ? raw.get(`v:${key.slice(2)}`)?.value : undefined;
-      out.set(key, { value: effectiveValue({ key, value: v.value, nTrades: v.n_trades, baseline }, vorpPct / 100), n_trades: v.n_trades });
+      let priced = effectiveValue({ key, value: v.value, nTrades: v.n_trades, baseline }, w);
+      if (key.startsWith("pk:")) {
+        // Picks: scale the market value by how a typical pick of that round actually turned out (outcome
+        // value vs what this class trades for), then split by slot tier (early / mid / late in the round).
+        const round = key.split(":")[2];
+        const vpAny = raw.get(`vp:${round}:any`)?.value;
+        const m0 = raw.get(`pk:0:${round}`)?.value;
+        if (vpAny && m0) priced *= Math.pow(vpAny / m0, w);
+        for (const tier of ["early", "mid", "late"]) {
+          const vpT = raw.get(`vp:${round}:${tier}`)?.value;
+          if (vpAny && vpT) out.set(`${key}:${tier}`, { value: priced * (vpT / vpAny) * (pickPct / 100), n_trades: v.n_trades });
+        }
+        priced *= pickPct / 100;
+      }
+      out.set(key, { value: priced, n_trades: v.n_trades });
     }
     for (const [key, v] of raw) if (key.startsWith("v:") && !out.has(`p:${key.slice(2)}`)) out.set(`p:${key.slice(2)}`, { value: v.value, n_trades: 0 });
     return out;
-  }, [raw, vorpPct]);
+  }, [raw, vorpPct, pickPct]);
   const reprice = (a: CalcAsset): CalcAsset => ({ ...a, value: values?.get(a.key)?.value ?? a.value });
 
   const picks = useMemo(() => (values ? pickOptions(new Date(), values) : []), [values]);
@@ -139,7 +158,7 @@ const Calculator = () => {
     return [...values].map(([key, v]) => ({ key, label: key, value: v.value, nTrades: v.n_trades })).filter((a) => a.key.startsWith("p:") || picks.some((p) => p.key === a.key));
   }, [values, picks]);
   const { data: names } = useQuery({
-    queryKey: ["calc-suggest-names", result.gap > 0 ? "send" : "recv", Math.round(result.gap), vorpPct],
+    queryKey: ["calc-suggest-names", result.gap > 0 ? "send" : "recv", Math.round(result.gap), vorpPct, pickPct],
     enabled: values !== undefined && receive.length + send.length > 0 && result.tier !== "even",
     queryFn: async () => {
       const top = suggestToEven(result.gap, pool, taken);
@@ -180,7 +199,12 @@ const Calculator = () => {
           <span>VORP</span>
           <span className="font-mono text-slate-200 w-10 text-left">{vorpPct}%</span>
         </div>
-        <p className="text-[11px] text-slate-500">Player values blend what trades pay with what recent VORP + age imply; picks are market-only.</p>
+        <div className="flex items-center justify-center gap-3 text-xs text-slate-400">
+          <span>Pick value</span>
+          <input type="range" min={50} max={250} step={5} value={pickPct} onChange={(e) => setPick(Number(e.target.value))} className="w-40" aria-label="Pick value multiplier" />
+          <span className="font-mono text-slate-200 w-12 text-left">×{(pickPct / 100).toFixed(2)}</span>
+        </div>
+        <p className="text-[11px] text-slate-500">Player values blend what trades pay with what recent VORP + age imply; picks are priced by how rookie picks of that round and slot actually turned out, times the pick multiplier.</p>
       </header>
 
       {isLoading && <p className="text-center text-slate-500 text-sm animate-pulse">Loading values…</p>}
