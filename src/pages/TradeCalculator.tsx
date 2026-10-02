@@ -98,9 +98,10 @@ const Calculator = () => {
   const receiveP = receive.map(reprice);
   const sendP = send.map(reprice);
   const result = assess(receiveP, sendP, depth);
+  const hasAssets = receive.length + send.length > 0;
   const names = useMemo(
-    () => (receive.length + send.length > 0 && result.tier !== "even" ? suggestToEven(result.gap, entries, taken, result.gap > 0 ? sendP : receiveP, depth) : []),
-    [entries, taken, result.gap, result.tier, receiveP, sendP, depth],
+    () => (hasAssets && result.tier !== "even" ? suggestToEven(result.gap, entries, taken, result.gap > 0 ? sendP : receiveP, depth) : []),
+    [entries, taken, result.gap, result.tier, hasAssets, receiveP, sendP, depth],
   );
 
   const add = (set: typeof setReceive) => (a: CalcAsset) => set((xs) => (xs.some((x) => x.key === a.key) ? xs : [...xs, a]));
