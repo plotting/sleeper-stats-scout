@@ -122,11 +122,25 @@ const Calculator = () => {
   const values = useMemo(() => {
     if (!raw) return undefined;
     const out = new Map<string, { value: number; n_trades: number }>();
+    const w = vorpPct / 100;
     for (const [key, v] of raw) {
-      if (key.startsWith("v:")) continue;
+      if (key.startsWith("v:") || key.startsWith("vp:")) continue;
       const baseline = key.startsWith("p:") ? raw.get(`v:${key.slice(2)}`)?.value : undefined;
-      const priced = effectiveValue({ key, value: v.value, nTrades: v.n_trades, baseline }, vorpPct / 100);
-      out.set(key, { value: key.startsWith("pk:") ? priced * (pickPct / 100) : priced, n_trades: v.n_trades });
+      let priced = effectiveValue({ key, value: v.value, nTrades: v.n_trades, baseline }, w);
+      if (key.startsWith("pk:")) {
+        // Picks: scale the market value by how a typical pick of that round actually turned out (outcome
+        // value vs what this class trades for), then split by slot tier (early / mid / late in the round).
+        const round = key.split(":")[2];
+        const vpAny = raw.get(`vp:${round}:any`)?.value;
+        const m0 = raw.get(`pk:0:${round}`)?.value;
+        if (vpAny && m0) priced *= Math.pow(vpAny / m0, w);
+        for (const tier of ["early", "mid", "late"]) {
+          const vpT = raw.get(`vp:${round}:${tier}`)?.value;
+          if (vpAny && vpT) out.set(`${key}:${tier}`, { value: priced * (vpT / vpAny) * (pickPct / 100), n_trades: v.n_trades });
+        }
+        priced *= pickPct / 100;
+      }
+      out.set(key, { value: priced, n_trades: v.n_trades });
     }
     for (const [key, v] of raw) if (key.startsWith("v:") && !out.has(`p:${key.slice(2)}`)) out.set(`p:${key.slice(2)}`, { value: v.value, n_trades: 0 });
     return out;
@@ -190,7 +204,7 @@ const Calculator = () => {
           <input type="range" min={50} max={250} step={5} value={pickPct} onChange={(e) => setPick(Number(e.target.value))} className="w-40" aria-label="Pick value multiplier" />
           <span className="font-mono text-slate-200 w-12 text-left">×{(pickPct / 100).toFixed(2)}</span>
         </div>
-        <p className="text-[11px] text-slate-500">Player values blend what trades pay with what recent VORP + age imply; picks are market values times the pick multiplier.</p>
+        <p className="text-[11px] text-slate-500">Player values blend what trades pay with what recent VORP + age imply; picks are priced by how rookie picks of that round and slot actually turned out, times the pick multiplier.</p>
       </header>
 
       {isLoading && <p className="text-center text-slate-500 text-sm animate-pulse">Loading values…</p>}
