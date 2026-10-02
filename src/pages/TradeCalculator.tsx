@@ -7,7 +7,7 @@ import { AssetLine, AssetSearch } from "@/components/market/assetUi";
 import { loadDirectory, loadValues, useEntries } from "@/components/market/assetData";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-import { assess, effectiveValue, sideTotal, suggestToEven, TIER_LABEL, type CalcAsset } from "@/utils/marketCalc";
+import { assess, effectiveValue, normalizeTop, sideTotal, suggestToEven, TIER_LABEL, type CalcAsset } from "@/utils/marketCalc";
 
 // Hidden, admin-only page: prices a trade with the values fitted from completed market trades
 // (market_values). Players only appear once they've been in enough trades to get a value.
@@ -78,6 +78,9 @@ const Calculator = () => {
       out.set(key, { value: priced, n_trades: v.n_trades });
     }
     for (const [key, v] of raw) if (key.startsWith("v:") && !out.has(`p:${key.slice(2)}`)) out.set(`p:${key.slice(2)}`, { value: v.value, n_trades: 0 });
+    // Blending with the VORP baseline pulls the top toward the middle, so re-scale: the most valuable
+    // player (10+ trades) is always 10,000, whatever the slider says (same rule as the fit).
+    normalizeTop(out);
     return out;
   }, [raw, vorpPct, pickPct]);
   const reprice = (a: CalcAsset): CalcAsset => ({ ...a, value: values?.get(a.key)?.value ?? a.value });

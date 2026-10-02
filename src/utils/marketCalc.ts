@@ -86,3 +86,12 @@ export function pickKeyFor(season: number, round: number, tradedAt: string): str
   const offset = Math.min(3, Math.max(0, season - new Date(tradedAt).getUTCFullYear()));
   return `pk:${offset}:${Math.min(5, Math.max(1, round))}`;
 }
+
+/** Re-scales player and pick values so the most valuable player (10+ trades) is `top`; other keys are untouched. */
+export function normalizeTop(values: Map<string, { value: number; n_trades: number }>, top = 10000): void {
+  let max = 0;
+  for (const [key, v] of values) if (key.startsWith('p:') && v.n_trades >= 10) max = Math.max(max, v.value);
+  if (max <= 0) return;
+  const k = top / max;
+  for (const [key, v] of values) if (key.startsWith('p:') || key.startsWith('pk:')) values.set(key, { ...v, value: v.value * k });
+}
