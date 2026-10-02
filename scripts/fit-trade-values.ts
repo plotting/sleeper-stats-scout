@@ -8,6 +8,7 @@ import { fitAndReport, recencyWeight, recentAnnualVorp, scoreTrade, shapeWeight,
 import { computeVorp, type SeasonRow } from './lib/vorp';
 import { tierExpectations, type DraftedPick } from './lib/pickCurve';
 import { fitAgeCurves } from './lib/aging';
+import { outcomeBuckets, type SeasonPair } from './lib/volatility';
 import { createThrottle, lineupLabel, lineupOf, lineupWeight, type Lineup, type TradeRow } from './lib/tradeMarket';
 
 const store = new Map<string, string>();
@@ -150,6 +151,28 @@ for (const d of draftRows) {
 const pickExpect = tierExpectations(draftedPicks);
 console.log(`Pick outcomes: ${draftedPicks.length} picks from completed rookie classes`);
 
+// ── Year-over-year changes in production (annual VORP) by position and age, for the outcome range ──
+const ageNow = new Map<string, number>();
+for (const p of sleeperPlayers) if (p.age && p.position) ageNow.set(`${nameKey(p.name)}|${p.position}`, p.age);
+const vorpByPlayer = new Map<string, Map<number, number>>();
+for (const r of vorpRows) {
+  const key = `${r.name_key}|${r.position}`;
+  (vorpByPlayer.get(key) ?? vorpByPlayer.set(key, new Map()).get(key)!).set(r.year, Number(r.vorp));
+}
+const seasonPairs: SeasonPair[] = [];
+for (const [key, years] of vorpByPlayer) {
+  const age = ageNow.get(key);
+  if (!age) continue;
+  for (const [year, v] of years) {
+    const next = years.get(year + 1);
+    const ageThen = age - (latestYear - year);
+    // completed seasons only (the current one is still being played); skip players too far from relevance
+    if (next === undefined || year + 1 > latestYear - 1 || v < 15 || ageThen < 20 || ageThen > 38) continue;
+    seasonPairs.push({ position: key.split('|')[1], age: ageThen, delta: Math.log(1 + next) - Math.log(1 + v) });
+  }
+}
+console.log(`Outcome range: ${seasonPairs.length} season-to-season pairs`);
+
 type Row = Pick<TradeRow, 'sides' | 'traded_at' | 'superflex' | 'league_id'> & { id: number };
 const rows: Row[] = [];
 for (let from = 0; ; from += 1000) {
@@ -201,6 +224,14 @@ for (const format of ['1qb', 'sf'] as const) {
       { format, asset_key: `cfg:age:${pos}:b1`, value: Math.round(c.b1 * 10000) / 10000, n_trades: 0, updated_at: new Date().toISOString() },
       { format, asset_key: `cfg:age:${pos}:b2`, value: Math.round(c.b2 * 10000) / 10000, n_trades: 0, updated_at: new Date().toISOString() },
     );
+  }
+  // Next-season value change distribution (ceiling / expected / floor and breakout / bust odds) per position and age group.
+  if (report.vorp) {
+    for (const [group, o] of outcomeBuckets(seasonPairs, report.vorp.slope)) {
+      for (const [stat, x] of [['p10', o.p10], ['p50', o.p50], ['p90', o.p90], ['up', o.up], ['down', o.down]] as const) {
+        valueRows.push({ format, asset_key: `cfg:vol:${group}:${stat}`, value: Math.round(x * 10000) / 10000, n_trades: o.n, updated_at: new Date().toISOString() });
+      }
+    }
   }
   // The depth discounts travel with the values (the calculator needs them to price a side).
   valueRows.push(

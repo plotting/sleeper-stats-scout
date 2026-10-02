@@ -211,3 +211,29 @@ export function decodeShare(search: string): ShareState {
   const f = p.get('f');
   return { receive: list('r'), send: list('s'), format: f === '1qb' || f === 'sf' ? f : undefined, vorp: num('v'), pick: num('k') };
 }
+
+// ── Outcome range ────────────────────────────────────────────────────────────────────────────
+
+/** Next-season change in ln(value) for a position and age group (percentiles) with breakout / bust odds. Fitted with the values. */
+export interface Outcome { p10: number; p50: number; p90: number; up: number; down: number; n: number }
+
+export const ageBucketOf = (age: number): 'young' | 'prime' | 'vet' => (age <= 24 ? 'young' : age <= 28 ? 'prime' : 'vet');
+
+export interface Range { ceiling: number; expected: number; floor: number; up: number; down: number; n: number }
+
+/** Where a player's value could be entering next season: 90th / 50th / 10th percentile outcomes (capped at 10,000). */
+export function outcomeRange(a: CalcAsset, vol: Map<string, Outcome>): Range | null {
+  const m = a.meta;
+  if (!m?.playerId || !m.position || m.age == null) return null;
+  const o = vol.get(`${m.position}:${ageBucketOf(m.age)}`);
+  if (!o) return null;
+  const at = (x: number) => Math.min(10000, a.value * Math.exp(x));
+  return { ceiling: at(o.p90), expected: at(o.p50), floor: at(o.p10), up: o.up, down: o.down, n: o.n };
+}
+
+/** "WR4": the position rank a value would have among the valued players of that position. */
+export function rankEquivalent(entries: CalcAsset[], position: string, value: number): string {
+  let above = 0;
+  for (const e of entries) if (e.meta?.playerId && e.meta.position === position && e.value > value) above++;
+  return `${position}${above + 1}`;
+}
