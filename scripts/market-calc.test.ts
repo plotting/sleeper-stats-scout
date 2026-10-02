@@ -51,5 +51,5 @@ test('pick options add early / mid / late slot tiers when the fit has them', () 
     ['pk:1:1:late', { value: 1500, n_trades: 900 }], ['pk:1:2', { value: 1500, n_trades: 800 }],
   ]);
   const labels = pickOptions(new Date('2026-10-01T00:00:00Z'), vals).map((p) => p.label);
-  assert.deepEqual(labels, ['2027 1st', '2027 1st · early (1-3)', '2027 1st · late (7-10)', '2027 2nd']);
+  assert.deepEqual(labels, ['2027 1st', '2027 Early 1st', '2027 Late 1st', '2027 2nd']);
 });
