@@ -120,3 +120,33 @@ test('VORP prior helps sparse players and values players that never traded', () 
   const v = withVorp.values.get('p:untraded')!;
   assert.ok(v > 0 && v > withVorp.values.get('p:5')! && v < withVorp.values.get('p:75')!);
 });
+
+test('reports how far the market sits above VORP by position and a baseline for every player', () => {
+  let seed = 9;
+  const rand = () => ((seed = (seed * 1664525 + 1013904223) % 4294967296) / 4294967296);
+  const feats = new Map<string, { vorp: number; age: number | null; position: string }>();
+  const truth = new Map<string, number>();
+  for (let i = 0; i < 90; i++) {
+    const position = i % 3 === 0 ? 'QB' : 'WR'; // QBs are paid 60% above what VORP implies
+    const vorp = 5 + i * 3;
+    feats.set(`p:${i}`, { vorp, age: 25, position });
+    truth.set(`p:${i}`, 300 * (1 + Math.log(1 + vorp)) ** 2 * (position === 'QB' ? 1.6 : 1) * (0.95 + 0.1 * rand()));
+  }
+  const keys = [...truth.keys()];
+  const trades: FitTrade[] = [];
+  while (trades.length < 900) {
+    const a = keys[Math.floor(rand() * 90)];
+    const b: string[] = [];
+    let s = 0;
+    for (let tries = 0; tries < 6 && s < truth.get(a)! * 0.92; tries++) {
+      const k = keys[Math.floor(rand() * 90)];
+      if (k === a || b.includes(k) || s + truth.get(k)! > truth.get(a)! * 1.1) continue;
+      b.push(k); s += truth.get(k)!;
+    }
+    if (b.length) trades.push({ id: trades.length, a: [a], b });
+  }
+  const { baseline, report } = fitAndReport(trades, {}, feats);
+  assert.equal(baseline.size, 90);
+  const mv = report.vorp!.marketVsVorp;
+  assert.ok(mv.QB > mv.WR + 10, `QB ${mv.QB}% vs WR ${mv.WR}%`);
+});

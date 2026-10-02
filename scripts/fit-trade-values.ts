@@ -111,7 +111,7 @@ const sleeperPlayers = await pageAll<{ player_id: string; name: string; position
 const feats = new Map<string, PlayerFeature>();
 for (const p of sleeperPlayers) {
   const vorp = recent.get(`${nameKey(p.name)}|${p.position}`);
-  if (vorp !== undefined) feats.set(`p:${p.player_id}`, { vorp, age: p.age });
+  if (vorp !== undefined) feats.set(`p:${p.player_id}`, { vorp, age: p.age, position: p.position });
 }
 console.log(`VORP prior: ${feats.size} of ${sleeperPlayers.length} Sleeper players matched to recent VORP (latest season ${latestYear})`);
 
@@ -136,7 +136,7 @@ for (const format of ['1qb', 'sf'] as const) {
     console.log(`${format}: ${trades.length} usable trades (< ${MIN_TRADES}), skipping`);
     continue;
   }
-  const { values, report } = fitAndReport(trades, {}, feats);
+  const { values, baseline, report } = fitAndReport(trades, {}, feats);
   console.log(`${format}:`, JSON.stringify(report));
 
   const counts = new Map<string, number>();
@@ -144,6 +144,10 @@ for (const format of ['1qb', 'sf'] as const) {
   const valueRows = [...values].map(([asset_key, value]) => ({
     format, asset_key, value: Math.round(value * 10) / 10, n_trades: counts.get(asset_key) ?? 0, updated_at: new Date().toISOString(),
   }));
+  // Pure VORP + age baseline per player ('v:' keys) so the calculator can blend market and VORP.
+  for (const [k, value] of baseline) {
+    valueRows.push({ format, asset_key: `v:${k.slice(2)}`, value: Math.round(value * 10) / 10, n_trades: 0, updated_at: new Date().toISOString() });
+  }
   // The consolidation exponent travels with the values (the calculator needs it to price a side).
   valueRows.push({ format, asset_key: 'cfg:alpha', value: report.alpha, n_trades: 0, updated_at: new Date().toISOString() });
   const scoreRows = trades.map((t) => {
@@ -162,7 +166,7 @@ for (const format of ['1qb', 'sf'] as const) {
   const { error } = await db.from('market_fit_runs').insert({
     format, n_trades: report.trades, n_assets: report.assets,
     in_sample_mean_gap: report.inSampleMeanGap, prior_mean_gap: report.priorMeanGap,
-    holdout_mean_gap: report.holdoutMeanGap, holdout_coverage: report.holdoutCoverage, tiers: { ...report.tiers, alpha: report.alpha, ...(report.vorp ? { vorp_r2: Math.round(report.vorp.r2 * 1000) / 1000, vorp_players: report.vorp.players } : {}), ...(target ? { lineup: lineupLabel(target) } : {}) },
+    holdout_mean_gap: report.holdoutMeanGap, holdout_coverage: report.holdoutCoverage, tiers: { ...report.tiers, alpha: report.alpha, ...(report.vorp ? { vorp_r2: Math.round(report.vorp.r2 * 1000) / 1000, vorp_players: report.vorp.players, ...Object.fromEntries(Object.entries(report.vorp.marketVsVorp).map(([pos, pct]) => [`mv_${pos}`, pct])) } : {}), ...(target ? { lineup: lineupLabel(target) } : {}) },
   });
   if (error) throw error;
 }

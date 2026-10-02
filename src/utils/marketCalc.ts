@@ -7,6 +7,7 @@ export interface CalcAsset {
   sub?: string;       // position / team, or pick note
   value: number;
   nTrades: number;
+  baseline?: number | null; // VORP + age baseline (players only)
 }
 
 export type FairTier = 'even' | 'close' | 'edge' | 'lop';
@@ -58,4 +59,16 @@ export function suggestToEven(gap: number, pool: CalcAsset[], exclude: Set<strin
     .filter((a) => !exclude.has(a.key) && a.nTrades >= minTrades)
     .sort((a, b) => Math.abs(a.value - need) - Math.abs(b.value - need))
     .slice(0, limit);
+}
+
+/**
+ * Value at a given VORP weight: 0 = what the market pays, 1 = what recent VORP + age imply
+ * (geometric blend). Players with no trades only have the VORP baseline; picks are market-only.
+ */
+export function effectiveValue(a: Pick<CalcAsset, 'key' | 'value' | 'nTrades' | 'baseline'>, vorpWeight: number): number {
+  const b = a.baseline;
+  if (b == null || !a.key.startsWith('p:')) return a.value;
+  if (a.nTrades === 0) return b;
+  const w = Math.min(1, Math.max(0, vorpWeight));
+  return Math.exp((1 - w) * Math.log(a.value) + w * Math.log(b));
 }
