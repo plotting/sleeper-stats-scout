@@ -40,11 +40,11 @@ test('fit recovers relative order of values and balances trades', () => {
   assert.ok(truth.size > 0);
 });
 
-test('scales the five biggest players (5+ trades) to an average of 9000', () => {
+test('scales the most valuable player (10+ trades) to exactly 10,000', () => {
   const { trades } = synthetic(600);
   const vals = fitValues(trades);
-  const top = [...vals].filter(([k]) => k.startsWith('p:')).map(([, v]) => v).sort((x, y) => y - x).slice(0, 5);
-  assert.ok(Math.abs(top.reduce((a, b) => a + b, 0) / 5 - 9000) < 1e-6);
+  const top = Math.max(...[...vals].filter(([k]) => k.startsWith('p:')).map(([, v]) => v));
+  assert.ok(Math.abs(top - 10000) < 1e-6);
 });
 
 test('values are plain sums (alpha 1) unless asked, so published gaps are not compressed', () => {

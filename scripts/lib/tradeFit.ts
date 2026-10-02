@@ -4,7 +4,7 @@
 // the two sides of as many trades as possible balance. Each asset has a log-value θ, a side is
 // worth the sum of exp(θ) over its assets, and we minimise (log sideA − log sideB)² over all
 // trades with a small ridge toward a prior so rarely-seen assets stay sensible. Values are
-// rescaled so the top five players (10+ trades) average 9000.
+// rescaled so the most valuable player (10+ trades) is 10,000.
 
 import type { Asset, TradeRow } from './tradeMarket';
 
@@ -89,8 +89,8 @@ export function recentAnnualVorp(seasons: Array<{ yearsAgo: number; vorp: number
   return den > 0 ? num / den : null;
 }
 
-/** Top players (with some trade history) average this, like the 0-10,000 scale other trade tools use. */
-export const TOP_PLAYER_SCALE = 9000;
+/** The most valuable player (10+ trades) is worth this, like the 0-10,000 scale other trade tools use. */
+export const TOP_PLAYER_SCALE = 10000;
 
 /** Fits values (top players scaled to ~9000). Returns value per asset key. */
 export function fitValues(trades: FitTrade[], opts: FitOptions = {}): Map<AssetKey, number> {
@@ -134,14 +134,14 @@ export function fitValues(trades: FitTrade[], opts: FitOptions = {}): Map<AssetK
     }
   }
 
-  // Scale so the top players (10+ trades) average TOP_PLAYER_SCALE; fall back to the nearest 1st-round pick.
+  // Scale so the most valuable player (10+ trades) is TOP_PLAYER_SCALE; fall back to the nearest 1st-round pick.
   const appearances = new Float64Array(n);
   for (const r of rows) for (const i of [...r.a, ...r.b]) appearances[i]++;
-  const tops = keys.map((k, i) => ({ k, x: Math.exp(theta[i]), c: appearances[i] }))
-    .filter((e) => e.k.startsWith('p:') && e.c >= 10).sort((x, y) => y.x - x.x).slice(0, 5);
+  let topX = 0;
+  keys.forEach((k, i) => { if (k.startsWith('p:') && appearances[i] >= 10) topX = Math.max(topX, Math.exp(theta[i])); });
   let scale = 1;
-  if (tops.length === 5) {
-    scale = TOP_PLAYER_SCALE / (tops.reduce((acc, e) => acc + e.x, 0) / 5);
+  if (topX > 0) {
+    scale = TOP_PLAYER_SCALE / topX;
   } else {
     for (let off = 0; off <= 3; off++) {
       const i = index.get(`pk:${off}:1`);
