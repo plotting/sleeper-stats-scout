@@ -51,11 +51,6 @@ const Calculator = () => {
     try { const raw = localStorage.getItem("calc-pick-scale"); const v = Number(raw); return raw !== null && Number.isFinite(v) && v >= 50 && v <= 250 ? v : 100; } catch { return 100; }
   });
   const setPick = (n: number) => { setPickPct(n); try { localStorage.setItem("calc-pick-scale", String(n)); } catch { /* optional */ } };
-  // Extra-piece discount: starts at what the fit used; drag to try another (remembered).
-  const [depthPct, setDepthPct] = useState<number | null>(() => {
-    try { const raw = localStorage.getItem("calc-depth"); const v = Number(raw); return raw !== null && Number.isFinite(v) && v >= 40 && v <= 100 ? v : null; } catch { return null; }
-  });
-  const setDepthOverride = (n: number | null) => { setDepthPct(n); try { if (n === null) localStorage.removeItem("calc-depth"); else localStorage.setItem("calc-depth", String(n)); } catch { /* optional */ } };
   const setVorp = (n: number) => { setVorpPct(n); try { localStorage.setItem("calc-vorp-weight", String(n)); } catch { /* optional */ } };
   const { data: raw, isLoading, error } = useQuery({ queryKey: ["calc-values", format], queryFn: () => loadValues(format) });
   // Player values blended between the market (fit to trades) and the VORP + age baseline.
@@ -94,7 +89,7 @@ const Calculator = () => {
   const entries = useEntries(values, directory);
   const taken = useMemo(() => new Set([...receive, ...send].map((a) => a.key)), [receive, send]);
   const fitDepth = values?.get("cfg:rho_players")?.value ?? 1;
-  const rhoPlayers = depthPct !== null ? depthPct / 100 : fitDepth;
+  const rhoPlayers = fitDepth;
   const rhoPicks = values?.get("cfg:rho_picks")?.value ?? 1;
   const depth: Depth = useMemo(() => ({ players: rhoPlayers, picks: rhoPicks }), [rhoPlayers, rhoPicks]);
   const receiveP = receive.map(reprice);
@@ -135,11 +130,6 @@ const Calculator = () => {
           <span>Pick value</span>
           <input type="range" min={50} max={250} step={5} value={pickPct} onChange={(e) => setPick(Number(e.target.value))} className="w-40" aria-label="Pick value multiplier" />
           <span className="font-mono text-slate-200 w-12 text-left">×{(pickPct / 100).toFixed(2)}</span>
-        </div>
-        <div className="flex items-center justify-center gap-3 text-xs text-slate-400">
-          <span>Extra players count</span>
-          <input type="range" min={40} max={100} step={5} value={Math.round(depth.players * 100)} onChange={(e) => setDepthOverride(Number(e.target.value))} className="w-40" aria-label="Depth discount" />
-          <span className="font-mono text-slate-200 w-24 text-left">×{depth.players.toFixed(2)} each{depthPct !== null && <button type="button" onClick={() => setDepthOverride(null)} className="ml-1 text-blue-400 hover:underline" title="Back to the fit's value">reset</button>}</span>
         </div>
         <p className="text-[10px] text-slate-600">build {__BUILD_ID__}</p>
         <p className="text-[11px] text-slate-500">Player values blend what trades pay with what recent VORP + age imply; picks are priced by how rookie picks of that round and slot actually turned out, times the pick multiplier.</p>
