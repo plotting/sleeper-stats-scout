@@ -1,0 +1,52 @@
+name: Simulated playoff odds
+
+# Computes the Simulated Odds snapshot for the week just played and saves it (playoff_sim_history), which is what the
+# site shows. Runs Tuesday–Thursday after the stats settle: it re-pulls scores first, then simulates with today's
+# rosters and injuries, and each run overwrites the last so Thursday's is the final word for the week.
+# Run it by hand with "backfill" to rebuild earlier weeks (preseason onward) from each week's recorded lineups.
+on:
+  schedule:
+    - cron: '45 14 * * 2-4' # 14:45 UTC Tue–Thu, after the morning stat-correction sync
+  workflow_dispatch:
+    inputs:
+      backfill:
+        description: 'Rebuild every week so far (preseason onward) from recorded lineups'
+        type: boolean
+        default: false
+      weeks:
+        description: 'With backfill: only these as-of weeks, comma separated (0 = preseason). Blank = all'
+        default: ''
+      force:
+        description: 'Run even if the league is not in season'
+        type: boolean
+        default: false
+
+concurrency:
+  group: sim-playoff-odds
+  cancel-in-progress: false
+
+jobs:
+  simulate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Refresh scores
+        run: npx tsx scripts/scheduled-sync.ts
+        env:
+          TSX_TSCONFIG_PATH: tsconfig.app.json
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          FORCE: ${{ inputs.force && '1' || '' }}
+      - name: Simulate and save
+        run: npx tsx scripts/sim-playoff-odds.ts
+        env:
+          TSX_TSCONFIG_PATH: tsconfig.app.json
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          FORCE: ${{ inputs.force && '1' || '' }}
+          BACKFILL: ${{ inputs.backfill && '1' || '' }}
+          WEEKS: ${{ inputs.weeks }}

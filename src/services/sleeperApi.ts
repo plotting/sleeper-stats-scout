@@ -57,6 +57,9 @@ export interface SleeperMatchup {
   roster_id: number;
   matchup_id: number | null;
   points: number;
+  /** Everyone on the roster that week, and the starting lineup in slot order ("0" = empty slot). */
+  players?: string[] | null;
+  starters?: string[] | null;
 }
 
 export interface SleeperDraft {

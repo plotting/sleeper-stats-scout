@@ -55,12 +55,13 @@ export interface PlayoffSimHistoryRow {
   proj_seed: number;
   playoff_pct: number;
   seed_pct: number[];
+  computed_at: string;
 }
 
 export async function fetchPlayoffSimHistory(seasonId: number): Promise<PlayoffSimHistoryRow[]> {
   const { data, error } = await supabase
     .from("playoff_sim_history")
-    .select("as_of_week, bracket_size, num_sims, team_id, proj_ppg, proj_std, proj_wins, proj_seed, playoff_pct, seed_pct")
+    .select("as_of_week, bracket_size, num_sims, team_id, proj_ppg, proj_std, proj_wins, proj_seed, playoff_pct, seed_pct, computed_at")
     .eq("season_id", seasonId)
     .order("as_of_week");
   if (error) throw new Error(`Failed to load playoff sim history: ${error.message}`);
