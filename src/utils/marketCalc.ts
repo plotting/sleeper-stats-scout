@@ -8,7 +8,7 @@ export interface CalcAsset {
   value: number;
   nTrades: number;
   baseline?: number | null; // VORP + age baseline (players only)
-  meta?: { playerId?: string; position?: string | null; team?: string | null; age?: number | null; rank?: string };
+  meta?: { playerId?: string; position?: string | null; team?: string | null; age?: number | null; rank?: string; pickKey?: string };
 }
 
 export type FairTier = 'even' | 'close' | 'edge' | 'lop';
@@ -48,7 +48,7 @@ export function pickOptions(now: Date, values: Map<string, { value: number; n_tr
       const key = `pk:${offset}:${round}`;
       const v = values.get(key);
       if (!v) continue;
-      out.push({ key, label: `${year + offset} ${ordinal(round)}`, sub: 'Pick', value: v.value, nTrades: v.n_trades });
+      out.push({ key, label: `${year + offset} ${ordinal(round)}`, sub: 'Pick', value: v.value, nTrades: v.n_trades, meta: { pickKey: `${year + offset}-${round}` } });
       // slot tiers (from how early / mid / late picks actually turned out), when the fit has them
       for (const tier of Object.keys(PICK_TIER_LABELS) as Array<keyof typeof PICK_TIER_LABELS>) {
         const t = values.get(`${key}:${tier}`);
@@ -79,4 +79,10 @@ export function effectiveValue(a: Pick<CalcAsset, 'key' | 'value' | 'nTrades' | 
   if (a.nTrades === 0) return b;
   const w = Math.min(1, Math.max(0, vorpWeight));
   return Math.exp((1 - w) * Math.log(a.value) + w * Math.log(b));
+}
+
+/** Key of a traded pick in the fit: years ahead of the trade's calendar year (0-3) and round (1-5). Matches scripts/lib/tradeFit.ts. */
+export function pickKeyFor(season: number, round: number, tradedAt: string): string {
+  const offset = Math.min(3, Math.max(0, season - new Date(tradedAt).getUTCFullYear()));
+  return `pk:${offset}:${Math.min(5, Math.max(1, round))}`;
 }
