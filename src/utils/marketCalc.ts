@@ -16,15 +16,28 @@ export type FairTier = 'even' | 'close' | 'edge' | 'lop';
 export const TIER_LABEL: Record<FairTier, string> = { even: 'Dead even', close: 'Close', edge: 'Clear winner', lop: 'Lopsided' };
 
 /** Same thresholds as the fitted trade scores: gap as a share of the bigger side. */
-export function sideTotal(assets: CalcAsset[], alpha = 1): number {
-  const xs = assets.map((a) => a.value);
-  return alpha === 1 ? xs.reduce((a, b) => a + b, 0) : Math.pow(xs.reduce((a, b) => a + Math.pow(b, alpha), 0), 1 / alpha);
+/** Weight multiplier per additional asset on a side, richest first (1 = plain sum). Learned by the fit. */
+export interface Depth { players: number; picks: number }
+export const NO_DEPTH: Depth = { players: 1, picks: 1 };
+
+/**
+ * A side's worth with the depth discount: the richest player counts fully, the next ×ρ, then ×ρ², …
+ * (only so many fit in a lineup and someone gets cut); picks the same with their own ρ.
+ */
+export function sideTotal(assets: CalcAsset[], depth: Depth = NO_DEPTH): number {
+  let total = 0;
+  for (const picks of [false, true]) {
+    const rho = picks ? depth.picks : depth.players;
+    const vals = assets.filter((a) => a.key.startsWith('pk:') === picks).map((a) => a.value).sort((x, y) => y - x);
+    let w = 1;
+    for (const v of vals) { total += w * v; w *= rho; }
+  }
+  return total;
 }
 
-/** alpha is the fitted consolidation exponent (1 = plain sum; higher = a star beats several lesser pieces). */
-export function assess(receive: CalcAsset[], send: CalcAsset[], alpha = 1) {
-  const recv = sideTotal(receive, alpha);
-  const sent = sideTotal(send, alpha);
+export function assess(receive: CalcAsset[], send: CalcAsset[], depth: Depth = NO_DEPTH) {
+  const recv = sideTotal(receive, depth);
+  const sent = sideTotal(send, depth);
   const big = Math.max(recv, sent);
   const diffPct = big > 0 ? (Math.abs(recv - sent) / big) * 100 : 0;
   const tier: FairTier = diffPct <= 10 ? 'even' : diffPct <= 25 ? 'close' : diffPct <= 50 ? 'edge' : 'lop';
@@ -59,14 +72,23 @@ export function pickOptions(now: Date, values: Map<string, { value: number; n_tr
   return out;
 }
 
-/** Assets closest to the gap, to even a trade out. Only ones with some trade history. */
-export function suggestToEven(gap: number, pool: CalcAsset[], exclude: Set<string>, minTrades = 3, limit = 4): CalcAsset[] {
+/**
+ * Assets that would even the trade out when added to `side` (the side that is behind). Each candidate is
+ * judged by what it actually adds to that side after the depth discount, so a 2,000 player added to a
+ * side that already has three is worth less than a 2,000 player added to an empty one.
+ */
+export function suggestToEven(
+  gap: number, pool: CalcAsset[], taken: Set<string>, side: CalcAsset[], depth: Depth = NO_DEPTH, minTrades = 3, limit = 4,
+): CalcAsset[] {
   const need = Math.abs(gap);
   if (need < 1) return [];
+  const base = sideTotal(side, depth);
   return pool
-    .filter((a) => !exclude.has(a.key) && a.nTrades >= minTrades)
-    .sort((a, b) => Math.abs(a.value - need) - Math.abs(b.value - need))
-    .slice(0, limit);
+    .filter((a) => !taken.has(a.key) && a.nTrades >= minTrades)
+    .map((a) => ({ a, add: sideTotal([...side, a], depth) - base }))
+    .sort((x, y) => Math.abs(x.add - need) - Math.abs(y.add - need))
+    .slice(0, limit)
+    .map((x) => x.a);
 }
 
 /**

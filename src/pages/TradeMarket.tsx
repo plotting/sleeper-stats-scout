@@ -156,7 +156,15 @@ const FitReview = () => {
             {r.tiers && Object.keys(r.tiers).some((k) => k.startsWith("mv_")) && (
               <p>Market vs VORP: {Object.entries(r.tiers).filter(([k]) => k.startsWith("mv_")).map(([k, n]) => `${k.slice(3)} ${Number(n) > 0 ? "+" : ""}${n}%`).join(" · ")}</p>
             )}
-            {r.tiers && "alpha" in r.tiers && Number(r.tiers.alpha) !== 1 && <p>Consolidation exponent {Number(r.tiers.alpha).toFixed(2)} {Number(r.tiers.alpha) > 1 ? "(stars beat several lesser pieces)" : "(plain sum)"}</p>}
+            {r.tiers && "rho_players" in r.tiers && (
+              <p>Depth: each extra player on a side counts ×{Number(r.tiers.rho_players).toFixed(2)} of the one before (richest first); extra picks ×{Number(r.tiers.rho_picks).toFixed(2)}</p>
+            )}
+            {r.tiers && Object.keys(r.tiers).some((k) => k.startsWith("sb_")) && (
+              <p title="In uneven trades the side with more pieces should not be worth systematically more or less. Positive = it still looks richer than it was accepted as (raise the depth discount)">
+                Uneven trades, more-pieces side vs fewer: {Object.entries(r.tiers).filter(([k]) => k.startsWith("sb_")).sort(([a], [b]) => a.localeCompare(b))
+                  .map(([k, n]) => `${k.slice(3).replace("-", "-for-")} ${Number(n) > 0 ? "+" : ""}${n}% (${r.tiers![`sbn_${k.slice(3)}`]})`).join(" · ")}
+              </p>
+            )}
           </div>
         ))}
       </div>
