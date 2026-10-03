@@ -21,3 +21,15 @@ test('findWinWin keeps value-matched trades that help both lineups, best minimum
   assert.deepEqual(out[0].send.map((x) => x.key), ['m1']);
   assert.equal(findWinWin(you, [them], { players: 1, picks: 1 }, () => null).length, 0);
 });
+
+test('findWinWin skips out / IR players you would receive unless asked', () => {
+  const you = { rosterId: 1, name: 'Me', assets: [a('m1', 3000)] };
+  const hurt: CalcAsset = { ...a('t1', 2950), meta: { injury: 'IR' } };
+  const them = { rosterId: 2, name: 'Them', assets: [hurt] };
+  const delta = () => ({ you: 4, them: 2 });
+  const depth = { players: 1, picks: 1 };
+  assert.equal(findWinWin(you, [them], depth, delta).length, 1);
+  assert.equal(findWinWin(you, [them], depth, delta, { includeInjured: false }).length, 0);
+  const questionable: CalcAsset = { ...a('t2', 2950), meta: { injury: 'Questionable' } };
+  assert.equal(findWinWin(you, [{ ...them, assets: [questionable] }], depth, delta, { includeInjured: false }).length, 1);
+});

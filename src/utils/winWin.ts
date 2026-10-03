@@ -1,5 +1,8 @@
 import { findOffers, type CalcAsset, type Depth, type Offer } from "./marketCalc";
 
+/** Designations that mean a player is unavailable for a while. */
+export const OUT_STATUSES = new Set(["Out", "IR", "PUP", "Sus", "Suspended"]);
+
 export interface FinderTeam { rosterId: number; name: string; assets: CalcAsset[] }
 export type LineupDelta = (partnerRosterId: number, receive: CalcAsset[], send: CalcAsset[]) => { you: number; them: number } | null;
 export interface WinWinTrade { team: FinderTeam; receive: CalcAsset[]; send: CalcAsset[]; offer: Offer; d: { you: number; them: number } }
@@ -11,9 +14,12 @@ export interface WinWinTrade { team: FinderTeam; receive: CalcAsset[]; send: Cal
  */
 export function findWinWin(
   you: FinderTeam, others: FinderTeam[], depth: Depth, delta: LineupDelta,
-  opts: { tol?: number; minValue?: number; top?: number; limit?: number; minGain?: number } = {},
+  opts: { tol?: number; minValue?: number; top?: number; limit?: number; minGain?: number; includeInjured?: boolean } = {},
 ): WinWinTrade[] {
-  const { tol = 0.1, minValue = 600, top = 12, limit = 10, minGain = 0.5 } = opts;
+  const { tol = 0.1, minValue = 600, top = 12, limit = 10, minGain = 0.5, includeInjured = true } = opts;
+  // players you would receive who are out for a while (out / IR / PUP / suspended) are skipped unless asked for
+  const unavailable = (a: CalcAsset) => !includeInjured && !!a.meta?.injury && OUT_STATUSES.has(a.meta.injury);
+  const receivable = (xs: CalcAsset[]) => xs.filter((a) => !unavailable(a));
   const best = (xs: CalcAsset[]) => xs.filter((a) => a.value >= minValue).slice(0, top);
   const out: WinWinTrade[] = [];
   const seen = new Set<string>();
@@ -25,8 +31,8 @@ export function findWinWin(
     if (d && d.you >= minGain && d.them >= minGain) out.push({ team, receive, send, offer, d });
   };
   for (const team of others) {
-    for (const mine of best(you.assets)) for (const o of findOffers(mine.value, team.assets, depth, tol, 2)) add(team, o.assets, [mine], o);
-    for (const theirs of best(team.assets)) for (const o of findOffers(theirs.value, you.assets, depth, tol, 2)) add(team, [theirs], o.assets, o);
+    for (const mine of best(you.assets)) for (const o of findOffers(mine.value, receivable(team.assets), depth, tol, 2)) add(team, o.assets, [mine], o);
+    for (const theirs of best(receivable(team.assets))) for (const o of findOffers(theirs.value, you.assets, depth, tol, 2)) add(team, [theirs], o.assets, o);
   }
   return out.sort((a, b) => Math.min(b.d.you, b.d.them) - Math.min(a.d.you, a.d.them)).slice(0, limit);
 }
