@@ -68,6 +68,12 @@ const Calculator = () => {
   const remember = (k: string, v: string | null) => { try { if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch { /* optional */ } };
   const { data: league, isLoading: leagueLoading, error: leagueError } = useLeagueTeams(leagueMode);
   const { data: raw, isLoading, error } = useQuery({ queryKey: ["calc-values", format], queryFn: () => loadValues(format) });
+  // The crawler collects trades from leagues that match ours (1QB), so Superflex only appears once it has values
+  const { data: hasSf } = useQuery({
+    queryKey: ["calc-has-sf"],
+    queryFn: async () => { const { count } = await supabase.from("market_values" as never).select("asset_key", { count: "exact", head: true }).eq("format", "sf"); return (count ?? 0) > 0; },
+    staleTime: 60 * 60 * 1000,
+  });
   // Player values blended between the market (fit to trades) and the VORP + age baseline.
   const values = useMemo(() => {
     if (!raw) return undefined;
@@ -242,7 +248,7 @@ const Calculator = () => {
         <h1 className="text-3xl font-bold">Trade Calculator</h1>
         <p className="text-slate-400 text-sm">Values fitted from completed trades in similar public leagues (admin only).</p>
         <div className="inline-flex gap-0.5 rounded-lg border border-white/10 p-0.5">
-          {(["1qb", "sf"] as const).map((f) => (
+          {(["1qb", "sf"] as const).filter((f) => f === format || f === "1qb" || hasSf).map((f) => (
             <button key={f} type="button" onClick={() => setFormat(f)}
               className={cn("px-3 py-1 text-xs rounded-md", format === f ? "bg-white/10 text-white font-medium" : "text-slate-400 hover:text-white")}>
               {f === "1qb" ? "1QB" : "Superflex"}

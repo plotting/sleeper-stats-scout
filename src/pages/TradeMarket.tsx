@@ -157,13 +157,17 @@ const PickTable = ({ rows, playerValues }: { rows: Map<string, { value: number; 
 /** Latest fit quality per format plus the top fitted values, for reviewing the model as data grows. */
 const FitReview = () => {
   const [open, setOpen] = useState(false);
-  const { data: runs } = useQuery({
+  const { data: fit } = useQuery({
     queryKey: ["market-fit-runs"],
     queryFn: async () => {
       const { data } = await supabase.from("market_fit_runs" as never).select("*").order("ran_at", { ascending: false }).limit(20);
       const latest = new Map<string, FitRun>();
-      for (const r of (data ?? []) as unknown as FitRun[]) if (!latest.has(r.format)) latest.set(r.format, r);
-      return [...latest.values()];
+      const history = new Map<string, number[]>(); // held-out gap per run, newest first
+      for (const r of (data ?? []) as unknown as FitRun[]) {
+        if (!latest.has(r.format)) latest.set(r.format, r);
+        if (r.holdout_mean_gap != null) history.set(r.format, [...(history.get(r.format) ?? []), Number(r.holdout_mean_gap)]);
+      }
+      return { runs: [...latest.values()], history };
     },
   });
   const { data: values } = useQuery({
@@ -189,6 +193,7 @@ const FitReview = () => {
       return new Map(((data ?? []) as unknown as ValueRow[]).map((r) => [r.asset_key, { value: Number(r.value), n: r.n_trades }]));
     },
   });
+  const runs = fit?.runs;
   if (!runs || runs.length === 0) {
     return <p className="text-xs text-slate-500 text-center">No value fit yet — it runs after each crawl once there are enough trades.</p>;
   }
@@ -204,6 +209,11 @@ const FitReview = () => {
             <p className="text-slate-200 font-medium">{r.format === "sf" ? "Superflex" : "1QB"} · {r.n_trades.toLocaleString()} trades · {r.n_assets.toLocaleString()} assets · {new Date(r.ran_at).toLocaleDateString()}</p>
             <p>Avg gap: fit {pct(r.in_sample_mean_gap)} (guess-everything-equal {pct(r.prior_mean_gap)})</p>
             <p>Held-out gap: {pct(r.holdout_mean_gap)}{r.holdout_coverage != null && ` · ${Math.round(r.holdout_coverage * 100)}% of held-out trades fully valued`}</p>
+            {(fit?.history.get(r.format)?.length ?? 0) > 1 && (
+              <p title="Newest first. Lower is better; a steady rise means the model or the data got worse">
+                Held-out gap, recent fits: {fit!.history.get(r.format)!.slice(0, 8).map((g) => `${g.toFixed(1)}%`).join(" ← ")}
+              </p>
+            )}
             {r.tiers && <p>{Object.entries(r.tiers).filter(([k]) => k in TIER_LABEL).map(([k, n]) => `${TIER_LABEL[k]} ${n}`).join(" · ")}</p>}
             {r.tiers && typeof r.tiers.lineup === "string" && <p>Weighted toward leagues with a {r.tiers.lineup} lineup</p>}
             {r.tiers && "vorp_r2" in r.tiers && <p>Recent VORP + age explain {Math.round(Number(r.tiers.vorp_r2) * 100)}% of player value ({String(r.tiers.vorp_players)} players); players with few trades lean on it</p>}
