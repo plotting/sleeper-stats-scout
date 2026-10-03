@@ -39,6 +39,11 @@ export function AssetLine({ asset, right }: { asset: CalcAsset; right?: React.Re
         {detail && <p className="text-[11px] text-slate-500 mt-0.5">{detail}</p>}
       </div>
       <div className="flex items-center gap-3 shrink-0">
+        {m?.change != null && Math.abs(m.change) >= 1 && (
+          <span className={cn("text-[10px] font-mono", m.change > 0 ? "text-emerald-400" : "text-red-400")} title="Change in value over the last 7 days">
+            {m.change > 0 ? "▲" : "▼"}{Math.abs(m.change).toFixed(0)}%
+          </span>
+        )}
         <span className="font-mono text-sm text-slate-200">{Math.round(asset.value).toLocaleString()}</span>
         {right}
       </div>

@@ -4,8 +4,8 @@ import { X } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import AdminGate from "@/components/admin/AdminGate";
 import { AssetLine, AssetSearch } from "@/components/market/assetUi";
-import { loadDirectory, loadValues, useEntries } from "@/components/market/assetData";
-import { pickKeyFor, type CalcAsset } from "@/utils/marketCalc";
+import { loadDirectory, loadValues, loadValuesAgo, useEntries } from "@/components/market/assetData";
+import { pickKeyFor, valueChanges, type CalcAsset } from "@/utils/marketCalc";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -243,6 +243,41 @@ const FitReview = () => {
   );
 };
 
+/** Biggest risers and fallers in fitted value over the last week or month (needs a few days of saved history). */
+const Movers = ({ entries, values }: { entries: CalcAsset[]; values: Map<string, { value: number; n_trades: number }> | undefined }) => {
+  const [days, setDays] = useState(7);
+  const { data: ago, isLoading } = useQuery({ queryKey: ["calc-values-ago", "1qb", days], queryFn: () => loadValuesAgo("1qb", days), staleTime: 60 * 60 * 1000 });
+  const list = useMemo(() => {
+    if (!values || !ago) return null;
+    const ch = valueChanges(new Map([...values].map(([k, v]) => [k, v.value])), ago.values);
+    const rows = entries.filter((a) => a.meta?.playerId && a.value >= 500 && a.nTrades >= 3 && ch.has(a.key))
+      .map((a) => ({ a: { ...a, meta: { ...a.meta, change: ch.get(a.key)! } }, pct: ch.get(a.key)!, abs: a.value - (ago.values.get(a.key) ?? a.value) }));
+    const by = (f: (x: typeof rows[number]) => number) => [...rows].sort((x, y) => f(y) - f(x));
+    return { up: by((r) => r.abs).filter((r) => r.abs > 0).slice(0, 8), down: by((r) => -r.abs).filter((r) => r.abs < 0).slice(0, 8) };
+  }, [entries, values, ago]);
+  return (
+    <Card className="p-4 border-white/10 space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="text-sm font-semibold">Movers</p>
+        <Segmented value={String(days)} options={[["7", "7 days"], ["30", "30 days"]]} onChange={(v) => setDays(Number(v))} />
+      </div>
+      {isLoading ? <p className="text-xs text-slate-500">Loading…</p> : !list ? (
+        <p className="text-xs text-slate-500">Not enough history yet — values are saved after every fit, so movers appear once there is a {days}-day-old snapshot.</p>
+      ) : (
+        <div className="grid md:grid-cols-2 gap-6">
+          {([["Rising", list.up, "text-emerald-400"], ["Falling", list.down, "text-red-400"]] as const).map(([label, rows, color]) => (
+            <div key={label} className="space-y-2">
+              <p className={cn("text-xs font-semibold", color)}>{label}</p>
+              {rows.length === 0 && <p className="text-xs text-slate-500">None</p>}
+              {rows.map((r) => <AssetLine key={r.a.key} asset={r.a} right={<span className={cn("text-xs font-mono w-16 text-right", color)}>{r.abs > 0 ? "+" : "−"}{Math.abs(Math.round(r.abs)).toLocaleString()}</span>} />)}
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+};
+
 const TradeMarketInner = () => {
   const [asset, setAsset] = useState<CalcAsset | null>(null); // player or pick the trades are filtered to
   const [limit, setLimit] = useState(PAGE);
@@ -341,6 +376,8 @@ const TradeMarketInner = () => {
       )}
 
       <FitReview />
+
+      <Movers entries={entries} values={values} />
 
       <div className="space-y-2">
         <AssetSearch
