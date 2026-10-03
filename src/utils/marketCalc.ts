@@ -1,3 +1,4 @@
+import { premiumMultiplier } from "./consolidation";
 // Pure helpers for the Trade Calculator, which prices trades with the values fitted from
 // completed market trades (market_values; see scripts/lib/tradeFit.ts for how they are made).
 
@@ -40,19 +41,27 @@ export function sideTotal(assets: CalcAsset[], depth: Depth = NO_DEPTH): number 
   return total;
 }
 
-/** Both sides' totals with the consolidation premium applied to the side with fewer pieces (equal counts: no adjustment). */
+/**
+ * Both sides' totals with the consolidation premium applied to the side with fewer pieces. The premium only applies
+ * when the many side's best piece is much lesser than the other side's best asset (see consolidation.ts): equal counts,
+ * comparable pieces, and throw-ins or picks added to a side leave the totals alone.
+ */
 export function adjustedTotals(receive: CalcAsset[], send: CalcAsset[], depth: Depth = NO_DEPTH) {
   let recv = sideTotal(receive, depth);
   let sent = sideTotal(send, depth);
   let premium: { side: 'recv' | 'sent'; m: number; shape: string } | null = null;
-  if (receive.length !== send.length) {
+  if (receive.length !== send.length && receive.length > 0 && send.length > 0) {
     const many = Math.max(receive.length, send.length), few = Math.min(receive.length, send.length);
     const shape = `${many}-${few}`;
-    const m = depth.premium?.get(shape);
-    if (m && m > 0 && few > 0) {
-      const side = receive.length < send.length ? ('recv' as const) : ('sent' as const);
-      if (side === 'recv') recv *= m; else sent *= m;
-      premium = { side, m, shape };
+    const base = depth.premium?.get(shape);
+    if (base && base > 0) {
+      const recvFew = receive.length < send.length;
+      const best = (xs: CalcAsset[]) => Math.max(...xs.map((a) => a.value));
+      const m = premiumMultiplier(base, best(recvFew ? send : receive), best(recvFew ? receive : send));
+      if (m > 1.0005) {
+        if (recvFew) recv *= m; else sent *= m;
+        premium = { side: recvFew ? 'recv' : 'sent', m, shape };
+      }
     }
   }
   return { recv, sent, premium };
@@ -285,8 +294,8 @@ export interface Offer { assets: CalcAsset[]; total: number; need: number; diffP
 
 /**
  * Packages of 1–3 assets from `pool` that match a single `target` asset (within `tol`), closest and simplest first.
- * A multi-piece package has to cover the target plus the consolidation premium for that shape, so a 2-for-1 is
- * judged against the target's value × the 2-1 premium. Tiny pieces are ignored so a real asset is not padded with scraps.
+ * A multi-piece package has to cover the target plus the consolidation premium for that shape, but only when its pieces are
+ * much lesser than the target (two comparable assets need no premium). Tiny pieces are ignored so a real asset is not padded with scraps.
  */
 export function findOffers(target: number, pool: CalcAsset[], depth: Depth = NO_DEPTH, tol = 0.1, limit = 3, maxPieces = 3): Offer[] {
   if (target <= 0) return [];
@@ -294,7 +303,8 @@ export function findOffers(target: number, pool: CalcAsset[], depth: Depth = NO_
   const found: Array<Offer & { score: number }> = [];
   const consider = (assets: CalcAsset[]) => {
     const total = sideTotal(assets, depth);
-    const need = target * (assets.length > 1 ? (depth.premium?.get(`${assets.length}-1`) ?? 1) : 1);
+    const base = assets.length > 1 ? depth.premium?.get(`${assets.length}-1`) : undefined;
+    const need = target * (base ? premiumMultiplier(base, Math.max(...assets.map((a) => a.value)), target) : 1);
     const diffPct = (Math.abs(total - need) / need) * 100;
     if (diffPct <= tol * 100) found.push({ assets, total, need, diffPct, score: diffPct + 4 * (assets.length - 1) });
   };

@@ -336,7 +336,7 @@ const Calculator = () => {
                 <p className="text-center text-xs text-slate-500 mt-1">{result.diffPct.toFixed(1)}% gap</p>
                 {result.premium && (
                   <p className="text-center text-[11px] text-slate-600 mt-1">
-                    Consolidation premium ×{result.premium.m.toFixed(2)} applied to {result.premium.side === "recv" ? "what you receive" : "what you send"} ({result.premium.shape.replace("-", "-for-")} trades pay extra for the better asset)
+                    Consolidation premium ×{result.premium.m.toFixed(2)} applied to {result.premium.side === "recv" ? "what you receive" : "what you send"} (the extra pieces on the other side are much lesser than that asset)
                   </p>
                 )}
               </Card>
