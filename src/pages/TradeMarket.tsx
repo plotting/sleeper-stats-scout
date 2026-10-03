@@ -214,8 +214,8 @@ const FitReview = () => {
               <p>Depth: each extra player on a side counts ×{Number(r.tiers.rho_players).toFixed(2)} of the one before (richest first); extra picks ×{Number(r.tiers.rho_picks).toFixed(2)}</p>
             )}
             {r.tiers && Object.keys(r.tiers).some((k) => k.startsWith("sb_")) && (
-              <p title="Sanity check: in uneven trades the side with more pieces should come out about even with the other. Values fit to real trades absorb the market's consolidation premium, so this should sit near 0%">
-                Uneven trades, more-pieces side vs fewer: {Object.entries(r.tiers).filter(([k]) => k.startsWith("sb_")).sort(([a], [b]) => a.localeCompare(b))
+              <p title="Measured from accepted trades: how much richer the many-piece side's plain sum is than the fewer-piece side's. The calculator, trade finder and trade scores multiply the fewer-piece side by this, so a star is not undervalued against a pile of pieces">
+                Consolidation premium (applied; the more-pieces side's plain sum vs the fewer-pieces side in accepted trades): {Object.entries(r.tiers).filter(([k]) => k.startsWith("sb_")).sort(([a], [b]) => a.localeCompare(b))
                   .map(([k, n]) => `${k.slice(3).replace("-", "-for-")} ${Number(n) > 0 ? "+" : ""}${n}% (${r.tiers![`sbn_${k.slice(3)}`]})`).join(" · ")}
               </p>
             )}

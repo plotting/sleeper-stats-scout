@@ -199,3 +199,15 @@ test('a barely-started season does not drag recent VORP down', () => {
   assert.ok(v > 90 && v < 150);
   assert.equal(recentAnnualVorp([]), null);
 });
+
+import { premiumFor } from './lib/tradeFit';
+test('scoreTrade applies the consolidation premium to the side with fewer pieces', () => {
+  const t = { id: 1, a: ['p:1'], b: ['p:2', 'p:3'] } as unknown as FitTrade;
+  const values = new Map([['p:1', 1000], ['p:2', 700], ['p:3', 700]]);
+  const plain = scoreTrade(t, values)!;
+  const adj = scoreTrade(t, values, false, undefined, new Map([['2-1', 1.5]]))!;
+  assert.equal(plain.valA, 1000);
+  assert.equal(adj.valA, 1500);
+  assert.equal(adj.valB, 1400);
+  assert.equal(premiumFor(new Map([['2-1', 1.5]]), 2, 2), null);
+});

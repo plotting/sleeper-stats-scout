@@ -17,7 +17,12 @@ export const TIER_LABEL: Record<FairTier, string> = { even: 'Dead even', close: 
 
 /** Same thresholds as the fitted trade scores: gap as a share of the bigger side. */
 /** Weight multiplier per additional asset on a side, richest first (1 = plain sum). Learned by the fit. */
-export interface Depth { players: number; picks: number }
+export interface Depth {
+  players: number;
+  picks: number;
+  /** Consolidation premium by shape ("many-few", e.g. "2-1" → 1.48): the side with fewer pieces is worth this much more than its plain sum. */
+  premium?: Map<string, number>;
+}
 export const NO_DEPTH: Depth = { players: 1, picks: 1 };
 
 /**
@@ -35,13 +40,30 @@ export function sideTotal(assets: CalcAsset[], depth: Depth = NO_DEPTH): number 
   return total;
 }
 
+/** Both sides' totals with the consolidation premium applied to the side with fewer pieces (equal counts: no adjustment). */
+export function adjustedTotals(receive: CalcAsset[], send: CalcAsset[], depth: Depth = NO_DEPTH) {
+  let recv = sideTotal(receive, depth);
+  let sent = sideTotal(send, depth);
+  let premium: { side: 'recv' | 'sent'; m: number; shape: string } | null = null;
+  if (receive.length !== send.length) {
+    const many = Math.max(receive.length, send.length), few = Math.min(receive.length, send.length);
+    const shape = `${many}-${few}`;
+    const m = depth.premium?.get(shape);
+    if (m && m > 0 && few > 0) {
+      const side = receive.length < send.length ? ('recv' as const) : ('sent' as const);
+      if (side === 'recv') recv *= m; else sent *= m;
+      premium = { side, m, shape };
+    }
+  }
+  return { recv, sent, premium };
+}
+
 export function assess(receive: CalcAsset[], send: CalcAsset[], depth: Depth = NO_DEPTH) {
-  const recv = sideTotal(receive, depth);
-  const sent = sideTotal(send, depth);
+  const { recv, sent, premium } = adjustedTotals(receive, send, depth);
   const big = Math.max(recv, sent);
   const diffPct = big > 0 ? (Math.abs(recv - sent) / big) * 100 : 0;
   const tier: FairTier = diffPct <= 10 ? 'even' : diffPct <= 25 ? 'close' : diffPct <= 50 ? 'edge' : 'lop';
-  return { recv, sent, gap: recv - sent, diffPct, tier, winner: recv === sent ? null : recv > sent ? ('you' as const) : ('them' as const) };
+  return { recv, sent, gap: recv - sent, diffPct, tier, premium, winner: recv === sent ? null : recv > sent ? ('you' as const) : ('them' as const) };
 }
 
 const ordinal = (n: number) => (n === 1 ? '1st' : n === 2 ? '2nd' : n === 3 ? '3rd' : `${n}th`);
@@ -79,14 +101,20 @@ export function pickOptions(now: Date, values: Map<string, { value: number; n_tr
  */
 export function suggestToEven(
   gap: number, pool: CalcAsset[], taken: Set<string>, side: CalcAsset[], depth: Depth = NO_DEPTH, minTrades = 3, limit = 4,
+  /** With the other side given, candidates are judged on the premium-adjusted gap (adding a piece can change which side gets the premium). */
+  ctx?: { other: CalcAsset[]; sideIsRecv: boolean },
 ): CalcAsset[] {
   const need = Math.abs(gap);
   if (need < 1) return [];
   const base = sideTotal(side, depth);
   return pool
     .filter((a) => !taken.has(a.key) && a.nTrades >= minTrades)
-    .map((a) => ({ a, add: sideTotal([...side, a], depth) - base }))
-    .sort((x, y) => Math.abs(x.add - need) - Math.abs(y.add - need))
+    .map((a) => {
+      if (!ctx) return { a, miss: Math.abs(sideTotal([...side, a], depth) - base - need) };
+      const t = ctx.sideIsRecv ? adjustedTotals([...side, a], ctx.other, depth) : adjustedTotals(ctx.other, [...side, a], depth);
+      return { a, miss: Math.abs(t.recv - t.sent) };
+    })
+    .sort((x, y) => x.miss - y.miss)
     .slice(0, limit)
     .map((x) => x.a);
 }
@@ -253,11 +281,12 @@ export function daysBetween(a: string, b: string): number {
   return Math.round((Date.parse(b) - Date.parse(a)) / 86400000);
 }
 
-export interface Offer { assets: CalcAsset[]; total: number; diffPct: number }
+export interface Offer { assets: CalcAsset[]; total: number; need: number; diffPct: number }
 
 /**
- * Packages of 1–3 assets from `pool` that add up to about `target` (within `tol`), closest and simplest first.
- * Tiny pieces are ignored so a real asset is not padded with scraps, and totals use the depth discount like any side.
+ * Packages of 1–3 assets from `pool` that match a single `target` asset (within `tol`), closest and simplest first.
+ * A multi-piece package has to cover the target plus the consolidation premium for that shape, so a 2-for-1 is
+ * judged against the target's value × the 2-1 premium. Tiny pieces are ignored so a real asset is not padded with scraps.
  */
 export function findOffers(target: number, pool: CalcAsset[], depth: Depth = NO_DEPTH, tol = 0.1, limit = 3, maxPieces = 3): Offer[] {
   if (target <= 0) return [];
@@ -265,8 +294,9 @@ export function findOffers(target: number, pool: CalcAsset[], depth: Depth = NO_
   const found: Array<Offer & { score: number }> = [];
   const consider = (assets: CalcAsset[]) => {
     const total = sideTotal(assets, depth);
-    const diffPct = (Math.abs(total - target) / target) * 100;
-    if (diffPct <= tol * 100) found.push({ assets, total, diffPct, score: diffPct + 4 * (assets.length - 1) });
+    const need = target * (assets.length > 1 ? (depth.premium?.get(`${assets.length}-1`) ?? 1) : 1);
+    const diffPct = (Math.abs(total - need) / need) * 100;
+    if (diffPct <= tol * 100) found.push({ assets, total, need, diffPct, score: diffPct + 4 * (assets.length - 1) });
   };
   for (let i = 0; i < cands.length; i++) {
     consider([cands[i]]);
@@ -277,5 +307,5 @@ export function findOffers(target: number, pool: CalcAsset[], depth: Depth = NO_
       for (let k = j + 1; k < cands.length; k++) consider([cands[i], cands[j], cands[k]]);
     }
   }
-  return found.sort((x, y) => x.score - y.score).slice(0, limit).map(({ assets, total, diffPct }) => ({ assets, total, diffPct }));
+  return found.sort((x, y) => x.score - y.score).slice(0, limit).map(({ assets, total, need, diffPct }) => ({ assets, total, need, diffPct }));
 }

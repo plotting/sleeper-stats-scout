@@ -87,7 +87,7 @@ function OfferRow({ title, offer, onUse }: { title: string; offer: Offer; onUse:
           {offer.assets.map((a) => <span key={a.key}>{a.label} <span className="font-mono text-slate-500">{Math.round(a.value).toLocaleString()}</span></span>)}
         </div>
       </div>
-      <span className="font-mono text-xs text-slate-400">{Math.round(offer.total).toLocaleString()} <span className="text-slate-600">({offer.diffPct.toFixed(0)}% off)</span></span>
+      <span className="font-mono text-xs text-slate-400" title="Package total, and what a package this size needs to be worth (the asset plus the consolidation premium)">{Math.round(offer.total).toLocaleString()} <span className="text-slate-600">of {Math.round(offer.need).toLocaleString()} ({offer.diffPct.toFixed(0)}% off)</span></span>
       <Button size="sm" variant="outline" onClick={onUse}>Use</Button>
     </div>
   );

@@ -105,3 +105,31 @@ test('findOffers: packages near the target, simplest and closest first, ignoring
   assert.ok(offers.every((o) => o.diffPct <= 5 && !o.assets.some((x) => x.key === 'scrap' || x.key === 'big')));
   assert.deepEqual(findOffers(0, pool), []);
 });
+
+import { adjustedTotals } from '../src/utils/marketCalc';
+test('consolidation premium lifts the side with fewer pieces; equal counts and unmeasured shapes are untouched', () => {
+  const depth = { players: 1, picks: 1, premium: new Map([['2-1', 1.5]]) };
+  const r = assess([a('star', 1000)], [a('x', 700), a('y', 700)], depth);
+  assert.equal(Math.round(r.recv), 1500); // 1000 × 1.5
+  assert.equal(r.sent, 1400);
+  assert.equal(r.premium?.side, 'recv');
+  assert.equal(adjustedTotals([a('p', 500), a('q', 500)], [a('x', 500), a('y', 500)], depth).premium, null);
+  assert.equal(adjustedTotals([a('s', 1000)], [a('x', 400), a('y', 300), a('z', 300)], depth).premium, null); // 3-1 not measured
+});
+
+test('suggestToEven with context judges the premium-adjusted gap', () => {
+  const depth = { players: 1, picks: 1, premium: new Map([['2-1', 1.5]]) };
+  // I send one 1000 asset, receive one 700: behind 300. Adding a 300 asset to what I receive makes it 2-for-1 (premium on my single) — overshoots (500 off); a 700 asset lands 100 off.
+  const pool = [a('c300', 300), a('c700', 700)];
+  const out = suggestToEven(-300, pool, new Set(), [a('r', 700)], depth, 0, 1, { other: [a('s', 1000)], sideIsRecv: true });
+  assert.deepEqual(out.map((x) => x.key), ['c700']);
+});
+
+test('findOffers asks multi-piece packages to cover the premium', () => {
+  const depth = { players: 1, picks: 1, premium: new Map([['2-1', 1.5]]) };
+  const pool = [a('m1', 800), a('m2', 700), a('one', 1000)];
+  const offers = findOffers(1000, pool, depth, 0.05, 5);
+  assert.ok(offers.some((o) => o.assets.map((x) => x.key).join() === 'one'));
+  assert.ok(offers.some((o) => o.assets.map((x) => x.key).join() === 'm1,m2')); // 1500 total = 1000 × 1.5
+  assert.ok(offers.every((o) => o.need >= 1000));
+});
