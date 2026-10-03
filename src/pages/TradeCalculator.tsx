@@ -55,7 +55,7 @@ function Side({ title, assets, total, onRemove, children }: { title: string; ass
 const Calculator = () => {
   // A shared link carries the trade and settings in the query string; the assets are filled in once values load.
   const shared = useRef(typeof window !== "undefined" ? decodeShare(window.location.search) : null);
-  const pendingAssets = useRef<{ receive: string[]; send: string[]; league?: boolean } | null>(shared.current && (shared.current.receive.length || shared.current.send.length) ? { receive: shared.current.receive, send: shared.current.send } : null);
+  const pendingAssets = useRef<{ receive: string[]; send: string[]; league?: boolean } | null>(shared.current && (shared.current.receive.length || shared.current.send.length) ? { receive: shared.current.receive, send: shared.current.send, league: shared.current.you != null } : null);
   const [format, setFormat] = useState<"1qb" | "sf">(shared.current?.format === "sf" ? "sf" : "1qb");
   const [receive, setReceive] = useState<CalcAsset[]>([]);
   const [send, setSend] = useState<CalcAsset[]>([]);
@@ -70,9 +70,9 @@ const Calculator = () => {
   const setPick = (n: number) => { setPickPct(n); try { localStorage.setItem("calc-pick-scale", String(n)); } catch { /* optional */ } };
   const setVorp = (n: number) => { setVorpPct(n); try { localStorage.setItem("calc-vorp-weight", String(n)); } catch { /* optional */ } };
   // League mode: pick your team and a leaguemate; each side can only offer what that team actually owns.
-  const [leagueMode, setLeagueModeState] = useState<boolean>(() => { try { return localStorage.getItem("calc-league-mode") === "1"; } catch { return false; } });
-  const [youId, setYouIdState] = useState<number | null>(() => { try { const v = Number(localStorage.getItem("calc-you")); return v > 0 ? v : null; } catch { return null; } });
-  const [partnerId, setPartnerId] = useState<number | null>(null);
+  const [leagueMode, setLeagueModeState] = useState<boolean>(() => { if (shared.current?.you != null) return true; try { return localStorage.getItem("calc-league-mode") === "1"; } catch { return false; } });
+  const [youId, setYouIdState] = useState<number | null>(() => { if (shared.current?.you != null) return shared.current.you; try { const v = Number(localStorage.getItem("calc-you")); return v > 0 ? v : null; } catch { return null; } });
+  const [partnerId, setPartnerId] = useState<number | null>(shared.current?.partner ?? null);
   const remember = (k: string, v: string | null) => { try { if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch { /* optional */ } };
   const { data: league, isLoading: leagueLoading, error: leagueError } = useLeagueTeams(leagueMode);
   const { data: raw, isLoading, error } = useQuery({ queryKey: ["calc-values", format], queryFn: () => loadValues(format) });
@@ -221,7 +221,7 @@ const Calculator = () => {
   const captureRef = useRef<HTMLDivElement>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const flash = (msg: string) => { setNotice(msg); setTimeout(() => setNotice(null), 2200); };
-  const shareUrl = () => `${window.location.origin}${window.location.pathname}?${encodeShare({ receive: receive.map((a) => a.key), send: send.map((a) => a.key), format, vorp: vorpPct, pick: pickPct })}`;
+  const shareUrl = () => `${window.location.origin}${window.location.pathname}?${encodeShare({ receive: receive.map((a) => a.key), send: send.map((a) => a.key), format, vorp: vorpPct, pick: pickPct, ...(inLeague && youTeam && partnerTeam ? { you: youTeam.rosterId, partner: partnerTeam.rosterId } : {}) })}`;
   const copyLink = async () => {
     try { await navigator.clipboard.writeText(shareUrl()); flash("Link copied"); } catch { window.prompt("Copy this link", shareUrl()); }
   };
@@ -384,7 +384,7 @@ const Calculator = () => {
           </div>
 
           <div className="flex flex-wrap items-center justify-center gap-2">
-            <Button variant="outline" onClick={copyLink} disabled={empty || leagueMode} title={leagueMode ? "Share links aren't available in league mode" : undefined}><Link2 className="h-4 w-4 mr-1.5" />Share link</Button>
+            <Button variant="outline" onClick={copyLink} disabled={empty || (leagueMode && !inLeague)}><Link2 className="h-4 w-4 mr-1.5" />Share link</Button>
             <Button variant="outline" onClick={saveIdea} disabled={empty}><Bookmark className="h-4 w-4 mr-1.5" />Save idea</Button>
             <Button variant="outline" onClick={copyImage} disabled={empty}><Copy className="h-4 w-4 mr-1.5" />Copy image</Button>
             <Button variant="ghost" onClick={clearAll} disabled={empty} className="text-slate-400">Clear</Button>
