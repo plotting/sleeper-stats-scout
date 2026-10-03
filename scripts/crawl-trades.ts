@@ -32,7 +32,8 @@ const TARGET = Number(process.env.TARGET_TRADES ?? 50_000);
 const throttle = createThrottle(Number(process.env.CALLS_PER_MINUTE ?? 600));
 const started = Date.now();
 const nowYear = new Date().getFullYear();
-const SEASONS = (process.env.SEASONS ?? `2022-${nowYear}`).split('-').map(Number);
+// Only the last ~18 months of trades are useful: older ones reflect a different market (values drift, rosters turn over).
+const SEASONS = (process.env.SEASONS ?? `${nowYear - 1}-${nowYear}`).split('-').map(Number);
 const seasons = Array.from({ length: SEASONS[1] - SEASONS[0] + 1 }, (_, i) => SEASONS[0] + i);
 
 let calls = 0;

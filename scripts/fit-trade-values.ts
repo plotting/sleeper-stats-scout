@@ -30,6 +30,7 @@ if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
   process.exit(1);
 }
 const MIN_TRADES = Number(process.env.MIN_TRADES ?? 30);
+const MAX_AGE_DAYS = Number(process.env.MAX_AGE_DAYS ?? 548); // ~18 months: older trades reflect a different market
 const HALF_LIFE_DAYS = Number(process.env.HALF_LIFE_DAYS ?? 120); // values drift, so older trades count less
 const now = new Date();
 // Depth discount per extra piece on a side (richest first). Default 1 = none: values fit to real trades already
@@ -181,12 +182,13 @@ for (let from = 0; ; from += 1000) {
   rows.push(...(data as Row[]));
   if (!data || data.length < 1000) break;
 }
-console.log(`Loaded ${rows.length} trades`);
+console.log(`Loaded ${rows.length} trades (fitting only those from the last ${MAX_AGE_DAYS} days)`);
 
 for (const format of ['1qb', 'sf'] as const) {
   const trades: FitTrade[] = [];
   for (const r of rows) {
     if (r.superflex !== (format === 'sf')) continue;
+    if (now.getTime() - new Date(r.traded_at).getTime() > MAX_AGE_DAYS * 86400000) continue;
     const t = toFitTrade(r, lineupWeight(lineups.get(r.league_id), target) * recencyWeight(r.traded_at, now, HALF_LIFE_DAYS));
     if (t) { t.weight = (t.weight ?? 1) * shapeWeight(t.a.length, t.b.length); trades.push(t); }
   }

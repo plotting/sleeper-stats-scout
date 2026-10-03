@@ -252,3 +252,30 @@ export function valueChanges(now: Map<string, number>, then: Map<string, number>
 export function daysBetween(a: string, b: string): number {
   return Math.round((Date.parse(b) - Date.parse(a)) / 86400000);
 }
+
+export interface Offer { assets: CalcAsset[]; total: number; diffPct: number }
+
+/**
+ * Packages of 1–3 assets from `pool` that add up to about `target` (within `tol`), closest and simplest first.
+ * Tiny pieces are ignored so a real asset is not padded with scraps, and totals use the depth discount like any side.
+ */
+export function findOffers(target: number, pool: CalcAsset[], depth: Depth = NO_DEPTH, tol = 0.1, limit = 3, maxPieces = 3): Offer[] {
+  if (target <= 0) return [];
+  const cands = pool.filter((a) => a.value >= Math.max(150, target * 0.1)).sort((x, y) => y.value - x.value).slice(0, 30);
+  const found: Array<Offer & { score: number }> = [];
+  const consider = (assets: CalcAsset[]) => {
+    const total = sideTotal(assets, depth);
+    const diffPct = (Math.abs(total - target) / target) * 100;
+    if (diffPct <= tol * 100) found.push({ assets, total, diffPct, score: diffPct + 4 * (assets.length - 1) });
+  };
+  for (let i = 0; i < cands.length; i++) {
+    consider([cands[i]]);
+    if (maxPieces < 2) continue;
+    for (let j = i + 1; j < cands.length; j++) {
+      consider([cands[i], cands[j]]);
+      if (maxPieces < 3) continue;
+      for (let k = j + 1; k < cands.length; k++) consider([cands[i], cands[j], cands[k]]);
+    }
+  }
+  return found.sort((x, y) => x.score - y.score).slice(0, limit).map(({ assets, total, diffPct }) => ({ assets, total, diffPct }));
+}

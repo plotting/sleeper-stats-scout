@@ -95,3 +95,13 @@ test('valueChanges: percent move, skipping assets that were unvalued or near zer
   assert.equal(ch.has('d'), false);
   assert.equal(daysBetween('2026-10-01', '2026-10-08'), 7);
 });
+
+import { findOffers } from '../src/utils/marketCalc';
+test('findOffers: packages near the target, simplest and closest first, ignoring scraps', () => {
+  const pool = [a('s', 1000), a('m1', 600), a('m2', 400), a('m3', 380), a('scrap', 50), a('big', 3000)];
+  const offers = findOffers(1000, pool, undefined, 0.05, 5);
+  assert.equal(offers[0].assets.map((x) => x.key).join(), 's'); // a single piece beats a package
+  assert.ok(offers.some((o) => o.assets.map((x) => x.key).join() === 'm1,m2'));
+  assert.ok(offers.every((o) => o.diffPct <= 5 && !o.assets.some((x) => x.key === 'scrap' || x.key === 'big')));
+  assert.deepEqual(findOffers(0, pool), []);
+});
