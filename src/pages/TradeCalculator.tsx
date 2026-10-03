@@ -14,11 +14,11 @@ import { useLeagueTeams } from "@/hooks/useLeagueTeams";
 import { teamAssets } from "@/utils/leaguePricing";
 import { bestLineup, positionTotals, type RosterPlayer } from "@/utils/rosterLineup";
 import { ValuesExplainer } from "@/components/market/ValuesExplainer";
-import { loadDirectory, loadValues, useEntries } from "@/components/market/assetData";
+import { loadDirectory, loadValues, loadValuesAgo, useEntries } from "@/components/market/assetData";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { assess, decodeShare, effectiveValue, encodeShare, normalizeTop, sideTotal, suggestToEven, type AgeCurve, type CalcAsset, type Depth, type Outcome } from "@/utils/marketCalc";
+import { assess, decodeShare, effectiveValue, encodeShare, normalizeTop, sideTotal, suggestToEven, valueChanges, type AgeCurve, type CalcAsset, type Depth, type Outcome } from "@/utils/marketCalc";
 
 // Hidden, admin-only page: prices a trade with the values fitted from completed market trades
 // (market_values). Players only appear once they've been in enough trades to get a value.
@@ -101,7 +101,10 @@ const Calculator = () => {
   const reprice = (a: CalcAsset): CalcAsset => ({ ...a, value: values?.get(a.meta?.priceKey ?? a.key)?.value ?? a.value });
 
   const { data: directory } = useQuery({ queryKey: ["calc-directory"], queryFn: loadDirectory, staleTime: 60 * 60 * 1000 });
-  const entries = useEntries(values, directory);
+  // 7-day change in the market value (before the sliders), shown next to each player
+  const { data: weekAgo } = useQuery({ queryKey: ["calc-values-ago", format, 7], queryFn: () => loadValuesAgo(format, 7), staleTime: 60 * 60 * 1000 });
+  const changes = useMemo(() => (raw && weekAgo ? valueChanges(new Map([...raw].map(([k, v]) => [k, v.value])), weekAgo.values) : undefined), [raw, weekAgo]);
+  const entries = useEntries(values, directory, changes);
   const teams = leagueMode ? league?.teams : undefined;
   const youTeam = teams?.find((t) => t.rosterId === (youId ?? teams[0]?.rosterId));
   const partnerTeam = teams?.find((t) => t.rosterId === partnerId && t.rosterId !== youTeam?.rosterId);

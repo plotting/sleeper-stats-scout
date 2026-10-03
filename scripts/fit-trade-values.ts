@@ -249,6 +249,8 @@ for (const format of ['1qb', 'sf'] as const) {
   for (const [table, batch, conflict] of [
     ['market_values', valueRows, 'format,asset_key'],
     ['market_trade_scores', scoreRows, 'trade_id'],
+    // today's value per player / pick, so the site can show who is rising or falling (one row per day, last fit of the day wins)
+    ['market_value_history', valueRows.filter((r) => /^(p|pk):/.test(r.asset_key)).map((r) => ({ format, asset_key: r.asset_key, as_of: now.toISOString().slice(0, 10), value: r.value })), 'format,asset_key,as_of'],
   ] as const) {
     for (let i = 0; i < batch.length; i += 500) {
       const { error } = await db.from(table).upsert(batch.slice(i, i + 500), { onConflict: conflict });

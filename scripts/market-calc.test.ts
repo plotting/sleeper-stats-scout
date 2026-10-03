@@ -85,3 +85,13 @@ test('normalizeTop makes the best well-traded player 10,000 and leaves config ro
   assert.equal(Math.round(m.get('pk:1:1')!.value), Math.round(3000 * 10000 / 7592));
   assert.equal(m.get('cfg:alpha')!.value, 1);
 });
+
+import { daysBetween, valueChanges } from '../src/utils/marketCalc';
+test('valueChanges: percent move, skipping assets that were unvalued or near zero then', () => {
+  const ch = valueChanges(new Map([['a', 1200], ['b', 900], ['c', 500], ['d', 50]]), new Map([['a', 1000], ['b', 1000], ['d', 10]]));
+  assert.equal(Math.round(ch.get('a')!), 20);
+  assert.equal(Math.round(ch.get('b')!), -10);
+  assert.equal(ch.has('c'), false);
+  assert.equal(ch.has('d'), false);
+  assert.equal(daysBetween('2026-10-01', '2026-10-08'), 7);
+});

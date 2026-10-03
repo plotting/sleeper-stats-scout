@@ -8,7 +8,7 @@ export interface CalcAsset {
   value: number;
   nTrades: number;
   baseline?: number | null; // VORP + age baseline (players only)
-  meta?: { playerId?: string; position?: string | null; team?: string | null; age?: number | null; rank?: string; pickKey?: string; priceKey?: string };
+  meta?: { change?: number | null; playerId?: string; position?: string | null; team?: string | null; age?: number | null; rank?: string; pickKey?: string; priceKey?: string };
 }
 
 export type FairTier = 'even' | 'close' | 'edge' | 'lop';
@@ -236,4 +236,19 @@ export function rankEquivalent(entries: CalcAsset[], position: string, value: nu
   let above = 0;
   for (const e of entries) if (e.meta?.playerId && e.meta.position === position && e.value > value) above++;
   return `${position}${above + 1}`;
+}
+
+/** Value change from an earlier day, in percent, for every asset valued in both (null when it was not valued then or was near zero). */
+export function valueChanges(now: Map<string, number>, then: Map<string, number>): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const [key, v] of now) {
+    const before = then.get(key);
+    if (before != null && before >= 100) out.set(key, ((v - before) / before) * 100);
+  }
+  return out;
+}
+
+/** Whole days between two YYYY-MM-DD dates. */
+export function daysBetween(a: string, b: string): number {
+  return Math.round((Date.parse(b) - Date.parse(a)) / 86400000);
 }
