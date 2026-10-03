@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Check, Copy, Link2, Plus, X } from "lucide-react";
+import { Bookmark, Check, Copy, Link2, Plus, X } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import AdminGate from "@/components/admin/AdminGate";
 import { AssetLine, AssetSearch } from "@/components/market/assetUi";
@@ -22,6 +22,12 @@ import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { assess, decodeShare, effectiveValue, encodeShare, normalizeTop, suggestToEven, valueChanges, type AgeCurve, type CalcAsset, type Depth, type Outcome } from "@/utils/marketCalc";
+
+interface TradeIdea {
+  id: number; name: string; format: "1qb" | "sf";
+  receive: string[]; send: string[]; receiveLabels: string[]; sendLabels: string[];
+  league: { you: number; partner: number } | null;
+}
 
 // Hidden, admin-only page: prices a trade with the values fitted from completed market trades
 // (market_values). Players only appear once they've been in enough trades to get a value.
@@ -49,7 +55,7 @@ function Side({ title, assets, total, onRemove, children }: { title: string; ass
 const Calculator = () => {
   // A shared link carries the trade and settings in the query string; the assets are filled in once values load.
   const shared = useRef(typeof window !== "undefined" ? decodeShare(window.location.search) : null);
-  const pendingAssets = useRef<{ receive: string[]; send: string[] } | null>(shared.current && (shared.current.receive.length || shared.current.send.length) ? { receive: shared.current.receive, send: shared.current.send } : null);
+  const pendingAssets = useRef<{ receive: string[]; send: string[]; league?: boolean } | null>(shared.current && (shared.current.receive.length || shared.current.send.length) ? { receive: shared.current.receive, send: shared.current.send } : null);
   const [format, setFormat] = useState<"1qb" | "sf">(shared.current?.format === "sf" ? "sf" : "1qb");
   const [receive, setReceive] = useState<CalcAsset[]>([]);
   const [send, setSend] = useState<CalcAsset[]>([]);
@@ -130,14 +136,20 @@ const Calculator = () => {
       : []),
     [leagueReady, values, teams, youTeam, entries, teamNames],
   );
+  // Saved ideas (this browser only): a trade's asset keys plus, in league mode, the two teams
+  const [ideas, setIdeas] = useState<TradeIdea[]>(() => { try { return JSON.parse(localStorage.getItem("calc-trade-ideas") ?? "[]") as TradeIdea[]; } catch { return []; } });
+  const [pendingTick, setPendingTick] = useState(0);
   useEffect(() => {
     const pending = pendingAssets.current;
     if (!pending || entries.length === 0) return;
+    if (pending.league && !leagueReady) return; // team picks only exist once the rosters have loaded
     const byKey = new Map(entries.map((a) => [a.key, a]));
-    setReceive(pending.receive.flatMap((k) => byKey.get(k) ?? []));
-    setSend(pending.send.flatMap((k) => byKey.get(k) ?? []));
+    if (pending.league) for (const a of [...youAssets, ...otherTeams.flatMap((t) => t.assets)]) byKey.set(a.key, a);
+    const pick = (keys: string[]) => keys.flatMap((k) => byKey.get(k) ?? []);
+    setReceive(pick(pending.receive));
+    setSend(pick(pending.send));
     pendingAssets.current = null;
-  }, [entries]);
+  }, [entries, leagueReady, youAssets, otherTeams, pendingTick]);
   // Value-by-age curves per position (fitted alongside the values)
   const curves = useMemo(() => {
     const out = new Map<string, AgeCurve>();
@@ -180,6 +192,31 @@ const Calculator = () => {
     () => (hasAssets && result.tier !== "even" ? suggestToEven(result.gap, entries, taken, result.gap > 0 ? sendP : receiveP, depth, 3, 4, { other: result.gap > 0 ? receiveP : sendP, sideIsRecv: result.gap <= 0 }) : []),
     [entries, taken, result.gap, result.tier, hasAssets, receiveP, sendP, depth],
   );
+
+  const persistIdeas = (next: TradeIdea[]) => { setIdeas(next); try { localStorage.setItem("calc-trade-ideas", JSON.stringify(next)); } catch { /* optional */ } };
+  const saveIdea = () => {
+    const name = window.prompt("Name this trade idea", `Idea ${ideas.length + 1}`);
+    if (name === null) return;
+    persistIdeas([{
+      id: Date.now(), name: name.trim() || `Idea ${ideas.length + 1}`, format,
+      receive: receive.map((a) => a.key), send: send.map((a) => a.key),
+      receiveLabels: receive.map((a) => a.label), sendLabels: send.map((a) => a.label),
+      league: inLeague && youTeam && partnerTeam ? { you: youTeam.rosterId, partner: partnerTeam.rosterId } : null,
+    }, ...ideas]);
+    flash("Idea saved");
+  };
+  const openIdea = (idea: TradeIdea) => {
+    setFormat(idea.format);
+    setReceive([]); setSend([]);
+    if (idea.league) {
+      setLeagueModeState(true); remember("calc-league-mode", "1");
+      setYouIdState(idea.league.you); remember("calc-you", String(idea.league.you));
+      setPartnerId(idea.league.partner);
+    } else { setLeagueModeState(false); remember("calc-league-mode", null); }
+    pendingAssets.current = { receive: idea.receive, send: idea.send, league: !!idea.league };
+    setPendingTick((n) => n + 1);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
 
   const captureRef = useRef<HTMLDivElement>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -348,6 +385,7 @@ const Calculator = () => {
 
           <div className="flex flex-wrap items-center justify-center gap-2">
             <Button variant="outline" onClick={copyLink} disabled={empty || leagueMode} title={leagueMode ? "Share links aren't available in league mode" : undefined}><Link2 className="h-4 w-4 mr-1.5" />Share link</Button>
+            <Button variant="outline" onClick={saveIdea} disabled={empty}><Bookmark className="h-4 w-4 mr-1.5" />Save idea</Button>
             <Button variant="outline" onClick={copyImage} disabled={empty}><Copy className="h-4 w-4 mr-1.5" />Copy image</Button>
             <Button variant="ghost" onClick={clearAll} disabled={empty} className="text-slate-400">Clear</Button>
             {notice && <span className="inline-flex items-center gap-1 text-xs text-emerald-400"><Check className="h-3.5 w-3.5" />{notice}</span>}
@@ -376,6 +414,22 @@ const Calculator = () => {
               <DurabilityCard players={durabilityPlayers} />
               <PriceCheck players={players} directory={directory} trade={{ get: receiveP, give: sendP }} />
             </>
+          )}
+          {ideas.length > 0 && (
+            <Card className="border-white/10 p-5 space-y-2">
+              <p className="text-sm font-semibold">Saved trade ideas <span className="text-[11px] font-normal text-slate-500">(this browser only)</span></p>
+              {ideas.map((idea) => (
+                <div key={idea.id} className="rounded-lg border border-white/10 px-3 py-2 flex flex-wrap items-center gap-3">
+                  <div className="min-w-0 flex-1 text-xs space-y-0.5">
+                    <p className="font-semibold text-slate-200">{idea.name}{idea.league && <span className="ml-2 text-[10px] font-normal text-slate-500">league mode</span>}</p>
+                    <p className="text-slate-400">Receive: {idea.receiveLabels.join(", ") || "—"}</p>
+                    <p className="text-slate-400">Send: {idea.sendLabels.join(", ") || "—"}</p>
+                  </div>
+                  <Button size="sm" variant="outline" onClick={() => openIdea(idea)}>Open</Button>
+                  <button type="button" aria-label={`Delete ${idea.name}`} onClick={() => persistIdeas(ideas.filter((x) => x.id !== idea.id))} className="text-slate-500 hover:text-white"><X className="h-4 w-4" /></button>
+                </div>
+              ))}
+            </Card>
           )}
           <LeagueTrades entries={entries} depth={depth} onOpen={(recv, give) => { setReceive(recv); setSend(give); window.scrollTo({ top: 0, behavior: "smooth" }); }} />
           <ValuesExplainer />
