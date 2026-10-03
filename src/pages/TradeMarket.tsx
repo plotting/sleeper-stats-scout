@@ -224,8 +224,8 @@ const FitReview = () => {
               <p>Depth: each extra player on a side counts ×{Number(r.tiers.rho_players).toFixed(2)} of the one before (richest first); extra picks ×{Number(r.tiers.rho_picks).toFixed(2)}</p>
             )}
             {r.tiers && Object.keys(r.tiers).some((k) => k.startsWith("sb_")) && (
-              <p title="Measured from accepted trades: how much richer the many-piece side's plain sum is than the fewer-piece side's. The calculator, trade finder and trade scores multiply the fewer-piece side by this, so a star is not undervalued against a pile of pieces">
-                Consolidation premium (applied; the more-pieces side's plain sum vs the fewer-pieces side in accepted trades): {Object.entries(r.tiers).filter(([k]) => k.startsWith("sb_")).sort(([a], [b]) => a.localeCompare(b))
+              <p title="Measured from accepted trades where the many-piece side's pieces are much lesser than the other side's best asset: how much richer its plain sum was. The calculator, trade finder and trade scores apply it only in that case (scaled by how lesser the pieces are), so a star is not undervalued against a pile of scraps but two starters for one is not penalised">
+                Consolidation premium (applied when the extra pieces are much lesser): {Object.entries(r.tiers).filter(([k]) => k.startsWith("sb_")).sort(([a], [b]) => a.localeCompare(b))
                   .map(([k, n]) => `${k.slice(3).replace("-", "-for-")} ${Number(n) > 0 ? "+" : ""}${n}% (${r.tiers![`sbn_${k.slice(3)}`]})`).join(" · ")}
               </p>
             )}

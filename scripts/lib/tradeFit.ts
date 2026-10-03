@@ -12,6 +12,7 @@
 // be calibrated. Values are rescaled so the most valuable player (10+ trades) is 10,000.
 
 import type { Asset, TradeRow } from './tradeMarket';
+import { premiumMultiplier, premiumWeight } from '../../src/utils/consolidation';
 
 export type AssetKey = string; // "p:<sleeper id>" | "pk:<years ahead>:<round>"
 
@@ -321,11 +322,14 @@ export type FairTier = 'even' | 'close' | 'edge' | 'lop';
 export interface TradeScore { valA: number; valB: number; diffPct: number; tier: FairTier }
 
 /** Gap between the sides as a share of the bigger one; null if any asset has no value. */
-/** Multiplier for the side with fewer pieces (the one holding the better asset), from the measured premium by shape ("many-few" → ratio). */
-export function premiumFor(premium: Map<string, number> | undefined, aCount: number, bCount: number): { side: 'a' | 'b'; m: number } | null {
-  if (!premium || aCount === bCount) return null;
-  const m = premium.get(`${Math.max(aCount, bCount)}-${Math.min(aCount, bCount)}`);
-  return m && m > 0 ? { side: aCount < bCount ? 'a' : 'b', m } : null;
+/** Multiplier for the side with fewer pieces: the measured premium for the shape ("many-few" → ratio), scaled by how much lesser the many side's pieces are. */
+export function premiumFor(premium: Map<string, number> | undefined, aVals: number[], bVals: number[]): { side: 'a' | 'b'; m: number } | null {
+  if (!premium || aVals.length === bVals.length) return null;
+  const aFew = aVals.length < bVals.length;
+  const base = premium.get(`${Math.max(aVals.length, bVals.length)}-${Math.min(aVals.length, bVals.length)}`);
+  if (!base || base <= 0) return null;
+  const m = premiumMultiplier(base, Math.max(...(aFew ? bVals : aVals)), Math.max(...(aFew ? aVals : bVals)));
+  return m > 1 ? { side: aFew ? 'a' : 'b', m } : null;
 }
 
 export function scoreTrade(t: FitTrade, values: Map<AssetKey, number>, fallbackToPrior = false, depth: Depth = NO_DEPTH, premium?: Map<string, number>): TradeScore | null {
@@ -336,12 +340,14 @@ export function scoreTrade(t: FitTrade, values: Map<AssetKey, number>, fallbackT
       if (x === undefined) return null;
       xs.push({ value: x, pick: k.startsWith('pk:') });
     }
-    return sideTotalDepth(xs, depth);
+    return { total: sideTotalDepth(xs, depth), vals: xs.map((x) => x.value) };
   };
-  let valA = side(t.a);
-  let valB = side(t.b);
-  if (valA === null || valB === null) return null;
-  const adj = premiumFor(premium, t.a.length, t.b.length);
+  const sa = side(t.a);
+  const sb = side(t.b);
+  if (sa === null || sb === null) return null;
+  let valA = sa.total;
+  let valB = sb.total;
+  const adj = premiumFor(premium, sa.vals, sb.vals);
   if (adj) { if (adj.side === 'a') valA *= adj.m; else valB *= adj.m; }
   const diffPct = (Math.abs(valA - valB) / Math.max(valA, valB)) * 100;
   return { valA, valB, diffPct, tier: diffPct <= 10 ? 'even' : diffPct <= 25 ? 'close' : diffPct <= 50 ? 'edge' : 'lop' };
@@ -409,19 +415,26 @@ export function fitAndReport(
   // Calibration check for the depth setting: in uneven trades (e.g. 4-for-1) the side with more pieces
   // should not be worth systematically more or less than the other. Positive = the many-piece side
   // looks richer than it was accepted as, i.e. the depth discount is too weak.
-  const biasAcc = new Map<string, { sum: number; w: number; n: number }>();
+  // The premium applies only when the many side's pieces are much lesser than the other side's best asset (see consolidation.ts),
+  // so it is calibrated on exactly those trades: ln m = Σ w·g·ln(ratio) / Σ w·g², where g is each trade's premium weight and
+  // ratio is the many side's plain-sum value over the other's.
+  const biasAcc = new Map<string, { gr: number; gg: number; n: number }>();
   trades.forEach((t, i) => {
     const sc = scores[i];
     if (t.a.length === t.b.length) return;
     const manyIsA = t.a.length > t.b.length;
-    const shape = `${Math.max(t.a.length, t.b.length)}-${Math.min(t.a.length, t.b.length)}`;
+    const many = manyIsA ? t.a : t.b, few = manyIsA ? t.b : t.a;
+    const best = (keys: AssetKey[]) => Math.max(...keys.map((k) => values.get(k) ?? 0));
+    const g = premiumWeight(best(many), best(few));
+    if (g <= 0) return;
+    const shape = `${many.length}-${few.length}`;
     const logRatio = Math.log((manyIsA ? sc.valA : sc.valB) / (manyIsA ? sc.valB : sc.valA));
-    const e = biasAcc.get(shape) ?? { sum: 0, w: 0, n: 0 };
     const w = t.weight ?? 1;
-    e.sum += w * logRatio; e.w += w; e.n++; biasAcc.set(shape, e);
+    const e = biasAcc.get(shape) ?? { gr: 0, gg: 0, n: 0 };
+    e.gr += w * g * logRatio; e.gg += w * g * g; e.n++; biasAcc.set(shape, e);
   });
   const shapeBias: Record<string, { n: number; pct: number }> = {};
-  for (const [shape, e] of biasAcc) if (e.n >= 30) shapeBias[shape] = { n: e.n, pct: Math.round((Math.exp(e.sum / e.w) - 1) * 100) };
+  for (const [shape, e] of biasAcc) if (e.n >= 30 && e.gg > 0) shapeBias[shape] = { n: e.n, pct: Math.round((Math.exp(e.gr / e.gg) - 1) * 100) };
 
   return {
     values,

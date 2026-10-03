@@ -107,29 +107,44 @@ test('findOffers: packages near the target, simplest and closest first, ignoring
 });
 
 import { adjustedTotals } from '../src/utils/marketCalc';
-test('consolidation premium lifts the side with fewer pieces; equal counts and unmeasured shapes are untouched', () => {
+import { premiumWeight } from '../src/utils/consolidation';
+test('consolidation premium applies only when the extra pieces are much lesser than the best asset', () => {
   const depth = { players: 1, picks: 1, premium: new Map([['2-1', 1.5]]) };
-  const r = assess([a('star', 1000)], [a('x', 700), a('y', 700)], depth);
-  assert.equal(Math.round(r.recv), 1500); // 1000 × 1.5
-  assert.equal(r.sent, 1400);
-  assert.equal(r.premium?.side, 'recv');
+  // one star for two much lesser pieces: full premium on the star side
+  const full = assess([a('star', 1000)], [a('x', 300), a('y', 300)], depth);
+  assert.equal(Math.round(full.recv), 1500);
+  assert.equal(full.sent, 600);
+  assert.equal(full.premium?.side, 'recv');
+  // two starters for one: only part of it (best piece is 70% of the star)
+  const partial = adjustedTotals([a('star', 1000)], [a('x', 700), a('y', 700)], depth);
+  assert.equal(Math.round(partial.recv), 1190);
+  // a comparable asset plus a throw-in or a pick never flips a premium on
+  assert.equal(adjustedTotals([a('s', 1000)], [a('x', 900), a('junk', 50)], depth).premium, null);
+  assert.equal(adjustedTotals([a('s', 1000), a('junk', 50)], [a('x', 1000)], depth).premium, null);
+  assert.equal(adjustedTotals([a('s', 1000), a('pk:0:3', 400)], [a('x', 1000)], depth).recv, 1400);
+  // equal counts and unmeasured shapes are untouched
   assert.equal(adjustedTotals([a('p', 500), a('q', 500)], [a('x', 500), a('y', 500)], depth).premium, null);
-  assert.equal(adjustedTotals([a('s', 1000)], [a('x', 400), a('y', 300), a('z', 300)], depth).premium, null); // 3-1 not measured
+  assert.equal(adjustedTotals([a('s', 1000)], [a('x', 200), a('y', 200), a('z', 200)], depth).premium, null); // 3-1 not measured
+  assert.equal(premiumWeight(500, 1000), 1);
+  assert.equal(premiumWeight(850, 1000), 0);
 });
 
 test('suggestToEven with context judges the premium-adjusted gap', () => {
   const depth = { players: 1, picks: 1, premium: new Map([['2-1', 1.5]]) };
-  // I send one 1000 asset, receive one 700: behind 300. Adding a 300 asset to what I receive makes it 2-for-1 (premium on my single) — overshoots (500 off); a 700 asset lands 100 off.
+  // I send one 1000 asset and receive one 700 (behind 300). A 300 add makes it 2-for-1 with the 700 best piece at 70% of my asset (premium ×1.19 on mine, 190 off);
+  // a 700 add lands 210 off after the same premium, so the 300 is the closer fix.
   const pool = [a('c300', 300), a('c700', 700)];
   const out = suggestToEven(-300, pool, new Set(), [a('r', 700)], depth, 0, 1, { other: [a('s', 1000)], sideIsRecv: true });
-  assert.deepEqual(out.map((x) => x.key), ['c700']);
+  assert.deepEqual(out.map((x) => x.key), ['c300']);
 });
 
-test('findOffers asks multi-piece packages to cover the premium', () => {
+test('findOffers asks multi-piece packages to cover the premium, scaled by how lesser the pieces are', () => {
   const depth = { players: 1, picks: 1, premium: new Map([['2-1', 1.5]]) };
-  const pool = [a('m1', 800), a('m2', 700), a('one', 1000)];
-  const offers = findOffers(1000, pool, depth, 0.05, 5);
+  const pool = [a('m1', 700), a('m2', 490), a('one', 1000), a('near', 900), a('small', 150)];
+  const offers = findOffers(1000, pool, depth, 0.05, 8);
   assert.ok(offers.some((o) => o.assets.map((x) => x.key).join() === 'one'));
-  assert.ok(offers.some((o) => o.assets.map((x) => x.key).join() === 'm1,m2')); // 1500 total = 1000 × 1.5
+  assert.ok(offers.some((o) => o.assets.map((x) => x.key).join() === 'm1,m2')); // best piece 70% → need ≈ 1190
+  // a near-equal asset plus a scrap needs no premium, so it cannot pad its way into a bigger asset
+  assert.ok(!offers.some((o) => o.assets.map((x) => x.key).join() === 'one,small' && o.total > 1100));
   assert.ok(offers.every((o) => o.need >= 1000));
 });

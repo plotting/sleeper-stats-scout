@@ -201,13 +201,14 @@ test('a barely-started season does not drag recent VORP down', () => {
 });
 
 import { premiumFor } from './lib/tradeFit';
-test('scoreTrade applies the consolidation premium to the side with fewer pieces', () => {
+test('scoreTrade applies the premium to the fewer-piece side only when the extra pieces are much lesser', () => {
   const t = { id: 1, a: ['p:1'], b: ['p:2', 'p:3'] } as unknown as FitTrade;
-  const values = new Map([['p:1', 1000], ['p:2', 700], ['p:3', 700]]);
-  const plain = scoreTrade(t, values)!;
-  const adj = scoreTrade(t, values, false, undefined, new Map([['2-1', 1.5]]))!;
-  assert.equal(plain.valA, 1000);
-  assert.equal(adj.valA, 1500);
-  assert.equal(adj.valB, 1400);
-  assert.equal(premiumFor(new Map([['2-1', 1.5]]), 2, 2), null);
+  const prem = new Map([['2-1', 1.5]]);
+  const values = new Map([['p:1', 1000], ['p:2', 300], ['p:3', 300]]);
+  const adj = scoreTrade(t, values, false, undefined, prem)!;
+  assert.equal(Math.round(adj.valA), 1500);
+  assert.equal(adj.valB, 600);
+  const comparable = scoreTrade(t, new Map([['p:1', 1000], ['p:2', 900], ['p:3', 100]]), false, undefined, prem)!;
+  assert.equal(comparable.valA, 1000);
+  assert.equal(premiumFor(prem, [1, 2], [3, 4]), null);
 });
