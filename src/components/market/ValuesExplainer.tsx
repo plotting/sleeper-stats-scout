@@ -17,6 +17,9 @@ const ITEMS: Array<[string, string[]]> = [
     "The trade finder (league mode) looks for packages that match an asset's value, including the premium, and shows each offer's change to both teams' best starting lineups (annual VORP). Win-win looks across every leaguemate for trades that improve both lineups.",
     "League trade grades price every trade in your league at today's values (hindsight); a used pick counts as the player it became. Trades made since the daily value history began also show the grade at the time. Movers and the 7-day change next to each player come from the same daily history.",
   ]],
+  ["Do injuries change values?", [
+    "Not by default. Injured players are flagged with Sleeper's designation (OUT, IR, Doubtful, Questionable) wherever they appear. If you turn on the Injury discount slider (up to 50%), out / IR / PUP / suspended players lose the full setting, doubtful players half, and questionable players 15%. It applies everywhere: the verdict, the finder and the league views.",
+  ]],
   ["What's in value over time and durability?", [
     "Value over time moves each player along an age curve for his position fitted from today's values (younger players are priced higher up to a peak, then value declines); picks stay flat. Durability is games missed per season from our season stats. Neither is a forecast of injuries or breakouts.",
   ]],

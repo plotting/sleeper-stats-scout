@@ -322,3 +322,11 @@ export function findOffers(target: number, pool: CalcAsset[], depth: Depth = NO_
   }
   return found.sort((x, y) => x.score - y.score).slice(0, limit).map(({ assets, total, need, diffPct }) => ({ assets, total, need, diffPct }));
 }
+
+/** How much of a player's value an injury designation takes away at a given discount setting (0-50%): a player who is out or on IR loses the full
+ *  setting, a doubtful player half, a questionable one 15%. Off (0%) by default: values are otherwise not adjusted for injuries. */
+const INJURY_SEVERITY: Record<string, number> = { Out: 1, IR: 1, PUP: 1, Sus: 1, Suspended: 1, Doubtful: 0.5, Questionable: 0.15 };
+export function injuryFactor(status: string | null | undefined, discountPct: number): number {
+  if (!status || discountPct <= 0) return 1;
+  return 1 - (Math.min(discountPct, 50) / 100) * (INJURY_SEVERITY[status] ?? 0);
+}
