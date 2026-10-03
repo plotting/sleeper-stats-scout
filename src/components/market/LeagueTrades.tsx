@@ -46,8 +46,11 @@ export function LeagueTrades({ entries, depth, onOpen }: { entries: CalcAsset[];
       if (asset && it.to_team_id != null && priced[it.to_team_id]) priced[it.to_team_id].push(asset); else unpriced++;
     }
     const got1 = priced[t.team1_id], got2 = priced[t.team2_id];
-    return { t, got1, got2, unpriced, r: got1.length + got2.length > 0 ? assess(got1, got2, depth) : null };
+    // only grade a trade when everything in it could be priced: a verdict on half a trade would be wrong
+    return { t, got1, got2, unpriced, r: unpriced === 0 && got1.length + got2.length > 0 ? assess(got1, got2, depth) : null };
   }), [data, byName, byLabel, depth]);
+  const shown = rows.filter((x) => x.got1.length + x.got2.length > 0);
+  const hidden = rows.length - shown.length;
 
   return (
     <Card className="border-white/10 p-5 space-y-3">
@@ -59,8 +62,8 @@ export function LeagueTrades({ entries, depth, onOpen }: { entries: CalcAsset[];
         <button type="button" onClick={() => setOpen(!open)} className="text-xs text-blue-400 hover:underline">{open ? "Hide" : "Show"}</button>
       </div>
       {open && !data && <p className="text-xs text-slate-500 animate-pulse">Loading…</p>}
-      {open && data && rows.length === 0 && <p className="text-xs text-slate-500">No trades in the last 18 months.</p>}
-      {open && rows.map(({ t, got1, got2, unpriced, r }) => {
+      {open && data && shown.length === 0 && <p className="text-xs text-slate-500">No trades in the last 18 months.</p>}
+      {open && shown.map(({ t, got1, got2, unpriced, r }) => {
         const n1 = data!.names.get(t.team1_id) ?? `Team ${t.team1_id}`, n2 = data!.names.get(t.team2_id) ?? `Team ${t.team2_id}`;
         const winner = r && r.tier !== "even" ? (r.winner === "you" ? n1 : n2) : null;
         return (
@@ -69,7 +72,7 @@ export function LeagueTrades({ entries, depth, onOpen }: { entries: CalcAsset[];
               <p className="text-[11px] text-slate-500">{new Date(t.trade_date).toLocaleDateString()}</p>
               <p><span className="text-slate-300 font-medium">{n1}</span> <span className="text-slate-500">got</span> {got1.map((a) => `${a.label} (${Math.round(a.value).toLocaleString()})`).join(", ") || "—"}</p>
               <p><span className="text-slate-300 font-medium">{n2}</span> <span className="text-slate-500">got</span> {got2.map((a) => `${a.label} (${Math.round(a.value).toLocaleString()})`).join(", ") || "—"}</p>
-              {unpriced > 0 && <p className="text-[10px] text-amber-400/80">{unpriced} item{unpriced > 1 ? "s" : ""} couldn't be priced</p>}
+              {unpriced > 0 && <p className="text-[10px] text-amber-400/80">{unpriced} item{unpriced > 1 ? "s" : ""} couldn't be priced, so this trade isn't graded</p>}
             </div>
             {r && (
               <div className="text-right text-xs">
@@ -81,6 +84,7 @@ export function LeagueTrades({ entries, depth, onOpen }: { entries: CalcAsset[];
           </div>
         );
       })}
+      {open && hidden > 0 && <p className="text-[10px] text-slate-600">{hidden} trade{hidden > 1 ? "s" : ""} hidden: nothing in {hidden > 1 ? "them" : "it"} could be priced (spent picks, unvalued players).</p>}
     </Card>
   );
 }
