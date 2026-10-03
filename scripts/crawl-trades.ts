@@ -175,6 +175,10 @@ async function refreshLeagues(): Promise<number> {
   const cutoff = new Date(Date.now() - REFRESH_DAYS * 86_400_000).toISOString();
   const refreshStart = Date.now();
   let leagues = 0, added = 0;
+  const live = await supabase.from('market_leagues').select('league_id', { count: 'exact', head: true }).eq('matches', true).gte('season', nowYear);
+  const due = await supabase.from('market_leagues').select('league_id', { count: 'exact', head: true })
+    .eq('matches', true).gte('season', nowYear).or(`trades_synced_at.is.null,trades_synced_at.lt.${cutoff}`);
+  console.log(`Matching ${nowYear} leagues: ${live.count ?? '?'} known, ${due.count ?? '?'} not re-read in the last ${REFRESH_DAYS} days.`);
   while (timeLeft() && Date.now() - refreshStart < REFRESH_MS) {
     const { data } = await supabase.from('market_leagues').select('*')
       .eq('matches', true).gte('season', nowYear).or(`trades_synced_at.is.null,trades_synced_at.lt.${cutoff}`)
