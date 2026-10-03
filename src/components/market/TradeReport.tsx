@@ -25,6 +25,7 @@ export function VerdictMeter({ recv, sent }: { recv: number; sent: number }) {
 /** The trade written out: who wins, by how much, and each side's pieces with totals. */
 export function TradeReport({ receive, send, depth, subtitle }: { receive: CalcAsset[]; send: CalcAsset[]; depth: Depth; subtitle: string }) {
   const r = assess(receive, send, depth);
+  const injured = [...receive, ...send].filter((a) => a.meta?.injury);
   const v = verdictOf(r.recv, r.sent);
   const title = v.tone === "win" ? "You Win" : v.tone === "lose" ? "You Lose" : "Even Trade";
   const color = v.tone === "win" ? "text-emerald-400" : v.tone === "lose" ? "text-red-400" : "text-slate-200";
@@ -45,6 +46,11 @@ export function TradeReport({ receive, send, depth, subtitle }: { receive: CalcA
         <p className={cn("text-4xl font-bold", color)}>{title}</p>
         <p className="text-sm text-slate-400">{r.winner === null ? "Both sides are worth the same" : `${r.winner === "you" ? "+" : "−"}${Math.round(Math.abs(r.gap)).toLocaleString()} value edge`}</p>
       </div>
+      {injured.length > 0 && (
+        <p className="text-xs text-amber-300/90 border border-amber-400/20 rounded-md px-3 py-2">
+          Injury watch: {injured.map((a) => `${a.label} (${a.meta!.injury})`).join(", ")}. Values don't adjust for injuries.
+        </p>
+      )}
       <div className="grid md:grid-cols-2 gap-3">
         {list(receive, r.recv, "You receive", "text-emerald-400")}
         {list(send, r.sent, "You send", "text-red-400")}
