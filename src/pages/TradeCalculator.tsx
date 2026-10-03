@@ -13,6 +13,7 @@ import { LineupImpact, type TeamSide } from "@/components/market/LineupImpact";
 import { useLeagueTeams } from "@/hooks/useLeagueTeams";
 import { teamAssets } from "@/utils/leaguePricing";
 import { bestLineup, lineupScore, positionTotals, type RosterPlayer } from "@/utils/rosterLineup";
+import { LeagueTrades } from "@/components/market/LeagueTrades";
 import { TradeFinder } from "@/components/market/TradeFinder";
 import { ValuesExplainer } from "@/components/market/ValuesExplainer";
 import { loadDirectory, loadValues, loadValuesAgo, useEntries } from "@/components/market/assetData";
@@ -373,6 +374,7 @@ const Calculator = () => {
               <PriceCheck players={players} directory={directory} trade={{ get: receiveP, give: sendP }} />
             </>
           )}
+          <LeagueTrades entries={entries} depth={depth} onOpen={(recv, give) => { setReceive(recv); setSend(give); window.scrollTo({ top: 0, behavior: "smooth" }); }} />
           <ValuesExplainer />
         </>
       )}
