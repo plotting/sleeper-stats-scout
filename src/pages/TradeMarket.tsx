@@ -17,6 +17,7 @@ type Asset = { p: string } | { k: [number, number, number] } | { b: number };
 interface MarketTrade {
   id: number;
   league_id: string;
+  transaction_id?: string;
   season: number;
   week: number | null;
   traded_at: string;
@@ -463,7 +464,14 @@ const TradeMarketInner = () => {
           {data.trades.map((t) => (
             <Card key={t.id} className="border-white/10 overflow-hidden">
               <div className="flex items-center justify-between px-4 py-2 border-b border-white/5 text-xs text-slate-400">
-                <span>{new Date(t.traded_at).toLocaleDateString()} · {t.season}{t.week ? ` wk ${t.week}` : ""}</span>
+                <span>
+                  {new Date(t.traded_at).toLocaleDateString()} · {t.season}{t.week ? ` wk ${t.week}` : ""}
+                  <a
+                    href={`https://sleeper.com/leagues/${t.league_id}`} target="_blank" rel="noreferrer"
+                    title={`Open this league on Sleeper (league ${t.league_id}${t.transaction_id ? `, transaction ${t.transaction_id}` : ""})`}
+                    className="ml-3 text-blue-400 hover:underline"
+                  >Open league ↗</a>
+                </span>
                 <span className="flex gap-1.5">
                   {scoreOf(t) && (
                     <span className={cn("px-1.5 py-0.5 rounded border", TIER_STYLE[scoreOf(t)!.fair_tier])}>
