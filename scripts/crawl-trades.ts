@@ -4,7 +4,9 @@
 //   SUPABASE_SERVICE_ROLE_KEY=... TSX_TSCONFIG_PATH=tsconfig.app.json npx tsx scripts/crawl-trades.ts
 //
 // Env: MAX_MINUTES (default 300), CALLS_PER_MINUTE (default 600, Sleeper asks for < 1000),
-//      TARGET_TRADES (default 50000), SEASONS (default 2022-current).
+//      TARGET_TRADES (default 50000, counted over the trade window), SEASONS (default last-two seasons),
+//      WINDOW_DAYS (default 548 ≈ 18 months, the trades the fit uses), REFRESH_MINUTES (default 60) and
+//      REFRESH_DAYS (default 3) for re-checking known leagues for new trades.
 
 import { createThrottle, parseTrade, profileLeague, type SleeperLeagueLite, type SleeperTransactionLite } from './lib/tradeMarket';
 
@@ -31,6 +33,9 @@ const MAX_MS = Number(process.env.MAX_MINUTES ?? 300) * 60_000;
 const TARGET = Number(process.env.TARGET_TRADES ?? 50_000);
 const throttle = createThrottle(Number(process.env.CALLS_PER_MINUTE ?? 600));
 const started = Date.now();
+const WINDOW_DAYS = Number(process.env.WINDOW_DAYS ?? 548);
+const REFRESH_MS = Number(process.env.REFRESH_MINUTES ?? 60) * 60_000;
+const REFRESH_DAYS = Number(process.env.REFRESH_DAYS ?? 3);
 const nowYear = new Date().getFullYear();
 // Only the last ~18 months of trades are useful: older ones reflect a different market (values drift, rosters turn over).
 const SEASONS = (process.env.SEASONS ?? `${nowYear - 1}-${nowYear}`).split('-').map(Number);
@@ -54,8 +59,10 @@ async function api<T>(path: string): Promise<T | null> {
 }
 
 const timeLeft = () => Date.now() - started < MAX_MS;
+// Only trades inside the fit's window count toward the target: older ones are kept but no longer help.
 async function tradeCount(): Promise<number> {
-  const { count } = await supabase.from('market_trades').select('id', { count: 'exact', head: true });
+  const since = new Date(Date.now() - WINDOW_DAYS * 86_400_000).toISOString();
+  const { count } = await supabase.from('market_trades').select('id', { count: 'exact', head: true }).gte('traded_at', since);
   return count ?? 0;
 }
 function must<T>(res: { data: T | null; error: { message: string } | null }, what: string): T {
@@ -159,10 +166,44 @@ async function backfillMembers() {
   }
 }
 
+// ── Known leagues keep trading: re-check this season's matching leagues for trades made since the last visit ──
+// (A league is only collected once by processLeague, so without this new trades would never arrive and the
+// 18-month window would slowly empty.) Oldest-synced first, within REFRESH_MINUTES; inserts ignore duplicates.
+async function refreshLeagues(): Promise<number> {
+  const state = await api<{ week?: number; season_type?: string }>('/state/nfl');
+  const lastWeek = state?.season_type === 'regular' || state?.season_type === 'post' ? Math.min(18, Math.max(state.week ?? 1, 1) + 1) : 18;
+  const cutoff = new Date(Date.now() - REFRESH_DAYS * 86_400_000).toISOString();
+  const refreshStart = Date.now();
+  let leagues = 0, added = 0;
+  while (timeLeft() && Date.now() - refreshStart < REFRESH_MS) {
+    const { data } = await supabase.from('market_leagues').select('*')
+      .eq('matches', true).gte('season', nowYear).or(`trades_synced_at.is.null,trades_synced_at.lt.${cutoff}`)
+      .order('trades_synced_at', { ascending: true, nullsFirst: true }).limit(25);
+    if (!data?.length) break;
+    for (const profile of data) {
+      if (!timeLeft() || Date.now() - refreshStart >= REFRESH_MS) break;
+      const rows = [];
+      for (let week = 1; week <= lastWeek; week++) {
+        const txs = await api<SleeperTransactionLite[]>(`/league/${profile.league_id}/transactions/${week}`);
+        for (const tx of txs ?? []) {
+          const row = parseTrade(tx, profile);
+          if (row) rows.push(row);
+        }
+      }
+      if (rows.length) must(await supabase.from('market_trades').upsert(rows, { onConflict: 'league_id,transaction_id', ignoreDuplicates: true }), 'refresh trades');
+      must(await supabase.from('market_leagues').update({ trades_synced_at: new Date().toISOString() }).eq('league_id', profile.league_id), 'refresh done');
+      leagues++; added += rows.length;
+    }
+  }
+  console.log(`Refreshed ${leagues} known leagues (weeks 1-${lastWeek}); ${added} trades re-read, new ones stored.`);
+  return added;
+}
+
 async function main() {
   await refreshPlayers();
   await seedUsers();
   await backfillMembers();
+  await refreshLeagues();
   let total = await tradeCount();
   let leaguesSeen = 0, leaguesMatched = 0, newTrades = 0;
   console.log(`Starting with ${total} trades (target ${TARGET}).`);
