@@ -3,9 +3,10 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { findOffers, type CalcAsset, type Depth, type Offer } from "@/utils/marketCalc";
+import { findWinWin, type FinderTeam, type WinWinTrade } from "@/utils/winWin";
 import { AssetLine, AssetSearch } from "./assetUi";
 
-export interface FinderTeam { rosterId: number; name: string; assets: CalcAsset[] }
+export type { FinderTeam };
 
 /**
  * League-mode trade finder. Sell: pick something you own and see what each leaguemate could pay for it from their roster.
@@ -18,7 +19,9 @@ export function TradeFinder({ you, others, depth, onUse, lineupDelta }: {
   lineupDelta?: (partnerRosterId: number, receive: CalcAsset[], send: CalcAsset[]) => { you: number; them: number } | null;
   onUse: (partnerRosterId: number, receive: CalcAsset[], send: CalcAsset[]) => void;
 }) {
-  const [mode, setMode] = useState<"sell" | "buy">("sell");
+  const [mode, setMode] = useState<"sell" | "buy" | "win">("sell");
+  const [win, setWin] = useState<WinWinTrade[] | null>(null);
+  const [searching, setSearching] = useState(false);
   const [target, setTarget] = useState<CalcAsset | null>(null);
   const [tol, setTol] = useState(10);
   const [sort, setSort] = useState<"value" | "me" | "both">("value");
@@ -37,6 +40,12 @@ export function TradeFinder({ you, others, depth, onUse, lineupDelta }: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [target, mode, others, you, ownerOf, depth, tol, sort, lineupDelta]);
 
+  const searchWin = () => {
+    if (!lineupDelta) return;
+    setSearching(true);
+    setTimeout(() => { setWin(findWinWin(you, others, depth, lineupDelta, { tol: tol / 100 })); setSearching(false); }, 30); // let the spinner paint first
+  };
+
   const use = (team: FinderTeam, offer: Offer) => {
     if (!target) return;
     if (mode === "sell") onUse(team.rosterId, offer.assets, [target]);
@@ -54,21 +63,31 @@ export function TradeFinder({ you, others, depth, onUse, lineupDelta }: {
             </select>
           </label>
           <div className="inline-flex gap-0.5 rounded-lg border border-white/10 p-0.5">
-            {([["sell", "Sell"], ["buy", "Buy"]] as const).map(([m, label]) => (
-              <button key={m} type="button" onClick={() => { setMode(m); setTarget(null); }}
+            {([["sell", "Sell"], ["buy", "Buy"], ...(lineupDelta ? [["win", "Win-win"]] : [])] as Array<[typeof mode, string]>).map(([m, label]) => (
+              <button key={m} type="button" onClick={() => { setMode(m); setTarget(null); setWin(null); }}
                 className={cn("px-3 py-1 text-xs rounded-md", mode === m ? "bg-white/10 text-white font-medium" : "text-slate-400 hover:text-white")}>{label}</button>
             ))}
           </div>
         </div>
       </div>
       <p className="text-[11px] text-slate-500">
-        {mode === "sell" ? `Pick one of ${you.name}'s assets to see what each leaguemate could pay for it.` : "Pick a leaguemate's asset to see what you could send for it."}
+        {mode === "sell" ? `Pick one of ${you.name}'s assets to see what each leaguemate could pay for it.` : mode === "buy" ? "Pick a leaguemate's asset to see what you could send for it." : "Looks across every leaguemate for value-fair trades that improve both teams' best starting lineups."}
       </p>
-      <AssetSearch entries={pool} taken={new Set(target ? [target.key] : [])} onAdd={setTarget} placeholder={mode === "sell" ? "Search your roster & picks…" : "Search leaguemates' rosters & picks…"} />
-      {target && (
+      {mode !== "win" && <AssetSearch entries={pool} taken={new Set(target ? [target.key] : [])} onAdd={setTarget} placeholder={mode === "sell" ? "Search your roster & picks…" : "Search leaguemates' rosters & picks…"} />}
+      {mode !== "win" && target && (
         <div className="rounded-lg border border-white/10 px-3 py-2"><AssetLine asset={target} right={<button type="button" onClick={() => setTarget(null)} className="text-xs text-slate-500 hover:text-white">Clear</button>} /></div>
       )}
-      {target && (rows.length === 0
+      {mode === "win" && (
+        <div className="space-y-2">
+          <Button variant="outline" size="sm" onClick={searchWin} disabled={searching}>{searching ? "Searching…" : win ? "Search again" : "Find win-win trades"}</Button>
+          {win && win.length === 0 && <p className="text-xs text-slate-500">No value-fair trade within ±{tol}% improves both lineups — try a wider range.</p>}
+          {win?.map((w, i) => (
+            <OfferRow key={i} title={`${w.team.name}: you send ${w.send.map((a) => a.label).join(", ")}`} offer={w.offer} d={w.d} onUse={() => onUse(w.team.rosterId, w.receive, w.send)}
+              detail={`You receive ${w.receive.map((a) => `${a.label} (${Math.round(a.value).toLocaleString()})`).join(", ")}`} />
+          ))}
+        </div>
+      )}
+      {mode !== "win" && target && (rows.length === 0
         ? <p className="text-xs text-slate-500">{mode === "sell" ? `No leaguemate has a package within ±${tol}% — try a wider range.` : `Nothing on your roster matches within ±${tol}% — try a wider range.`}</p>
         : (
           <div className="space-y-2">
@@ -86,14 +105,15 @@ export function TradeFinder({ you, others, depth, onUse, lineupDelta }: {
   );
 }
 
-function OfferRow({ title, offer, d, onUse }: { title: string; offer: Offer; d: { you: number; them: number } | null; onUse: () => void }) {
+function OfferRow({ title, offer, d, onUse, detail }: { title: string; offer: Offer; d: { you: number; them: number } | null; onUse: () => void; detail?: string }) {
   return (
     <div className="rounded-lg border border-white/10 px-3 py-2 flex flex-wrap items-center gap-3">
       <div className="min-w-0 flex-1 space-y-1">
         <p className="text-xs font-semibold text-slate-300">{title}</p>
-        <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-slate-400">
+        {detail && <p className="text-xs text-slate-400">{detail}</p>}
+        {!detail && <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-slate-400">
           {offer.assets.map((a) => <span key={a.key}>{a.label} <span className="font-mono text-slate-500">{Math.round(a.value).toLocaleString()}</span></span>)}
-        </div>
+        </div>}
         {d && (
           <p className="text-[11px] text-slate-500" title="Change in each team's best starting lineup (annual VORP) if this trade happened">
             Lineup: you <span className={d.you > 0.05 ? "text-emerald-400" : d.you < -0.05 ? "text-red-400" : ""}>{d.you > 0.05 ? "+" : d.you < -0.05 ? "−" : ""}{Math.abs(d.you).toFixed(1)}</span>
