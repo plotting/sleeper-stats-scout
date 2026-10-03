@@ -11,6 +11,7 @@ import { DurabilityCard } from "@/components/market/Durability";
 import { OutcomeRangeCard } from "@/components/market/OutcomeRange";
 import { LineupImpact, type TeamSide } from "@/components/market/LineupImpact";
 import { useLeagueTeams } from "@/hooks/useLeagueTeams";
+import { fetchLeague, LEAGUE_ID } from "@/services/sleeperApi";
 import { teamAssets } from "@/utils/leaguePricing";
 import { bestLineup, lineupScore, positionTotals, type RosterPlayer } from "@/utils/rosterLineup";
 import { SellHighBuyLow } from "@/components/market/SellHighBuyLow";
@@ -121,7 +122,14 @@ const Calculator = () => {
   // 7-day change in the market value (before the sliders), shown next to each player
   const { data: weekAgo } = useQuery({ queryKey: ["calc-values-ago", format, 7], queryFn: () => loadValuesAgo(format, 7), staleTime: 60 * 60 * 1000 });
   const changes = useMemo(() => (raw && weekAgo ? valueChanges(new Map([...raw].map(([k, v]) => [k, v.value])), weekAgo.values) : undefined), [raw, weekAgo]);
-  const baseEntries = useEntries(values, directory, changes);
+  const rawEntries = useEntries(values, directory, changes);
+  // Only offer pick rounds this league's rookie draft actually has (a 2-round league has no 3rd or 4th round picks to trade)
+  const { data: leagueInfo } = useQuery({ queryKey: ["calc-league-info"], queryFn: () => fetchLeague(LEAGUE_ID), staleTime: 60 * 60 * 1000 });
+  const draftRounds = leagueInfo?.settings?.draft_rounds;
+  const baseEntries = useMemo(
+    () => (draftRounds ? rawEntries.filter((a) => !a.key.startsWith("pk:") || Number(a.key.split(":")[2]) <= draftRounds) : rawEntries),
+    [rawEntries, draftRounds],
+  );
   const entries = useMemo(() => (injPct > 0 ? baseEntries.map((a) => (a.meta?.injury ? { ...a, value: a.value * injuryFactor(a.meta.injury, injPct) } : a)) : baseEntries), [baseEntries, injPct]);
   const anyInjured = useMemo(() => baseEntries.some((a) => a.meta?.injury), [baseEntries]);
   const teams = leagueMode ? league?.teams : undefined;
@@ -194,8 +202,9 @@ const Calculator = () => {
   const result = assess(receiveP, sendP, depth);
   const hasAssets = receive.length + send.length > 0;
   const names = useMemo(
-    () => (hasAssets && result.tier !== "even" ? suggestToEven(result.gap, entries, taken, result.gap > 0 ? sendP : receiveP, depth, 3, 4, { other: result.gap > 0 ? receiveP : sendP, sideIsRecv: result.gap <= 0 }) : []),
-    [entries, taken, result.gap, result.tier, hasAssets, receiveP, sendP, depth],
+    // in league mode a suggestion has to be something that side actually owns: yours to add to what you send, theirs to ask for
+    () => (hasAssets && result.tier !== "even" ? suggestToEven(result.gap, inLeague ? (result.gap > 0 ? youOffer : partnerOffer) : entries, taken, result.gap > 0 ? sendP : receiveP, depth, 3, 4, { other: result.gap > 0 ? receiveP : sendP, sideIsRecv: result.gap <= 0 }) : []),
+    [entries, inLeague, youOffer, partnerOffer, taken, result.gap, result.tier, hasAssets, receiveP, sendP, depth],
   );
 
   const persistIdeas = (next: TradeIdea[]) => { setIdeas(next); try { localStorage.setItem("calc-trade-ideas", JSON.stringify(next)); } catch { /* optional */ } };

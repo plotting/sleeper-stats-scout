@@ -20,6 +20,8 @@ export interface SleeperLeague {
     num_teams: number;
     leg: number; // current NFL week
     last_scored_leg: number;
+    /** Rounds in this league's rookie draft (so which pick rounds exist). */
+    draft_rounds?: number;
   };
   total_rosters: number;
   /** Starting lineup slots in order, e.g. ["QB","RB","RB","WR","WR","TE","FLEX","DEF","BN",...] */
