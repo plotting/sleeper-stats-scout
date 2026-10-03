@@ -19,6 +19,15 @@ on:
         description: 'Experiment only: fit on older trades with several recency half-lives and windows, score the newest trades, print a table, store nothing'
         type: boolean
         default: false
+      sweep_half_lives:
+        description: 'Sweep only: recency half-lives in days, comma separated (100000 = none)'
+        default: '60,120,240,100000'
+      sweep_windows:
+        description: 'Sweep only: windows in days, comma separated'
+        default: '270,548,900'
+      sweep_offset:
+        description: 'Sweep only: end the test period this many days ago (to check another time of year)'
+        default: '0'
 
 concurrency:
   group: fit-trade-values
@@ -42,3 +51,6 @@ jobs:
           DEPTH_PLAYERS: ${{ inputs.depth_players || '1' }}
           DEPTH_PICKS: ${{ inputs.depth_picks || '1' }}
           SWEEP: ${{ inputs.sweep && '1' || '' }}
+          SWEEP_HALF_LIVES: ${{ inputs.sweep_half_lives || '60,120,240,100000' }}
+          SWEEP_WINDOWS: ${{ inputs.sweep_windows || '270,548,900' }}
+          TEST_OFFSET_DAYS: ${{ inputs.sweep_offset || '0' }}

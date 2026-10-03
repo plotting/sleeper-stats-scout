@@ -189,14 +189,16 @@ console.log(`Loaded ${rows.length} trades (fitting only those from the last ${MA
 // fitted values balance them. Prints a table and stores nothing.
 if (process.env.SWEEP === '1') {
   const TEST_DAYS = Number(process.env.TEST_DAYS ?? 45);
-  const cutoff = new Date(now.getTime() - TEST_DAYS * 86400000);
+  const OFFSET = Number(process.env.TEST_OFFSET_DAYS ?? 0); // test an earlier period: the test set ends this many days ago
   const day = 86400000;
+  const testEnd = new Date(now.getTime() - OFFSET * day);
+  const cutoff = new Date(testEnd.getTime() - TEST_DAYS * day);
   const halfLives = (process.env.SWEEP_HALF_LIVES ?? '60,120,240,100000').split(',').map(Number);
   const windows = (process.env.SWEEP_WINDOWS ?? '270,548,900').split(',').map(Number);
   const inFormat = rows.filter((r) => !r.superflex);
-  const testRows = inFormat.filter((r) => new Date(r.traded_at) > cutoff && now.getTime() - new Date(r.traded_at).getTime() <= TEST_DAYS * day);
+  const testRows = inFormat.filter((r) => new Date(r.traded_at) > cutoff && new Date(r.traded_at) <= testEnd);
   const tests = testRows.map((r) => toFitTrade(r, 1)).filter((t): t is FitTrade => t != null);
-  console.log(`Sweep: testing on ${tests.length} 1QB trades from the last ${TEST_DAYS} days; fitting on older trades as of ${cutoff.toISOString().slice(0, 10)}.`);
+  console.log(`Sweep: testing on ${tests.length} 1QB trades from ${cutoff.toISOString().slice(0, 10)} to ${testEnd.toISOString().slice(0, 10)}; fitting on older trades as of ${cutoff.toISOString().slice(0, 10)}.`);
   console.log('half-life | window | train | tested | covered | mean gap % | median gap %');
   for (const windowDays of windows) {
     for (const h of halfLives) {
