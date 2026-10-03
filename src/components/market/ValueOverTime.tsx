@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { cn } from "@/lib/utils";
-import { projectValue, sideTotal, trend, type AgeCurve, type CalcAsset, type Depth } from "@/utils/marketCalc";
+import { adjustedTotals, projectValue, trend, type AgeCurve, type CalcAsset, type Depth } from "@/utils/marketCalc";
 
 const W = 760, H = 280, PAD = { l: 46, r: 74, t: 18, b: 34 };
 
@@ -12,9 +12,9 @@ export function ValueOverTime({ receive, send, depth, curves }: { receive: CalcA
   const labels = ["Now", String(year + 1), String(year + 2), String(year + 3)];
   const data = useMemo(() => {
     const at = (assets: CalcAsset[], t: number) => assets.map((a) => ({ ...a, value: projectValue(a, t, curves) }));
-    const totals = (assets: CalcAsset[]) => [0, 1, 2, 3].map((t) => sideTotal(at(assets, t), depth));
+    const both = [0, 1, 2, 3].map((t) => adjustedTotals(at(receive, t), at(send, t), depth));
     const each = (assets: CalcAsset[]) => assets.map((a) => ({ a, line: [0, 1, 2, 3].map((t) => projectValue(a, t, curves)) }));
-    return { get: totals(receive), give: totals(send), getEach: each(receive), giveEach: each(send) };
+    return { get: both.map((b) => b.recv), give: both.map((b) => b.sent), getEach: each(receive), giveEach: each(send) };
   }, [receive, send, depth, curves]);
 
   const all = [...data.get, ...data.give, ...data.getEach.flatMap((x) => x.line), ...data.giveEach.flatMap((x) => x.line)];

@@ -244,8 +244,16 @@ for (const format of ['1qb', 'sf'] as const) {
     { format, asset_key: 'cfg:rho_players', value: Math.round(report.depth.players * 1000) / 1000, n_trades: 0, updated_at: new Date().toISOString() },
     { format, asset_key: 'cfg:rho_picks', value: Math.round(report.depth.picks * 1000) / 1000, n_trades: 0, updated_at: new Date().toISOString() },
   );
+  // Consolidation premium: in real trades the side with fewer pieces (the better asset) is accepted at a plain-sum value
+  // this much lower than the many-piece side. Stored per shape so the calculator can apply it; trades are scored with it too.
+  const premium = new Map<string, number>();
+  for (const [shape, b] of Object.entries(report.shapeBias)) {
+    const ratio = Math.round((1 + b.pct / 100) * 1000) / 1000;
+    premium.set(shape, ratio);
+    valueRows.push({ format, asset_key: `cfg:shape:${shape}`, value: ratio, n_trades: b.n, updated_at: new Date().toISOString() });
+  }
   const scoreRows = trades.map((t) => {
-    const s = scoreTrade(t, values, false, report.depth)!;
+    const s = scoreTrade(t, values, false, report.depth, premium)!;
     return { trade_id: t.id, val_a: Math.round(s.valA), val_b: Math.round(s.valB), diff_pct: Math.round(s.diffPct * 10) / 10, fair_tier: s.tier };
   });
   for (const [table, batch, conflict] of [

@@ -19,14 +19,13 @@ import { loadDirectory, loadValues, loadValuesAgo, useEntries } from "@/componen
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { assess, decodeShare, effectiveValue, encodeShare, normalizeTop, sideTotal, suggestToEven, valueChanges, type AgeCurve, type CalcAsset, type Depth, type Outcome } from "@/utils/marketCalc";
+import { assess, decodeShare, effectiveValue, encodeShare, normalizeTop, suggestToEven, valueChanges, type AgeCurve, type CalcAsset, type Depth, type Outcome } from "@/utils/marketCalc";
 
 // Hidden, admin-only page: prices a trade with the values fitted from completed market trades
 // (market_values). Players only appear once they've been in enough trades to get a value.
 
 
-function Side({ title, assets, depth, onRemove, children }: { title: string; assets: CalcAsset[]; depth: Depth; onRemove: (key: string) => void; children: React.ReactNode }) {
-  const total = sideTotal(assets, depth);
+function Side({ title, assets, total, onRemove, children }: { title: string; assets: CalcAsset[]; total: number; onRemove: (key: string) => void; children: React.ReactNode }) {
   return (
     <div className="space-y-3">
       <div className="flex items-baseline justify-between">
@@ -158,13 +157,19 @@ const Calculator = () => {
   const fitDepth = values?.get("cfg:rho_players")?.value ?? 1;
   const rhoPlayers = fitDepth;
   const rhoPicks = values?.get("cfg:rho_picks")?.value ?? 1;
-  const depth: Depth = useMemo(() => ({ players: rhoPlayers, picks: rhoPicks }), [rhoPlayers, rhoPicks]);
+  // Consolidation premium by shape, measured from real trades (stored as cfg:shape:<many>-<few>)
+  const premium = useMemo(() => {
+    const out = new Map<string, number>();
+    for (const [key, v] of values ?? []) if (key.startsWith("cfg:shape:")) out.set(key.slice(10), v.value);
+    return out;
+  }, [values]);
+  const depth: Depth = useMemo(() => ({ players: rhoPlayers, picks: rhoPicks, premium }), [rhoPlayers, rhoPicks, premium]);
   const receiveP = receive.map(reprice);
   const sendP = send.map(reprice);
   const result = assess(receiveP, sendP, depth);
   const hasAssets = receive.length + send.length > 0;
   const names = useMemo(
-    () => (hasAssets && result.tier !== "even" ? suggestToEven(result.gap, entries, taken, result.gap > 0 ? sendP : receiveP, depth) : []),
+    () => (hasAssets && result.tier !== "even" ? suggestToEven(result.gap, entries, taken, result.gap > 0 ? sendP : receiveP, depth, 3, 4, { other: result.gap > 0 ? receiveP : sendP, sideIsRecv: result.gap <= 0 }) : []),
     [entries, taken, result.gap, result.tier, hasAssets, receiveP, sendP, depth],
   );
 
@@ -297,10 +302,10 @@ const Calculator = () => {
 
           <div ref={captureRef} className="space-y-4 rounded-2xl" hidden={leagueMode && !!teams && !partnerTeam}>
             <Card className="border-white/10 p-5 grid md:grid-cols-2 gap-8">
-              <Side title="You receive" assets={receiveP} depth={depth} onRemove={remove(setReceive)}>
+              <Side title="You receive" assets={receiveP} total={result.recv} onRemove={remove(setReceive)}>
                 <AssetSearch entries={partnerOffer} taken={taken} onAdd={add(setReceive)} placeholder={inLeague ? `Search ${partnerTeam?.name ?? "their"} roster & picks…` : undefined} />
               </Side>
-              <Side title="You send" assets={sendP} depth={depth} onRemove={remove(setSend)}>
+              <Side title="You send" assets={sendP} total={result.sent} onRemove={remove(setSend)}>
                 <AssetSearch entries={youOffer} taken={taken} onAdd={add(setSend)} placeholder={inLeague ? `Search ${youTeam?.name ?? "your"} roster & picks…` : undefined} />
               </Side>
             </Card>
@@ -308,6 +313,11 @@ const Calculator = () => {
               <Card className="border-white/10 p-5">
                 <VerdictMeter recv={result.recv} sent={result.sent} />
                 <p className="text-center text-xs text-slate-500 mt-1">{result.diffPct.toFixed(1)}% gap</p>
+                {result.premium && (
+                  <p className="text-center text-[11px] text-slate-600 mt-1">
+                    Consolidation premium ×{result.premium.m.toFixed(2)} applied to {result.premium.side === "recv" ? "what you receive" : "what you send"} ({result.premium.shape.replace("-", "-for-")} trades pay extra for the better asset)
+                  </p>
+                )}
               </Card>
             )}
           </div>

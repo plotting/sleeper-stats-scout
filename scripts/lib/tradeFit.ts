@@ -321,7 +321,14 @@ export type FairTier = 'even' | 'close' | 'edge' | 'lop';
 export interface TradeScore { valA: number; valB: number; diffPct: number; tier: FairTier }
 
 /** Gap between the sides as a share of the bigger one; null if any asset has no value. */
-export function scoreTrade(t: FitTrade, values: Map<AssetKey, number>, fallbackToPrior = false, depth: Depth = NO_DEPTH): TradeScore | null {
+/** Multiplier for the side with fewer pieces (the one holding the better asset), from the measured premium by shape ("many-few" → ratio). */
+export function premiumFor(premium: Map<string, number> | undefined, aCount: number, bCount: number): { side: 'a' | 'b'; m: number } | null {
+  if (!premium || aCount === bCount) return null;
+  const m = premium.get(`${Math.max(aCount, bCount)}-${Math.min(aCount, bCount)}`);
+  return m && m > 0 ? { side: aCount < bCount ? 'a' : 'b', m } : null;
+}
+
+export function scoreTrade(t: FitTrade, values: Map<AssetKey, number>, fallbackToPrior = false, depth: Depth = NO_DEPTH, premium?: Map<string, number>): TradeScore | null {
   const side = (keys: AssetKey[]) => {
     const xs: Array<{ value: number; pick: boolean }> = [];
     for (const k of keys) {
@@ -331,9 +338,11 @@ export function scoreTrade(t: FitTrade, values: Map<AssetKey, number>, fallbackT
     }
     return sideTotalDepth(xs, depth);
   };
-  const valA = side(t.a);
-  const valB = side(t.b);
+  let valA = side(t.a);
+  let valB = side(t.b);
   if (valA === null || valB === null) return null;
+  const adj = premiumFor(premium, t.a.length, t.b.length);
+  if (adj) { if (adj.side === 'a') valA *= adj.m; else valB *= adj.m; }
   const diffPct = (Math.abs(valA - valB) / Math.max(valA, valB)) * 100;
   return { valA, valB, diffPct, tier: diffPct <= 10 ? 'even' : diffPct <= 25 ? 'close' : diffPct <= 50 ? 'edge' : 'lop' };
 }
