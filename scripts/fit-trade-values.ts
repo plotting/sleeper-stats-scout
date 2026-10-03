@@ -184,6 +184,39 @@ for (let from = 0; ; from += 1000) {
 }
 console.log(`Loaded ${rows.length} trades (fitting only those from the last ${MAX_AGE_DAYS} days)`);
 
+// SWEEP=1: does recency weighting or a shorter / longer window predict newer trades better? Fits on trades older than TEST_DAYS
+// with each (half-life, window) pair and scores the newest trades (equal weights, same test set for every pair) by how evenly the
+// fitted values balance them. Prints a table and stores nothing.
+if (process.env.SWEEP === '1') {
+  const TEST_DAYS = Number(process.env.TEST_DAYS ?? 45);
+  const cutoff = new Date(now.getTime() - TEST_DAYS * 86400000);
+  const day = 86400000;
+  const halfLives = (process.env.SWEEP_HALF_LIVES ?? '60,120,240,100000').split(',').map(Number);
+  const windows = (process.env.SWEEP_WINDOWS ?? '270,548,900').split(',').map(Number);
+  const inFormat = rows.filter((r) => !r.superflex);
+  const testRows = inFormat.filter((r) => new Date(r.traded_at) > cutoff && now.getTime() - new Date(r.traded_at).getTime() <= TEST_DAYS * day);
+  const tests = testRows.map((r) => toFitTrade(r, 1)).filter((t): t is FitTrade => t != null);
+  console.log(`Sweep: testing on ${tests.length} 1QB trades from the last ${TEST_DAYS} days; fitting on older trades as of ${cutoff.toISOString().slice(0, 10)}.`);
+  console.log('half-life | window | train | tested | covered | mean gap % | median gap %');
+  for (const windowDays of windows) {
+    for (const h of halfLives) {
+      const train: FitTrade[] = [];
+      for (const r of inFormat) {
+        const age = cutoff.getTime() - new Date(r.traded_at).getTime();
+        if (age < 0 || age > windowDays * day) continue;
+        const t = toFitTrade(r, lineupWeight(lineups.get(r.league_id), target) * recencyWeight(r.traded_at, cutoff, h));
+        if (t) { t.weight = (t.weight ?? 1) * shapeWeight(t.a.length, t.b.length); train.push(t); }
+      }
+      if (train.length < MIN_TRADES) { console.log(`${h} | ${windowDays} | ${train.length} | too few`); continue; }
+      const { values, depth } = fitAndReport(train, { depth: DEPTH }, feats);
+      const gaps = tests.map((t) => scoreTrade(t, values, false, depth)).filter((x): x is NonNullable<typeof x> => x != null).map((x) => x.diffPct).sort((a, b) => a - b);
+      const mean = gaps.reduce((a, b) => a + b, 0) / Math.max(gaps.length, 1);
+      console.log(`${h >= 100000 ? 'none' : h} | ${windowDays} | ${train.length} | ${tests.length} | ${gaps.length} | ${mean.toFixed(2)} | ${(gaps[Math.floor(gaps.length / 2)] ?? NaN).toFixed(2)}`);
+    }
+  }
+  process.exit(0);
+}
+
 for (const format of ['1qb', 'sf'] as const) {
   const trades: FitTrade[] = [];
   for (const r of rows) {

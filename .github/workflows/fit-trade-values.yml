@@ -15,6 +15,10 @@ on:
       depth_picks:
         description: 'Weight of each extra pick on a side'
         default: '1'
+      sweep:
+        description: 'Experiment only: fit on older trades with several recency half-lives and windows, score the newest trades, print a table, store nothing'
+        type: boolean
+        default: false
 
 concurrency:
   group: fit-trade-values
@@ -37,3 +41,4 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           DEPTH_PLAYERS: ${{ inputs.depth_players || '1' }}
           DEPTH_PICKS: ${{ inputs.depth_picks || '1' }}
+          SWEEP: ${{ inputs.sweep && '1' || '' }}
