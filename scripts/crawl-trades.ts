@@ -76,14 +76,17 @@ function must<T>(res: { data: T | null; error: { message: string } | null }, wha
 async function refreshPlayers() {
   const { data } = await supabase.from('sleeper_players').select('updated_at').order('updated_at', { ascending: false }).limit(1);
   const last = data?.[0]?.updated_at ? new Date(data[0].updated_at).getTime() : 0;
-  if (Date.now() - last < 7 * 24 * 3600_000) return;
+  if (Date.now() - last < 20 * 3600_000) return; // injury designations change weekly, so refresh about daily
   console.log('Refreshing the player directory…');
-  const all = await api<Record<string, { full_name?: string; first_name?: string; last_name?: string; position?: string; team?: string | null; age?: number | null }>>('/players/nfl');
+  const all = await api<Record<string, { full_name?: string; first_name?: string; last_name?: string; position?: string; team?: string | null; age?: number | null; injury_status?: string | null }>>('/players/nfl');
   if (!all) return;
+  // injury_status needs migration 24; without it the directory is saved as before
+  const hasInjury = !(await supabase.from('sleeper_players').select('injury_status').limit(1)).error;
   const rows = Object.entries(all)
     .filter(([, p]) => ['QB', 'RB', 'WR', 'TE'].includes(p.position ?? ''))
     .map(([player_id, p]) => ({
       player_id,
+      ...(hasInjury ? { injury_status: p.injury_status ?? null } : {}),
       name: p.full_name || [p.first_name, p.last_name].filter(Boolean).join(' '),
       position: p.position ?? null,
       team: p.team ?? null,
