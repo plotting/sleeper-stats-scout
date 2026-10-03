@@ -22,6 +22,7 @@ export function TradeFinder({ you, others, depth, onUse, lineupDelta }: {
   const [mode, setMode] = useState<"sell" | "buy" | "win">("sell");
   const [win, setWin] = useState<WinWinTrade[] | null>(null);
   const [searching, setSearching] = useState(false);
+  const [injured, setInjured] = useState(false); // include players who are out / on IR among what you would receive
   const [target, setTarget] = useState<CalcAsset | null>(null);
   const [tol, setTol] = useState(10);
   const [sort, setSort] = useState<"value" | "me" | "both">("value");
@@ -43,7 +44,7 @@ export function TradeFinder({ you, others, depth, onUse, lineupDelta }: {
   const searchWin = () => {
     if (!lineupDelta) return;
     setSearching(true);
-    setTimeout(() => { setWin(findWinWin(you, others, depth, lineupDelta, { tol: tol / 100 })); setSearching(false); }, 30); // let the spinner paint first
+    setTimeout(() => { setWin(findWinWin(you, others, depth, lineupDelta, { tol: tol / 100, includeInjured: injured })); setSearching(false); }, 30); // let the spinner paint first
   };
 
   const use = (team: FinderTeam, offer: Offer) => {
@@ -79,7 +80,12 @@ export function TradeFinder({ you, others, depth, onUse, lineupDelta }: {
       )}
       {mode === "win" && (
         <div className="space-y-2">
-          <Button variant="outline" size="sm" onClick={searchWin} disabled={searching}>{searching ? "Searching…" : win ? "Search again" : "Find win-win trades"}</Button>
+          <div className="flex flex-wrap items-center gap-3">
+            <Button variant="outline" size="sm" onClick={searchWin} disabled={searching}>{searching ? "Searching…" : win ? "Search again" : "Find win-win trades"}</Button>
+            <label className="inline-flex items-center gap-1.5 text-[11px] text-slate-500 cursor-pointer">
+              <input type="checkbox" checked={injured} onChange={(e) => setInjured(e.target.checked)} /> Include out / IR players you'd receive
+            </label>
+          </div>
           {win && win.length === 0 && <p className="text-xs text-slate-500">No value-fair trade within ±{tol}% improves both lineups — try a wider range.</p>}
           {win?.map((w, i) => (
             <OfferRow key={i} title={`${w.team.name}: you send ${w.send.map((a) => a.label).join(", ")}`} offer={w.offer} d={w.d} onUse={() => onUse(w.team.rosterId, w.receive, w.send)}
