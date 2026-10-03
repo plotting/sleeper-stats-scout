@@ -8,6 +8,9 @@ import { POS_BADGE } from "./assetData";
 // Shared by the Trade Calculator and the Trade Market: player / pick rows with headshots, position
 // badges, team and value, and the click-to-open search that lists everything richest first.
 
+const INJURY_LABEL: Record<string, string> = { Out: "OUT", IR: "IR", PUP: "PUP", Sus: "SUSP", Doubtful: "DOUBTFUL", Questionable: "Q", Suspended: "SUSP", COV: "COVID" };
+const INJURY_STYLE: Record<string, string> = { Out: "text-red-400", IR: "text-red-400", PUP: "text-red-400", Sus: "text-red-400", Suspended: "text-red-400", Doubtful: "text-orange-400", Questionable: "text-amber-400" };
+
 export function AssetIcon({ asset }: { asset: CalcAsset }) {
   const id = asset.meta?.playerId;
   if (!id) {
@@ -34,6 +37,7 @@ export function AssetLine({ asset, right }: { asset: CalcAsset; right?: React.Re
         <div className="flex items-center gap-2">
           {m?.position && <span className={cn("text-[10px] font-bold px-1.5 py-0.5 rounded border", POS_BADGE[m.position] ?? "text-slate-400 border-white/10")}>{m.position}</span>}
           <span className="text-sm font-semibold text-white truncate">{asset.label}</span>
+          {m?.injury && <span className={cn("text-[10px] font-semibold", INJURY_STYLE[m.injury] ?? "text-amber-400")} title={`Sleeper injury status: ${m.injury}`}>{INJURY_LABEL[m.injury] ?? m.injury}</span>}
           {asset.nTrades < 3 && asset.meta?.playerId && <span className="text-[10px] text-amber-400" title="Few completed trades behind this value">low data</span>}
         </div>
         {detail && <p className="text-[11px] text-slate-500 mt-0.5">{detail}</p>}

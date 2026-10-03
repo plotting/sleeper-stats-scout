@@ -4,7 +4,7 @@ import { daysBetween, pickOptions, type CalcAsset } from "@/utils/marketCalc";
 
 // Data helpers shared by the Trade Calculator and the Trade Market (components live in assetUi.tsx).
 
-export interface PlayerRow { player_id: string; name: string; position: string | null; team: string | null; age: number | null }
+export interface PlayerRow { player_id: string; name: string; position: string | null; team: string | null; age: number | null; injury_status?: string | null }
 interface ValueRow { asset_key: string; value: number; n_trades: number }
 
 export async function loadValues(format: string): Promise<Map<string, { value: number; n_trades: number }>> {
@@ -47,11 +47,17 @@ export const POS_BADGE: Record<string, string> = {
 
 export async function loadDirectory(): Promise<Map<string, PlayerRow>> {
   const out = new Map<string, PlayerRow>();
-  for (let from = 0; ; from += 1000) {
-    const { data, error } = await supabase.from("sleeper_players" as never).select("player_id, name, position, team, age").order("player_id").range(from, from + 999);
-    if (error) throw error;
-    for (const p of (data ?? []) as unknown as PlayerRow[]) out.set(p.player_id, p);
-    if (!data || data.length < 1000) break;
+  // injury_status exists once migration 24 is applied; fall back to the older columns until then
+  for (const cols of ["player_id, name, position, team, age, injury_status", "player_id, name, position, team, age"]) {
+    out.clear();
+    let failed = false;
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await supabase.from("sleeper_players" as never).select(cols).order("player_id").range(from, from + 999);
+      if (error) { if (cols.includes("injury_status")) { failed = true; break; } throw error; }
+      for (const p of (data ?? []) as unknown as PlayerRow[]) out.set(p.player_id, p);
+      if (!data || data.length < 1000) break;
+    }
+    if (!failed) break;
   }
   return out;
 }
@@ -63,7 +69,7 @@ export function buildEntries(values: Map<string, { value: number; n_trades: numb
     if (!key.startsWith("p:")) continue;
     const info = directory?.get(key.slice(2));
     if (!info || !["QB", "RB", "WR", "TE"].includes(info.position ?? "")) continue;
-    players.push({ key, label: info.name, value: v.value, nTrades: v.n_trades, meta: { change: changes?.get(key) ?? null, playerId: info.player_id, position: info.position, team: info.team, age: info.age } });
+    players.push({ key, label: info.name, value: v.value, nTrades: v.n_trades, meta: { change: changes?.get(key) ?? null, injury: info.injury_status ?? null, playerId: info.player_id, position: info.position, team: info.team, age: info.age } });
   }
   const byPos = new Map<string, CalcAsset[]>();
   for (const a of players) (byPos.get(a.meta!.position!) ?? byPos.set(a.meta!.position!, []).get(a.meta!.position!)!).push(a);
