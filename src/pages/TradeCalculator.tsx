@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Check, Copy, Link2, Plus, X } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
@@ -12,7 +12,7 @@ import { OutcomeRangeCard } from "@/components/market/OutcomeRange";
 import { LineupImpact, type TeamSide } from "@/components/market/LineupImpact";
 import { useLeagueTeams } from "@/hooks/useLeagueTeams";
 import { teamAssets } from "@/utils/leaguePricing";
-import { bestLineup, positionTotals, type RosterPlayer } from "@/utils/rosterLineup";
+import { bestLineup, lineupScore, positionTotals, type RosterPlayer } from "@/utils/rosterLineup";
 import { TradeFinder } from "@/components/market/TradeFinder";
 import { ValuesExplainer } from "@/components/market/ValuesExplainer";
 import { loadDirectory, loadValues, loadValuesAgo, useEntries } from "@/components/market/assetData";
@@ -231,6 +231,20 @@ const Calculator = () => {
     return { you: side(youTeam, send, recv), partner: side(partnerTeam, recv, send) };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inLeague, youTeam, partnerTeam, sendP, receiveP, directory, raw]);
+  // Lineup change for both teams if `recv` came to you and `give` went to the partner (used by the trade finder)
+  const lineupDelta = useCallback((partnerRosterId: number, recv: CalcAsset[], give: CalcAsset[]) => {
+    const partner = teams?.find((t) => t.rosterId === partnerRosterId);
+    if (!youTeam || !partner) return null;
+    const ids = (assets: CalcAsset[]) => new Set(assets.flatMap((a) => (a.meta?.playerId ? [a.meta.playerId] : [])));
+    const into = ids(recv), out = ids(give);
+    const gain = (t: typeof youTeam, leaving: Set<string>, arriving: Set<string>) => {
+      const before = lineupScore(bestLineup(toRoster(t.players), slots));
+      const after = lineupScore(bestLineup(toRoster([...t.players.filter((p) => !leaving.has(p)), ...arriving]), slots));
+      return after - before;
+    };
+    return { you: gain(youTeam, out, into), them: gain(partner, into, out) };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [teams, youTeam, slots, directory, raw]);
   const players = useMemo(() => [...receiveP, ...sendP].filter((a) => a.meta?.playerId), [receiveP, sendP]);
   const durabilityPlayers = useMemo(
     () => [...receiveP.filter((a) => a.meta?.playerId).map((a) => ({ ...a, side: "get" as const })), ...sendP.filter((a) => a.meta?.playerId).map((a) => ({ ...a, side: "give" as const }))],
@@ -301,7 +315,7 @@ const Calculator = () => {
         <>
           {leagueReady && youTeam && (
             <TradeFinder
-              you={{ rosterId: youTeam.rosterId, name: youTeam.name, assets: youAssets }} others={otherTeams} depth={depth}
+              you={{ rosterId: youTeam.rosterId, name: youTeam.name, assets: youAssets }} others={otherTeams} depth={depth} lineupDelta={lineupDelta}
               onUse={(partner, recv, give) => { setPartnerId(partner); setReceive(recv); setSend(give); window.scrollTo({ top: 0, behavior: "smooth" }); }}
             />
           )}
