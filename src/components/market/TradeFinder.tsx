@@ -83,7 +83,7 @@ export function TradeFinder({ you, others, depth, onUse, lineupDelta }: {
           {win && win.length === 0 && <p className="text-xs text-slate-500">No value-fair trade within ±{tol}% improves both lineups — try a wider range.</p>}
           {win?.map((w, i) => (
             <OfferRow key={i} title={`${w.team.name}: you send ${w.send.map((a) => a.label).join(", ")}`} offer={w.offer} d={w.d} onUse={() => onUse(w.team.rosterId, w.receive, w.send)}
-              detail={`You receive ${w.receive.map((a) => `${a.label} (${Math.round(a.value).toLocaleString()})`).join(", ")}`} />
+              detail={`You receive ${w.receive.map((a) => `${a.label}${a.meta?.injury ? ` [${a.meta.injury}]` : ""} (${Math.round(a.value).toLocaleString()})`).join(", ")}`} />
           ))}
         </div>
       )}
@@ -112,7 +112,7 @@ function OfferRow({ title, offer, d, onUse, detail }: { title: string; offer: Of
         <p className="text-xs font-semibold text-slate-300">{title}</p>
         {detail && <p className="text-xs text-slate-400">{detail}</p>}
         {!detail && <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-slate-400">
-          {offer.assets.map((a) => <span key={a.key}>{a.label} <span className="font-mono text-slate-500">{Math.round(a.value).toLocaleString()}</span></span>)}
+          {offer.assets.map((a) => <span key={a.key}>{a.label} <span className="font-mono text-slate-500">{Math.round(a.value).toLocaleString()}</span>{a.meta?.injury && <span className="ml-1 text-[10px] font-semibold text-red-400" title={`Sleeper injury status: ${a.meta.injury}`}>{a.meta.injury}</span>}</span>)}
         </div>}
         {d && (
           <p className="text-[11px] text-slate-500" title="Change in each team's best starting lineup (annual VORP) if this trade happened">
