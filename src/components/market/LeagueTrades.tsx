@@ -78,7 +78,16 @@ export function LeagueTrades({ entries, depth, onOpen }: { entries: CalcAsset[];
     },
   });
 
-  const byName = useMemo(() => new Map(entries.filter((e) => e.meta?.playerId).map((e) => [nameKey(e.label), e])), [entries]);
+  // Trades only record a player's name, so namesakes (two Mike Williamses) collide: the more valuable one wins, as the likelier player in a recent trade
+  const byName = useMemo(() => {
+    const m = new Map<string, CalcAsset>();
+    for (const e of entries) {
+      if (!e.meta?.playerId) continue;
+      const k = nameKey(e.label);
+      if (!m.has(k) || e.value > m.get(k)!.value) m.set(k, e);
+    }
+    return m;
+  }, [entries]);
   const byLabel = useMemo(() => new Map(entries.filter((e) => e.meta?.pickKey).map((e) => [e.label, e])), [entries]);
 
   const graded = useMemo(() => (data?.trades ?? []).map((t) => {
