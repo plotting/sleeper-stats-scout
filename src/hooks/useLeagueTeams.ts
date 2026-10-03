@@ -13,7 +13,9 @@ export function useLeagueTeams(enabled: boolean) {
       const [league, users, rosters, traded, drafts] = await Promise.all([
         fetchLeague(LEAGUE_ID), fetchLeagueUsers(LEAGUE_ID), fetchLeagueRosters(LEAGUE_ID), fetchTradedPicks(LEAGUE_ID), fetchLeagueDrafts(LEAGUE_ID).catch(() => []),
       ]);
-      const rounds = Math.max(4, ...drafts.map((d) => d.settings?.rounds ?? 0));
+      // Only rounds that exist in this league's rookie draft: the league setting, else the most recent draft's, else 4.
+      const draftRounds = league.settings?.draft_rounds || drafts.map((d) => d.settings?.rounds ?? 0).filter(Boolean).pop() || 4;
+      const rounds = draftRounds;
       return { teams: buildTeams({ rosters, users, tradedPicks: traded ?? [], rounds, now: new Date() }), slots: starterSlots(league.roster_positions ?? []) };
     },
   });
