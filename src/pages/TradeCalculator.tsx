@@ -13,6 +13,7 @@ import { LineupImpact, type TeamSide } from "@/components/market/LineupImpact";
 import { useLeagueTeams } from "@/hooks/useLeagueTeams";
 import { teamAssets } from "@/utils/leaguePricing";
 import { bestLineup, lineupScore, positionTotals, type RosterPlayer } from "@/utils/rosterLineup";
+import { SellHighBuyLow } from "@/components/market/SellHighBuyLow";
 import { LeagueTrades } from "@/components/market/LeagueTrades";
 import { TradeFinder } from "@/components/market/TradeFinder";
 import { ValuesExplainer } from "@/components/market/ValuesExplainer";
@@ -320,6 +321,8 @@ const Calculator = () => {
               onUse={(partner, recv, give) => { setPartnerId(partner); setReceive(recv); setSend(give); window.scrollTo({ top: 0, behavior: "smooth" }); }}
             />
           )}
+
+          {leagueReady && youTeam && <SellHighBuyLow you={{ rosterId: youTeam.rosterId, name: youTeam.name, assets: youAssets }} others={otherTeams} />}
 
           <div ref={captureRef} className="space-y-4 rounded-2xl" hidden={leagueMode && !!teams && !partnerTeam}>
             <Card className="border-white/10 p-5 grid md:grid-cols-2 gap-8">
