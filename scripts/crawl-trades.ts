@@ -41,6 +41,8 @@ const nowYear = new Date().getFullYear();
 const SEASONS = (process.env.SEASONS ?? `${nowYear - 1}-${nowYear}`).split('-').map(Number);
 const seasons = Array.from({ length: SEASONS[1] - SEASONS[0] + 1 }, (_, i) => SEASONS[0] + i);
 
+// Accounts from matching leagues are visited first. Needs migration 23; without it the crawler behaves as before.
+let HAS_PRIORITY = false;
 let calls = 0;
 async function api<T>(path: string): Promise<T | null> {
   for (let attempt = 0; attempt < 4; attempt++) {
@@ -110,15 +112,17 @@ async function seedUsers() {
     for (const u of list ?? []) users.add(u.user_id);
     id = league?.previous_league_id ?? null;
   }
-  must(await supabase.from('market_seen_users').upsert([...users].map((user_id) => ({ user_id })), { onConflict: 'user_id', ignoreDuplicates: true }), 'seed users');
+  must(await supabase.from('market_seen_users').upsert([...users].map((user_id) => (HAS_PRIORITY ? { user_id, priority: 2 } : { user_id })), { onConflict: 'user_id', ignoreDuplicates: true }), 'seed users');
   console.log(`Seeded ${users.size} users`);
 }
 
 // ── One league: save its profile; if it matches, collect trades and discover members ──
-async function discoverMembers(leagueId: string) {
+async function discoverMembers(leagueId: string, priority = 1) {
   const members = await api<Array<{ user_id: string }>>(`/league/${leagueId}/users`);
   if (members?.length) {
-    must(await supabase.from('market_seen_users').upsert(members.map((u) => ({ user_id: u.user_id })), { onConflict: 'user_id', ignoreDuplicates: true }), 'users');
+    const rows = members.map((u) => (HAS_PRIORITY ? { user_id: u.user_id, priority } : { user_id: u.user_id }));
+    // members of a matching league raise an account's priority; other dynasty leagues only add accounts not seen before
+    must(await supabase.from('market_seen_users').upsert(rows, { onConflict: 'user_id', ignoreDuplicates: !(HAS_PRIORITY && priority >= 2) }), 'users');
   }
   must(await supabase.from('market_leagues').update({ members_synced_at: new Date().toISOString() }).eq('league_id', leagueId), 'members done');
 }
@@ -129,7 +133,7 @@ async function processLeague(l: SleeperLeagueLite): Promise<number> {
   if (existing) return 0;
   must(await supabase.from('market_leagues').insert(profile), 'league');
   // Members of any dynasty league are worth visiting: they may be in similar leagues too.
-  if (profile.dynasty) await discoverMembers(l.league_id);
+  if (profile.dynasty) await discoverMembers(l.league_id, profile.matches ? 2 : 1);
   if (!profile.matches) return 0;
 
   const rows = [];
@@ -204,6 +208,8 @@ async function refreshLeagues(): Promise<number> {
 }
 
 async function main() {
+  HAS_PRIORITY = !(await supabase.from('market_seen_users').select('priority').limit(1)).error;
+  console.log(HAS_PRIORITY ? 'Visiting accounts from matching leagues first.' : 'Account priority column missing (migration 23): visiting accounts in discovery order.');
   await refreshPlayers();
   await seedUsers();
   await backfillMembers();
@@ -213,8 +219,9 @@ async function main() {
   console.log(`Starting with ${total} trades (target ${TARGET}).`);
 
   while (timeLeft() && total < TARGET) {
-    const { data: batch } = await supabase
-      .from('market_seen_users').select('user_id').is('crawled_at', null).order('discovered_at').limit(20);
+    let q = supabase.from('market_seen_users').select('user_id').is('crawled_at', null);
+    if (HAS_PRIORITY) q = q.order('priority', { ascending: false });
+    const { data: batch } = await q.order('discovered_at').limit(20);
     if (!batch || batch.length === 0) { console.log('No more accounts to visit.'); break; }
 
     for (const { user_id } of batch) {
