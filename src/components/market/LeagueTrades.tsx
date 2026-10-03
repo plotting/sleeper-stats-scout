@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { displayDesc, nameKey, parseResolvedPick } from "@/utils/dynastyValue";
 import { assess, TIER_LABEL, type CalcAsset, type Depth } from "@/utils/marketCalc";
+import { loadValuesOn } from "./assetData";
 
 interface Item { item_type: string; item_description: string; to_team_id: number | null }
 interface LeagueTrade { id: number; trade_date: string; team1_id: number; team2_id: number; trade_items: Item[] }
@@ -61,6 +62,22 @@ export function LeagueTrades({ entries, depth, onOpen }: { entries: CalcAsset[];
     },
   });
 
+  // Market values as they stood on each trade's date, for trades made since the daily value history began
+  const { data: snapshots } = useQuery({
+    queryKey: ["calc-trade-snapshots", data?.trades.length ?? 0],
+    enabled: !!data,
+    staleTime: 10 * 60 * 1000,
+    queryFn: async () => {
+      const { data: first } = await supabase.from("market_value_history" as never).select("as_of").eq("format", "1qb").order("as_of", { ascending: true }).limit(1);
+      const firstDay = (first as unknown as Array<{ as_of: string }> | null)?.[0]?.as_of;
+      const out = new Map<string, { asOf: string; values: Map<string, number> }>();
+      if (!firstDay) return out;
+      const days = [...new Set((data?.trades ?? []).map((t) => t.trade_date.slice(0, 10)).filter((d) => d >= firstDay))].slice(0, 40);
+      await Promise.all(days.map(async (d) => { const snap = await loadValuesOn("1qb", d, 7); if (snap) out.set(d, snap); }));
+      return out;
+    },
+  });
+
   const byName = useMemo(() => new Map(entries.filter((e) => e.meta?.playerId).map((e) => [nameKey(e.label), e])), [entries]);
   const byLabel = useMemo(() => new Map(entries.filter((e) => e.meta?.pickKey).map((e) => [e.label, e])), [entries]);
 
@@ -92,8 +109,22 @@ export function LeagueTrades({ entries, depth, onOpen }: { entries: CalcAsset[];
     const priced = (ls: Line[]) => ls.map((l) => l.asset).filter((a) => a.value > 0);
     const g1 = got[t.team1_id], g2 = got[t.team2_id];
     const r = priced(g1).length + priced(g2).length > 0 ? assess(priced(g1), priced(g2), depth) : null;
-    return { t, g1, g2, r, priced1: priced(g1), priced2: priced(g2) };
-  }), [data, byName, byLabel, depth]);
+    // the same trade at the market values of its day (players and upcoming picks only; a pick that was still a pick then is priced by round and years ahead)
+    let then: ReturnType<typeof assess> | null = null;
+    const snap = snapshots?.get(t.trade_date.slice(0, 10));
+    if (snap && g1.length + g2.length > 0) {
+      const asOfYear = Number(snap.asOf.slice(0, 4));
+      const at = (l: Line): CalcAsset | null => {
+        const a = l.asset;
+        const key = a.key.startsWith("p:") ? a.key : a.meta?.pickKey ? `pk:${Number(a.meta.pickKey.split("-")[0]) - asOfYear}:${a.meta.pickKey.split("-")[1]}` : null;
+        const v = key ? snap.values.get(key) : undefined;
+        return v && !l.note?.startsWith("pick ") ? { key: a.key, label: a.label, value: v, nTrades: 0 } : null; // a used pick was a different asset then
+      };
+      const t1 = g1.map(at), t2 = g2.map(at);
+      if (t1.every(Boolean) && t2.every(Boolean)) then = assess(t1 as CalcAsset[], t2 as CalcAsset[], depth);
+    }
+    return { t, g1, g2, r, then, priced1: priced(g1), priced2: priced(g2) };
+  }), [data, byName, byLabel, depth, snapshots]);
 
   // per-team record across every trade: net value gained (after the premium) and trades won
   const table = useMemo(() => {
@@ -138,7 +169,7 @@ export function LeagueTrades({ entries, depth, onOpen }: { entries: CalcAsset[];
           </table>
         </div>
       )}
-      {open && graded.slice(0, shownCount).map(({ t, g1, g2, r, priced1, priced2 }) => {
+      {open && graded.slice(0, shownCount).map(({ t, g1, g2, r, then, priced1, priced2 }) => {
         const n1 = name(t.team1_id), n2 = name(t.team2_id);
         const winner = r && r.tier !== "even" ? (r.winner === "you" ? n1 : n2) : null;
         const list = (ls: typeof g1) => ls.length === 0 ? "—" : ls.map((l, i) => (
@@ -155,6 +186,12 @@ export function LeagueTrades({ entries, depth, onOpen }: { entries: CalcAsset[];
               <div className="text-right text-xs">
                 <p className={cn("font-semibold", winner ? "text-amber-300" : "text-emerald-400")}>{winner ? `${winner} won` : TIER_LABEL.even}</p>
                 <p className="text-slate-500">{r.tier === "even" ? "" : `${TIER_LABEL[r.tier]} · `}{r.diffPct.toFixed(0)}% gap</p>
+                {then && (
+                  <p className="text-[10px] text-slate-600 mt-1" title="The same trade at market values on the day it happened (from the daily value history)">
+                    At the time: {then.tier === "even" ? "even" : `${then.winner === "you" ? n1 : n2} won · ${then.diffPct.toFixed(0)}%`}
+                    {then.tier !== "even" && r.tier !== "even" && then.winner !== r.winner && <span className="text-amber-400/80"> · flipped</span>}
+                  </p>
+                )}
               </div>
             )}
             {r && <Button size="sm" variant="outline" onClick={() => onOpen(priced1, priced2)}>Open</Button>}

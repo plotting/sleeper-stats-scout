@@ -18,12 +18,11 @@ export async function loadValues(format: string): Promise<Map<string, { value: n
   return out;
 }
 
-/** Fitted values as they stood about `days` days ago (the closest saved day at or before then; null until that much history exists). */
-export async function loadValuesAgo(format: string, days: number): Promise<{ asOf: string; values: Map<string, number> } | null> {
-  const target = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
-  const { data: day } = await supabase.from("market_value_history" as never).select("as_of").eq("format", format).lte("as_of", target).order("as_of", { ascending: false }).limit(1);
+/** Fitted values as they stood on `date` (YYYY-MM-DD): the closest saved day at or before it, or null when none is within `maxStaleDays`. */
+export async function loadValuesOn(format: string, date: string, maxStaleDays = 3): Promise<{ asOf: string; values: Map<string, number> } | null> {
+  const { data: day } = await supabase.from("market_value_history" as never).select("as_of").eq("format", format).lte("as_of", date).order("as_of", { ascending: false }).limit(1);
   const asOf = (day as unknown as Array<{ as_of: string }> | null)?.[0]?.as_of;
-  if (!asOf || daysBetween(asOf, target) > 3) return null; // too stale to call it "N days ago"
+  if (!asOf || daysBetween(asOf, date) > maxStaleDays) return null;
   const values = new Map<string, number>();
   for (let from = 0; ; from += 1000) {
     const { data, error } = await supabase.from("market_value_history" as never).select("asset_key, value").eq("format", format).eq("as_of", asOf).order("asset_key").range(from, from + 999);
@@ -32,6 +31,11 @@ export async function loadValuesAgo(format: string, days: number): Promise<{ asO
     if (!data || data.length < 1000) break;
   }
   return { asOf, values };
+}
+
+/** Fitted values as they stood about `days` days ago (null until that much history exists). */
+export function loadValuesAgo(format: string, days: number) {
+  return loadValuesOn(format, new Date(Date.now() - days * 86400000).toISOString().slice(0, 10));
 }
 
 export const POS_BADGE: Record<string, string> = {
