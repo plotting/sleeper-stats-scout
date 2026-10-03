@@ -12,30 +12,30 @@ export interface FinderTeam { rosterId: number; name: string; assets: CalcAsset[
  * Buy: pick something a leaguemate owns and see what you could send for it. Offers are value-matched only (the lineup
  * check comes once you load one into the calculator).
  */
-export function TradeFinder({ you, others, depth, onUse }: {
+export function TradeFinder({ you, others, depth, onUse, lineupDelta }: {
   you: FinderTeam; others: FinderTeam[]; depth: Depth;
+  /** Change in each team's best-lineup score (starter VORP) if `receive` came to you and `send` went to that partner. */
+  lineupDelta?: (partnerRosterId: number, receive: CalcAsset[], send: CalcAsset[]) => { you: number; them: number } | null;
   onUse: (partnerRosterId: number, receive: CalcAsset[], send: CalcAsset[]) => void;
 }) {
   const [mode, setMode] = useState<"sell" | "buy">("sell");
   const [target, setTarget] = useState<CalcAsset | null>(null);
   const [tol, setTol] = useState(10);
+  const [sort, setSort] = useState<"value" | "me" | "both">("value");
   const ownerOf = useMemo(() => new Map(others.flatMap((t) => t.assets.map((a) => [a.key, t] as const))), [others]);
   const pool = useMemo(() => (mode === "sell" ? you.assets : others.flatMap((t) => t.assets).sort((a, b) => b.value - a.value)), [mode, you, others]);
 
-  const rows = useMemo(() => {
+  type Row = { team: FinderTeam; offer: Offer; d: { you: number; them: number } | null };
+  const withLineup = (team: FinderTeam, offer: Offer): Row => ({ team, offer, d: target && lineupDelta ? (mode === "sell" ? lineupDelta(team.rosterId, offer.assets, [target]) : lineupDelta(team.rosterId, [target], offer.assets)) : null });
+  const rows = useMemo((): Row[] => {
     if (!target) return [];
-    const make = (team: FinderTeam, from: CalcAsset[]) => {
-      const offer = findOffers(target.value, from, depth, tol / 100, 1)[0];
-      return offer ? { team, offer } : null;
-    };
-    if (mode === "sell") return others.flatMap((t) => make(t, t.assets) ?? []).sort((a, b) => a.offer.diffPct - b.offer.diffPct);
-    const owner = ownerOf.get(target.key);
-    return owner ? [make(owner, you.assets)].flatMap((r) => r ?? []) : [];
-  }, [target, mode, others, you, ownerOf, depth, tol]);
-  const buyAlternatives = useMemo(() => {
-    const owner = target && mode === "buy" ? ownerOf.get(target.key) : null;
-    return owner && target ? findOffers(target.value, you.assets, depth, tol / 100, 4) : [];
-  }, [target, mode, ownerOf, you, depth, tol]);
+    const all: Row[] = mode === "sell"
+      ? others.flatMap((t) => findOffers(target.value, t.assets, depth, tol / 100, 3).map((o) => withLineup(t, o)))
+      : (() => { const owner = ownerOf.get(target.key); return owner ? findOffers(target.value, you.assets, depth, tol / 100, 6).map((o) => withLineup(owner, o)) : []; })();
+    const score = (r: Row) => (sort === "me" ? -(r.d?.you ?? 0) : sort === "both" ? -Math.min(r.d?.you ?? 0, r.d?.them ?? 0) : r.offer.diffPct);
+    return all.sort((a, b) => score(a) - score(b) || a.offer.diffPct - b.offer.diffPct).slice(0, 12);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [target, mode, others, you, ownerOf, depth, tol, sort, lineupDelta]);
 
   const use = (team: FinderTeam, offer: Offer) => {
     if (!target) return;
@@ -68,17 +68,25 @@ export function TradeFinder({ you, others, depth, onUse }: {
       {target && (
         <div className="rounded-lg border border-white/10 px-3 py-2"><AssetLine asset={target} right={<button type="button" onClick={() => setTarget(null)} className="text-xs text-slate-500 hover:text-white">Clear</button>} /></div>
       )}
-      {target && mode === "sell" && (rows.length === 0
-        ? <p className="text-xs text-slate-500">No leaguemate has a package within ±{tol}% — try a wider range.</p>
-        : <div className="space-y-2">{rows.map(({ team, offer }) => <OfferRow key={team.rosterId} title={team.name} offer={offer} onUse={() => use(team, offer)} />)}</div>)}
-      {target && mode === "buy" && (buyAlternatives.length === 0
-        ? <p className="text-xs text-slate-500">Nothing on your roster matches within ±{tol}% — try a wider range.</p>
-        : <div className="space-y-2">{buyAlternatives.map((o, i) => <OfferRow key={i} title={`Offer to ${ownerOf.get(target.key)!.name}`} offer={o} onUse={() => use(ownerOf.get(target.key)!, o)} />)}</div>)}
+      {target && (rows.length === 0
+        ? <p className="text-xs text-slate-500">{mode === "sell" ? `No leaguemate has a package within ±${tol}% — try a wider range.` : `Nothing on your roster matches within ±${tol}% — try a wider range.`}</p>
+        : (
+          <div className="space-y-2">
+            {lineupDelta && (
+              <div className="flex items-center gap-2 text-[11px] text-slate-500">Sort by
+                {([["value", "Closest value"], ["me", "Helps my lineup"], ["both", "Helps both lineups"]] as const).map(([k, label]) => (
+                  <button key={k} type="button" onClick={() => setSort(k)} className={cn("px-2 py-0.5 rounded-md border", sort === k ? "border-white/30 text-white" : "border-white/10 hover:text-slate-300")}>{label}</button>
+                ))}
+              </div>
+            )}
+            {rows.map((r, i) => <OfferRow key={`${r.team.rosterId}-${i}`} title={mode === "sell" ? r.team.name : `Offer to ${r.team.name}`} offer={r.offer} d={r.d} onUse={() => use(r.team, r.offer)} />)}
+          </div>
+        ))}
     </Card>
   );
 }
 
-function OfferRow({ title, offer, onUse }: { title: string; offer: Offer; onUse: () => void }) {
+function OfferRow({ title, offer, d, onUse }: { title: string; offer: Offer; d: { you: number; them: number } | null; onUse: () => void }) {
   return (
     <div className="rounded-lg border border-white/10 px-3 py-2 flex flex-wrap items-center gap-3">
       <div className="min-w-0 flex-1 space-y-1">
@@ -86,6 +94,12 @@ function OfferRow({ title, offer, onUse }: { title: string; offer: Offer; onUse:
         <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-slate-400">
           {offer.assets.map((a) => <span key={a.key}>{a.label} <span className="font-mono text-slate-500">{Math.round(a.value).toLocaleString()}</span></span>)}
         </div>
+        {d && (
+          <p className="text-[11px] text-slate-500" title="Change in each team's best starting lineup (annual VORP) if this trade happened">
+            Lineup: you <span className={d.you > 0.05 ? "text-emerald-400" : d.you < -0.05 ? "text-red-400" : ""}>{d.you > 0.05 ? "+" : d.you < -0.05 ? "−" : ""}{Math.abs(d.you).toFixed(1)}</span>
+            {" · "}them <span className={d.them > 0.05 ? "text-emerald-400" : d.them < -0.05 ? "text-red-400" : ""}>{d.them > 0.05 ? "+" : d.them < -0.05 ? "−" : ""}{Math.abs(d.them).toFixed(1)}</span>
+          </p>
+        )}
       </div>
       <span className="font-mono text-xs text-slate-400" title="Package total, and what a package this size needs to be worth (the asset plus the consolidation premium)">{Math.round(offer.total).toLocaleString()} <span className="text-slate-600">of {Math.round(offer.need).toLocaleString()} ({offer.diffPct.toFixed(0)}% off)</span></span>
       <Button size="sm" variant="outline" onClick={onUse}>Use</Button>
