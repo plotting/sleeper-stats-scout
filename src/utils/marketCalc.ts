@@ -229,7 +229,8 @@ export function durabilityOf(rows: Array<{ year: number; games_played: number }>
 
 // ── Share links ──────────────────────────────────────────────────────────────────────────────
 
-export interface ShareState { receive: string[]; send: string[]; format?: string; vorp?: number; pick?: number }
+/** `you` / `partner` are Sleeper roster ids and are only present for league-mode trades (team picks carry the original owner's roster id in their key). */
+export interface ShareState { receive: string[]; send: string[]; format?: string; vorp?: number; pick?: number; you?: number; partner?: number }
 
 export function encodeShare(s: ShareState): string {
   const p = new URLSearchParams();
@@ -238,15 +239,17 @@ export function encodeShare(s: ShareState): string {
   if (s.format) p.set('f', s.format);
   if (s.vorp != null) p.set('v', String(s.vorp));
   if (s.pick != null) p.set('k', String(s.pick));
+  if (s.you != null && s.partner != null) { p.set('y', String(s.you)); p.set('o', String(s.partner)); }
   return p.toString();
 }
 
 export function decodeShare(search: string): ShareState {
   const p = new URLSearchParams(search);
-  const list = (k: string) => (p.get(k) ?? '').split(',').filter((x) => /^(p:\d+|pk:[0-3]:[1-5](:(early|mid|late))?)$/.test(x));
+  const list = (k: string) => (p.get(k) ?? '').split(',').filter((x) => /^(p:\d+|pk:[0-3]:[1-5](:(early|mid|late|any))?(:\d+)?)$/.test(x));
   const num = (k: string) => { const v = Number(p.get(k)); return p.has(k) && Number.isFinite(v) ? v : undefined; };
   const f = p.get('f');
-  return { receive: list('r'), send: list('s'), format: f === '1qb' || f === 'sf' ? f : undefined, vorp: num('v'), pick: num('k') };
+  const you = num('y'), partner = num('o');
+  return { receive: list('r'), send: list('s'), format: f === '1qb' || f === 'sf' ? f : undefined, vorp: num('v'), pick: num('k'), ...(you != null && partner != null ? { you, partner } : {}) };
 }
 
 // ── Outcome range ────────────────────────────────────────────────────────────────────────────

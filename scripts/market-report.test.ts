@@ -68,3 +68,10 @@ test('outcome range applies the percentile changes to the value, capped at 10,00
   assert.equal(rankEquivalent(entries, 'WR', 2500), 'WR4');
   assert.equal(rankEquivalent(entries, 'RB', 10000), 'RB1');
 });
+
+test('share links carry league mode teams and team pick keys', () => {
+  const s = { receive: ['p:1', 'pk:0:1:early:3'], send: ['pk:1:2:any:7'], format: '1qb', vorp: 50, pick: 100, you: 4, partner: 9 };
+  assert.deepEqual(decodeShare('?' + encodeShare(s)), s);
+  assert.equal(decodeShare('?r=p:1&y=4').you, undefined); // both teams or neither
+  assert.deepEqual(decodeShare('?r=pk:0:1:early:3,pk:0:1:evil:3').receive, ['pk:0:1:early:3']);
+});
