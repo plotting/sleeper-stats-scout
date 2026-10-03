@@ -13,6 +13,7 @@ import { LineupImpact, type TeamSide } from "@/components/market/LineupImpact";
 import { useLeagueTeams } from "@/hooks/useLeagueTeams";
 import { teamAssets } from "@/utils/leaguePricing";
 import { bestLineup, positionTotals, type RosterPlayer } from "@/utils/rosterLineup";
+import { TradeFinder } from "@/components/market/TradeFinder";
 import { ValuesExplainer } from "@/components/market/ValuesExplainer";
 import { loadDirectory, loadValues, loadValuesAgo, useEntries } from "@/components/market/assetData";
 import { Card } from "@/components/ui/card";
@@ -113,6 +114,15 @@ const Calculator = () => {
   // What each side can offer: in league mode only what that team owns
   const youOffer = useMemo(() => (inLeague && values && youTeam ? teamAssets(youTeam, entries, values, teamNames, new Date()) : entries), [inLeague, values, youTeam, entries, teamNames]);
   const partnerOffer = useMemo(() => (inLeague && values && partnerTeam ? teamAssets(partnerTeam, entries, values, teamNames, new Date()) : entries), [inLeague, values, partnerTeam, entries, teamNames]);
+  // Everyone else's tradable assets, for the trade finder
+  const leagueReady = !!(leagueMode && youTeam && values);
+  const youAssets = useMemo(() => (leagueReady && values && youTeam ? teamAssets(youTeam, entries, values, teamNames, new Date()) : []), [leagueReady, values, youTeam, entries, teamNames]);
+  const otherTeams = useMemo(
+    () => (leagueReady && values && teams && youTeam
+      ? teams.filter((t) => t.rosterId !== youTeam.rosterId).map((t) => ({ rosterId: t.rosterId, name: t.name, assets: teamAssets(t, entries, values, teamNames, new Date()) }))
+      : []),
+    [leagueReady, values, teams, youTeam, entries, teamNames],
+  );
   useEffect(() => {
     const pending = pendingAssets.current;
     if (!pending || entries.length === 0) return;
@@ -278,6 +288,13 @@ const Calculator = () => {
 
       {values && values.size > 0 && (
         <>
+          {leagueReady && youTeam && (
+            <TradeFinder
+              you={{ rosterId: youTeam.rosterId, name: youTeam.name, assets: youAssets }} others={otherTeams} depth={depth}
+              onUse={(partner, recv, give) => { setPartnerId(partner); setReceive(recv); setSend(give); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+            />
+          )}
+
           <div ref={captureRef} className="space-y-4 rounded-2xl" hidden={leagueMode && !!teams && !partnerTeam}>
             <Card className="border-white/10 p-5 grid md:grid-cols-2 gap-8">
               <Side title="You receive" assets={receiveP} depth={depth} onRemove={remove(setReceive)}>
