@@ -32,7 +32,7 @@ export function TradeFinder({ you, others, depth, onUse, lineupDelta }: {
     const all: Row[] = mode === "sell"
       ? others.flatMap((t) => findOffers(target.value, t.assets, depth, tol / 100, 3).map((o) => withLineup(t, o)))
       : (() => { const owner = ownerOf.get(target.key); return owner ? findOffers(target.value, you.assets, depth, tol / 100, 6).map((o) => withLineup(owner, o)) : []; })();
-    const score = (r: Row) => (sort === "me" ? -(r.d?.you ?? 0) : sort === "both" ? -Math.min(r.d?.you ?? 0, r.d?.them ?? 0) : r.offer.diffPct);
+    const score = (r: Row) => (sort === "me" ? -(r.d?.you ?? 0) : sort === "both" ? -Math.min(r.d?.you ?? 0, r.d?.them ?? 0) : r.offer.diffPct + 4 * (r.offer.assets.length - 1)); // closest first, with a small nudge toward simpler packages
     return all.sort((a, b) => score(a) - score(b) || a.offer.diffPct - b.offer.diffPct).slice(0, 12);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [target, mode, others, you, ownerOf, depth, tol, sort, lineupDelta]);
