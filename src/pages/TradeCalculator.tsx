@@ -21,7 +21,7 @@ import { loadDirectory, loadValues, loadValuesAgo, useEntries } from "@/componen
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { assess, decodeShare, effectiveValue, encodeShare, normalizeTop, suggestToEven, valueChanges, type AgeCurve, type CalcAsset, type Depth, type Outcome } from "@/utils/marketCalc";
+import { assess, decodeShare, effectiveValue, encodeShare, injuryFactor, normalizeTop, suggestToEven, valueChanges, type AgeCurve, type CalcAsset, type Depth, type Outcome } from "@/utils/marketCalc";
 
 interface TradeIdea {
   id: number; name: string; format: "1qb" | "sf";
@@ -67,6 +67,9 @@ const Calculator = () => {
     if (shared.current?.pick !== undefined && shared.current.pick >= 50 && shared.current.pick <= 250) return shared.current.pick;
     try { const raw = localStorage.getItem("calc-pick-scale"); const v = Number(raw); return raw !== null && Number.isFinite(v) && v >= 50 && v <= 250 ? v : 100; } catch { return 100; }
   });
+  // Optional discount for injured players (off by default): out / IR lose the full setting, doubtful half, questionable 15%
+  const [injPct, setInjPct] = useState<number>(() => { try { const v = Number(localStorage.getItem("calc-injury-discount")); return Number.isFinite(v) && v >= 0 && v <= 50 ? v : 0; } catch { return 0; } });
+  const setInj = (n: number) => { setInjPct(n); try { localStorage.setItem("calc-injury-discount", String(n)); } catch { /* optional */ } };
   const setPick = (n: number) => { setPickPct(n); try { localStorage.setItem("calc-pick-scale", String(n)); } catch { /* optional */ } };
   const setVorp = (n: number) => { setVorpPct(n); try { localStorage.setItem("calc-vorp-weight", String(n)); } catch { /* optional */ } };
   // League mode: pick your team and a leaguemate; each side can only offer what that team actually owns.
@@ -112,13 +115,15 @@ const Calculator = () => {
     normalizeTop(out);
     return out;
   }, [raw, vorpPct, pickPct]);
-  const reprice = (a: CalcAsset): CalcAsset => ({ ...a, value: values?.get(a.meta?.priceKey ?? a.key)?.value ?? a.value });
+  const reprice = (a: CalcAsset): CalcAsset => ({ ...a, value: (values?.get(a.meta?.priceKey ?? a.key)?.value ?? a.value) * injuryFactor(a.meta?.injury, injPct) });
 
   const { data: directory } = useQuery({ queryKey: ["calc-directory"], queryFn: loadDirectory, staleTime: 60 * 60 * 1000 });
   // 7-day change in the market value (before the sliders), shown next to each player
   const { data: weekAgo } = useQuery({ queryKey: ["calc-values-ago", format, 7], queryFn: () => loadValuesAgo(format, 7), staleTime: 60 * 60 * 1000 });
   const changes = useMemo(() => (raw && weekAgo ? valueChanges(new Map([...raw].map(([k, v]) => [k, v.value])), weekAgo.values) : undefined), [raw, weekAgo]);
-  const entries = useEntries(values, directory, changes);
+  const baseEntries = useEntries(values, directory, changes);
+  const entries = useMemo(() => (injPct > 0 ? baseEntries.map((a) => (a.meta?.injury ? { ...a, value: a.value * injuryFactor(a.meta.injury, injPct) } : a)) : baseEntries), [baseEntries, injPct]);
+  const anyInjured = useMemo(() => baseEntries.some((a) => a.meta?.injury), [baseEntries]);
   const teams = leagueMode ? league?.teams : undefined;
   const youTeam = teams?.find((t) => t.rosterId === (youId ?? teams[0]?.rosterId));
   const partnerTeam = teams?.find((t) => t.rosterId === partnerId && t.rosterId !== youTeam?.rosterId);
@@ -319,6 +324,13 @@ const Calculator = () => {
           <input type="range" min={50} max={250} step={5} value={pickPct} onChange={(e) => setPick(Number(e.target.value))} className="w-40" aria-label="Pick value multiplier" />
           <span className="font-mono text-slate-200 w-12 text-left">×{(pickPct / 100).toFixed(2)}</span>
         </div>
+        {anyInjured && (
+          <div className="flex items-center justify-center gap-3 text-xs text-slate-400">
+            <span>Injury discount</span>
+            <input type="range" min={0} max={50} step={5} value={injPct} onChange={(e) => setInj(Number(e.target.value))} className="w-40" aria-label="Injury discount" />
+            <span className="font-mono text-slate-200 w-24 text-left">{injPct === 0 ? "off" : `up to −${injPct}%`}</span>
+          </div>
+        )}
         <div className="flex flex-wrap items-center justify-center gap-3 text-xs text-slate-400 pt-1">
           <label className="inline-flex items-center gap-1.5 cursor-pointer">
             <input type="checkbox" checked={leagueMode} onChange={(e) => setLeagueMode(e.target.checked)} /> League mode (use real rosters)

@@ -148,3 +148,14 @@ test('findOffers asks multi-piece packages to cover the premium, scaled by how l
   assert.ok(!offers.some((o) => o.assets.map((x) => x.key).join() === 'one,small' && o.total > 1100));
   assert.ok(offers.every((o) => o.need >= 1000));
 });
+
+import { injuryFactor } from '../src/utils/marketCalc';
+test('injuryFactor: off by default, scaled by severity, capped at 50%', () => {
+  assert.equal(injuryFactor('IR', 0), 1);
+  assert.equal(injuryFactor(null, 30), 1);
+  assert.equal(injuryFactor('IR', 30), 0.7);
+  assert.equal(injuryFactor('Doubtful', 30), 0.85);
+  assert.ok(Math.abs(injuryFactor('Questionable', 20) - 0.97) < 1e-9);
+  assert.equal(injuryFactor('Out', 90), 0.5);
+  assert.equal(injuryFactor('Mystery', 30), 1);
+});
