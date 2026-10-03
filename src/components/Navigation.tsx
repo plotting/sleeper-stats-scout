@@ -1,3 +1,4 @@
+import { Fragment } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import {
@@ -26,6 +27,9 @@ import {
   GraduationCap,
   MoreHorizontal,
   Landmark,
+  Store,
+  Calculator,
+  Lock,
 } from 'lucide-react';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useQuery } from '@tanstack/react-query';
@@ -40,9 +44,17 @@ const links = [
   { to: '/current-season', label: `S${CURRENT_SEASON_NUMBER} '${String(CURRENT_SEASON_YEAR).slice(2)}`, icon: Flame },
   { to: '/', label: 'Seasons', icon: Trophy },
   { to: '/draft', label: 'Draft', icon: BookOpen },
-  { to: '/trades', label: 'Trades', icon: ArrowLeftRight },
   { to: '/hall', label: 'The Hall', icon: Landmark },
 ];
+
+// Trade Hub: everything about trades in one menu, placed where the Trades link used to be (after Draft).
+// The market and calculator are behind the admin sign-in (the pages show the sign-in form when signed out).
+const tradeHubLinks = [
+  { to: '/trades', label: 'Trades', icon: ArrowLeftRight, locked: false },
+  { to: '/trade-market', label: 'Market', icon: Store, locked: true },
+  { to: '/trade-calculator', label: 'Calculator', icon: Calculator, locked: true },
+];
+const HUB_AFTER = '/draft';
 
 // Everything else lives behind "More" so the primary bar stays short —
 // splitting these out actually narrows the nav instead of just appending to it.
@@ -155,6 +167,24 @@ const Navigation = () => {
                     </Link>
                   </SheetClose>
                 ))}
+                <p className="px-3 pt-3 text-xs text-slate-500 uppercase tracking-wider">Trade Hub</p>
+                {tradeHubLinks.map((link) => (
+                  <SheetClose asChild key={link.to}>
+                    <Link
+                      to={link.to}
+                      className={cn(
+                        'flex items-center gap-2 px-3 py-2.5 rounded-md text-sm transition-colors',
+                        isActive(link.to)
+                          ? 'text-white bg-white/10 font-medium'
+                          : 'text-slate-400 hover:text-white hover:bg-white/5',
+                      )}
+                    >
+                      <link.icon className="h-4 w-4" />
+                      {link.label}
+                      {link.locked && <Lock className="h-3 w-3 ml-auto opacity-50" aria-label="Sign-in required" />}
+                    </Link>
+                  </SheetClose>
+                ))}
                 {moreLinks.map((link) => (
                   <SheetClose asChild key={link.to}>
                     <Link
@@ -222,7 +252,41 @@ const Navigation = () => {
         ) : (
           <div className="flex items-center gap-1">
             {links.map((link) => (
-              <NavLink key={link.to} {...link} />
+              <Fragment key={link.to}>
+                <NavLink {...link} />
+                {link.to === HUB_AFTER && (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <button
+                        className={cn(
+                          'flex items-center gap-1 text-sm px-3 py-1.5 rounded-md transition-all duration-150',
+                          tradeHubLinks.some((l) => isActive(l.to))
+                            ? 'text-white bg-white/10 font-medium'
+                            : 'text-slate-400 hover:text-white hover:bg-white/5',
+                        )}
+                      >
+                        <ArrowLeftRight className="h-3.5 w-3.5" />
+                        Trade Hub
+                        <ChevronDown className="h-3 w-3 opacity-60" />
+                      </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="start" className="bg-[#0f172a] border-white/10 min-w-[170px]">
+                      {tradeHubLinks.map((hub) => (
+                        <DropdownMenuItem key={hub.to} asChild>
+                          <Link
+                            to={hub.to}
+                            className={cn('flex w-full items-center gap-2 cursor-pointer', isActive(hub.to) && 'text-blue-400')}
+                          >
+                            <hub.icon className="h-3.5 w-3.5" />
+                            {hub.label}
+                            {hub.locked && <Lock className="h-3 w-3 ml-auto opacity-50" aria-label="Sign-in required" />}
+                          </Link>
+                        </DropdownMenuItem>
+                      ))}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                )}
+              </Fragment>
             ))}
 
             {/* More dropdown — lower-traffic pages */}

@@ -53,8 +53,8 @@ export function LoginGate() {
   );
 }
 
-/** Shows the sign-in form until an admin is signed in, then the page. Pages behind this are
- *  not linked from the navigation, and the database itself only serves them to the admin. */
+/** Shows the sign-in form until an admin is signed in, then the page. The Trade Hub menu links to the
+ *  pages behind this (shown with a lock), and the database itself only serves their data to the admin. */
 export default function AdminGate({ children }: { children: ReactNode }) {
   const session = useAdminSession();
   if (session === undefined) return null;

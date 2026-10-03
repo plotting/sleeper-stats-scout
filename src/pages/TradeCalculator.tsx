@@ -29,7 +29,7 @@ interface TradeIdea {
   league: { you: number; partner: number } | null;
 }
 
-// Hidden, admin-only page: prices a trade with the values fitted from completed market trades
+// Admin-only page (Trade Hub menu): prices a trade with the values fitted from completed market trades
 // (market_values). Players only appear once they've been in enough trades to get a value.
 
 

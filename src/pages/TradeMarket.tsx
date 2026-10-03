@@ -10,7 +10,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
-// Hidden, admin-only page (not in the navigation; the tables are only readable by the admin).
+// Admin-only page, in the Trade Hub menu with a lock (the tables are only readable by the admin).
 // Browse the completed trades collected from similar public Sleeper dynasty leagues.
 
 type Asset = { p: string } | { k: [number, number, number] } | { b: number };
