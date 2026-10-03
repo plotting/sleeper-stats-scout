@@ -434,7 +434,9 @@ export function fitAndReport(
     e.gr += w * g * logRatio; e.gg += w * g * g; e.n++; biasAcc.set(shape, e);
   });
   const shapeBias: Record<string, { n: number; pct: number }> = {};
-  for (const [shape, e] of biasAcc) if (e.n >= 30 && e.gg > 0) shapeBias[shape] = { n: e.n, pct: Math.round((Math.exp(e.gr / e.gg) - 1) * 100) };
+  // Rare shapes are noisy (a handful of 5-for-1s swung the premium to ×2.8), so each shape's log-premium is shrunk toward 0
+// by n / (n + 40): a shape with 40 trades keeps half of its measured premium, one with 1,500 keeps ~97%.
+for (const [shape, e] of biasAcc) if (e.n >= 30 && e.gg > 0) shapeBias[shape] = { n: e.n, pct: Math.round((Math.exp((e.gr / e.gg) * (e.n / (e.n + 40))) - 1) * 100) };
 
   return {
     values,
