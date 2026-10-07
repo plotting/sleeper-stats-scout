@@ -1138,7 +1138,7 @@ function PlayoffSim({
       <p className="text-xs text-slate-500 border-l-2 border-white/10 pl-3">
         Odds are computed after each week's scores settle (Tuesday–Thursday) and saved, so each week shows what was known then:
         every team's actual lineup, injuries and bye weeks for the weeks still to play, on top of its record and scoring history.
-        Sorted by projected seed — Playoff % shows odds of finishing in the top {effectiveBracketSize}; the arrow is the change from the previous saved week.
+        Sorted by projected seed — Playoff % shows odds of finishing in the top {effectiveBracketSize}; the arrow is what that week's results changed (hover it for the split between results and lineup / injury / projection updates).
         {numSims > 0 && ` ${numSims.toLocaleString()} simulated seasons${computedAt ? `, computed ${new Date(computedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}` : ""}.`}
       </p>
       {!savedRows && (
@@ -1161,8 +1161,8 @@ function PlayoffSim({
               <TableHead className="text-right">±</TableHead>
               <TableHead className="text-right">Proj W</TableHead>
               <TableHead className="text-right">Proj Seed</TableHead>
-              <TableHead className="text-right" title="Change in playoff odds since the previous saved week. Changes within the simulation noise show as ±0.0">
-                Playoff %{previousAsOfWeek != null && prevRows && <span className="block text-[10px] font-normal text-slate-500">Δ vs {previousAsOfWeek === 0 ? "preseason" : `after Wk ${previousAsOfWeek}`}</span>}
+              <TableHead className="text-right" title="What the previous week's results changed in the playoff odds (the odds are replayed with the same lineups, so only the games differ). Lineup, injury and projection updates since then are in each arrow's tooltip. Changes within the simulation noise show as ±0.0">
+                Playoff %{previousAsOfWeek != null && prevRows && <span className="block text-[10px] font-normal text-slate-500">Δ from Wk {asOfWeek} results</span>}
               </TableHead>
             </TableRow>
           </TableHeader>
@@ -1171,7 +1171,14 @@ function PlayoffSim({
               const t = teamMap.get(r.team_id);
               if (!t) return null;
               const before = prevPct.get(r.team_id);
-              const delta = before != null ? (r.playoff_pct - before) * 100 : null;
+              // The arrow is the change caused by the week's results alone (saved with the snapshot); older snapshots fall back to the raw change
+              // between the two saved weeks. Whatever is left of that raw change is lineups, injuries and projection updates.
+              const total = before != null ? (r.playoff_pct - before) * 100 : null;
+              const fromResults = r.delta_results != null ? r.delta_results * 100 : total;
+              const delta = fromResults;
+              const split = total != null && r.delta_results != null
+                ? `Odds ${fmt(before! * 100, 1)}% → ${fmt(r.playoff_pct * 100, 1)}%: results ${signedFmt(fromResults!, 1)} pts, lineups / injuries / projection updates ${signedFmt(total - fromResults!, 1)} pts`
+                : undefined;
               // within ~2 standard errors of the two simulations' own noise, the change isn't real
               const noise = 200 * Math.sqrt(0.25 / Math.max(r.num_sims, 1) + 0.25 / Math.max(prevRows?.[0]?.num_sims ?? r.num_sims, 1));
               return (
@@ -1203,9 +1210,9 @@ function PlayoffSim({
                   <TableCell className={cn("text-right font-mono font-semibold text-sm", pctColor(r.playoff_pct))}>
                     {fmt(r.playoff_pct * 100, 1)}%
                     {delta != null && (Math.abs(delta) < Math.max(0.3, noise) ? (
-                      <span className="ml-1.5 text-[10px] font-normal text-slate-600">±0.0</span>
+                      <span title={split} className="ml-1.5 text-[10px] font-normal text-slate-600">±0.0</span>
                     ) : (
-                      <span className={cn("ml-1.5 text-[10px] font-normal", delta > 0 ? "text-emerald-500" : "text-red-500")}>
+                      <span title={split} className={cn("ml-1.5 text-[10px] font-normal", delta > 0 ? "text-emerald-500" : "text-red-500")}>
                         {delta > 0 ? "▲" : "▼"}{fmt(Math.abs(delta), 1)}
                       </span>
                     ))}
