@@ -8,6 +8,8 @@ export interface PlayoffSimSnapshotTeam {
   projSeed: number;
   playoffPct: number;
   seedPct: number[];
+  /** Change in playoffPct (fraction) caused by the week's results alone; see the delta_results migration. */
+  deltaResults?: number | null;
 }
 
 /** Persists one "as of week" snapshot of the Monte Carlo sim, one row per
@@ -32,10 +34,14 @@ export async function savePlayoffSimSnapshot(
     proj_seed: t.projSeed,
     playoff_pct: t.playoffPct,
     seed_pct: t.seedPct,
+    delta_results: t.deltaResults ?? null,
   }));
-  const { error } = await supabase
-    .from("playoff_sim_history")
-    .upsert(rows, { onConflict: "season_id,as_of_week,bracket_size,team_id" });
+  const onConflict = "season_id,as_of_week,bracket_size,team_id";
+  let { error } = await supabase.from("playoff_sim_history").upsert(rows, { onConflict });
+  if (error && /delta_results/.test(error.message)) {
+    // the delta_results column needs its migration; save the rest without it until then
+    ({ error } = await supabase.from("playoff_sim_history").upsert(rows.map(({ delta_results: _unused, ...rest }) => rest), { onConflict }));
+  }
   if (error) throw new Error(`Failed to save week ${asOfWeek} snapshot: ${error.message}`);
 }
 
@@ -56,14 +62,16 @@ export interface PlayoffSimHistoryRow {
   playoff_pct: number;
   seed_pct: number[];
   computed_at: string;
+  /** Fraction, like playoff_pct; null/absent for snapshots saved before the column existed. */
+  delta_results?: number | null;
 }
 
 export async function fetchPlayoffSimHistory(seasonId: number): Promise<PlayoffSimHistoryRow[]> {
-  const { data, error } = await supabase
-    .from("playoff_sim_history")
-    .select("as_of_week, bracket_size, num_sims, team_id, proj_ppg, proj_std, proj_wins, proj_seed, playoff_pct, seed_pct, computed_at")
-    .eq("season_id", seasonId)
-    .order("as_of_week");
-  if (error) throw new Error(`Failed to load playoff sim history: ${error.message}`);
-  return (data ?? []) as unknown as PlayoffSimHistoryRow[];
+  const base = "as_of_week, bracket_size, num_sims, team_id, proj_ppg, proj_std, proj_wins, proj_seed, playoff_pct, seed_pct, computed_at";
+  for (const cols of [`${base}, delta_results`, base]) {
+    const { data, error } = await supabase.from("playoff_sim_history").select(cols).eq("season_id", seasonId).order("as_of_week");
+    if (!error) return (data ?? []) as unknown as PlayoffSimHistoryRow[];
+    if (!cols.includes("delta_results")) throw new Error(`Failed to load playoff sim history: ${error.message}`);
+  }
+  return [];
 }

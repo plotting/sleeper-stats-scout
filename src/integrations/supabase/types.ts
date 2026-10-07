@@ -64,6 +64,7 @@ export type Database = {
           as_of_week: number
           bracket_size: number
           computed_at: string
+          delta_results: number | null
           id: number
           num_sims: number
           playoff_pct: number
@@ -79,6 +80,7 @@ export type Database = {
           as_of_week: number
           bracket_size: number
           computed_at?: string
+          delta_results?: number | null
           id?: number
           num_sims: number
           playoff_pct: number
@@ -94,6 +96,7 @@ export type Database = {
           as_of_week?: number
           bracket_size?: number
           computed_at?: string
+          delta_results?: number | null
           id?: number
           num_sims?: number
           playoff_pct?: number

@@ -129,6 +129,31 @@ async function snapshot(asOf: number) {
   }
   const byTeam = new Map(input.teams.map((t) => [t.teamId, t]));
 
+  // What did the week's results alone do to the odds? Replay the previous week's position (results through asOf-1) with the SAME rosters
+  // and projections, so the only difference from this snapshot is the games just played. The rest of the saved change since last week is
+  // lineups, injuries and projection updates.
+  let prevResults: Map<number, number[]> | null = null;
+  if (asOf > 0) {
+    const prevBare = buildOddsInput(matchups, allMatchups, sortedHistIds, asOf - 1, new Map());
+    if (prevBare) {
+      const prevProj = new Map(projections);
+      for (const w of new Set(prevBare.futureGames.map((g) => g.week))) {
+        if (!prevProj.has(w)) prevProj.set(w, await computeTeamWeekProjections(league.season, w, rosters.inputs, league.roster_positions));
+      }
+      const prevInput = buildOddsInput(matchups, allMatchups, sortedHistIds, asOf - 1, prevProj)!;
+      const prevRun = runSim({ teams: prevInput.simTeams, futureGames: prevInput.futureGames, numSims: NUM_SIMS, bracketSize: bracketSizes[0] });
+      prevResults = new Map(prevRun.map((r) => [r.teamId, r.seedPct]));
+    }
+  }
+
+  // how each team's projection looks, so a jump in the odds can be traced to a lineup, a bye or an injury
+  for (const t of input.teams) {
+    const mine = input.futureGames.flatMap((g) => (g.homeId === t.teamId ? [{ m: g.homeMean, w: g.week }] : g.awayId === t.teamId ? [{ m: g.awayMean, w: g.week }] : []));
+    const avg = mine.reduce((a, x) => a + x.m, 0) / Math.max(mine.length, 1);
+    const nextP = projections.get(nextWeek)?.get(t.teamId);
+    console.log(`  ${t.teamName.padEnd(10)} ${t.wins}-${t.losses}  next ${next.get(t.teamId)?.mean.toFixed(1)}  avg of ${mine.length} remaining ${avg.toFixed(1)}  (next week: ${nextP?.benchedByeCount ?? 0} bye slots benched, ${nextP?.streamedCount ?? 0} streamed)`);
+  }
+
   for (const size of bracketSizes) {
     await savePlayoffSimSnapshot(seasonId, asOf, size, NUM_SIMS, results.map((r) => ({
       teamId: r.teamId,
@@ -138,6 +163,7 @@ async function snapshot(asOf: number) {
       projSeed: r.avgRank,
       playoffPct: playoffPctFromSeeds(r.seedPct, size),
       seedPct: r.seedPct,
+      deltaResults: prevResults?.get(r.teamId) ? playoffPctFromSeeds(r.seedPct, size) - playoffPctFromSeeds(prevResults.get(r.teamId)!, size) : null,
     })));
   }
   const top = [...results].sort((a, b) => b.playoffPct - a.playoffPct).slice(0, 3)
