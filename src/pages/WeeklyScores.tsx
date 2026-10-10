@@ -10,6 +10,7 @@ import ScheduleTable from "@/components/weekly-scores/ScheduleTable";
 
 import { CURRENT_SEASON_NUMBER } from "@/utils/seasonUtils";
 import { getPlayoffStartWeek } from "@/utils/playoffRegistry";
+import { useTeams } from "@/hooks/useTeams";
 const WeeklyScores = () => {
   const [selectedSeason, setSelectedSeason] = useState(String(CURRENT_SEASON_NUMBER));
 
@@ -18,17 +19,7 @@ const WeeklyScores = () => {
   // Regular season + up to three playoff weeks (no fewer than 17 shown).
   const weekCount = Math.max(17, playoffStartWeek + 3);
 
-  const { data: teams } = useQuery({
-    queryKey: ["teams"],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("teams")
-        .select("*")
-        .order("id");
-      if (error) throw error;
-      return data;
-    },
-  });
+  const { data: teams } = useTeams();
 
   const { data: matchupScores } = useQuery({
     queryKey: ["matchup-scores", selectedSeason],

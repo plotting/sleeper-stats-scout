@@ -4,6 +4,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import type { MatchupScoresView, Team, TeamRecordsView } from "@/types/database";
+import { useTeams } from "@/hooks/useTeams";
 
 interface StrengthOfScheduleProps {
   seasonId: number;
@@ -22,17 +23,7 @@ const StrengthOfSchedule = ({ seasonId }: StrengthOfScheduleProps) => {
   }
 
   // Fetch teams
-  const { data: teams, isLoading: teamsLoading } = useQuery({
-    queryKey: ['teams'],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('teams')
-        .select('*')
-        .order('id');
-      if (error) throw error;
-      return data as Team[];
-    },
-  });
+  const { data: teams, isLoading: teamsLoading } = useTeams();
 
   // Fetch current season matchups
   const { data: currentMatchups, isLoading: currentLoading } = useQuery({

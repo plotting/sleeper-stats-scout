@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 import type { MatchupScoresView, Team } from "@/types/database";
+import { useTeams } from "@/hooks/useTeams";
 
 function fmt(n: number, d = 1) {
   return n.toFixed(d);
@@ -258,14 +259,7 @@ const HeadToHead = () => {
   const [filter, setFilter] = useState<Filter>("all");
   const [viewMode, setViewMode] = useState<ViewMode>("matrix");
 
-  const { data: teams, isLoading: teamsLoading } = useQuery({
-    queryKey: ["teams"],
-    queryFn: async () => {
-      const { data, error } = await supabase.from("teams").select("*").order("id");
-      if (error) throw error;
-      return data as Team[];
-    },
-  });
+  const { data: teams, isLoading: teamsLoading } = useTeams();
 
   // Per-team H2H: only fetch when a team is selected in breakdown mode
   const { data: teamMatchups, isLoading: teamMatchupsLoading } = useQuery({
