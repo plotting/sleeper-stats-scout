@@ -34,7 +34,7 @@ import {
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
-import { type Team } from '@/types/database';
+import { useTeams } from '@/hooks/useTeams';
 import { cn } from '@/lib/utils';
 import { formatDistanceToNowStrict } from 'date-fns';
 import { CURRENT_SEASON_NUMBER, CURRENT_SEASON_YEAR } from '@/utils/seasonUtils';
@@ -74,21 +74,18 @@ const Navigation = () => {
   const isMobile = useIsMobile();
   const location = useLocation();
 
-  const { data: teams, isLoading } = useQuery({
-    queryKey: ['teams'],
+  const { data: allTeams, isLoading: teamsLoading } = useTeams();
+  // Only list teams that have actually played a season (mapping mistakes or unused teams would otherwise clutter the dropdown).
+  const { data: playedIds, isLoading: playedLoading } = useQuery({
+    queryKey: ['teams', 'played-ids'],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('teams')
-        .select('id, name, owner_id, created_at, updated_at')
-        .order('id');
-      if (error) throw error;
-      // Only list teams that have actually played a season (mapping mistakes
-      // or unused teams would otherwise clutter the dropdown).
-      const { data: played } = await supabase.from('team_records_view').select('team_id');
-      const playedIds = new Set((played ?? []).map((r) => r.team_id));
-      return (playedIds.size ? data.filter((t) => playedIds.has(t.id)) : data) as Team[];
+      const { data } = await supabase.from('team_records_view').select('team_id');
+      return new Set((data ?? []).map((r) => r.team_id));
     },
+    staleTime: 5 * 60 * 1000,
   });
+  const isLoading = teamsLoading || playedLoading;
+  const teams = allTeams && (playedIds && playedIds.size ? allTeams.filter((t) => playedIds.has(t.id)) : allTeams);
 
   // Most recent trade sync as a proxy "last synced" signal — not exact for
   // every table, but trades sync on the same cadence as everything else and

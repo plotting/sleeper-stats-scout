@@ -74,6 +74,7 @@ import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import { useAdminSession } from '@/hooks/useAdminSession';
 import { LoginGate } from '@/components/admin/AdminGate';
+import { useTeams } from "@/hooks/useTeams";
 
 
 // ─── Log entry ─────────────────────────────────────────────────────────────
@@ -312,14 +313,7 @@ const Admin = () => {
   });
 
   // ── Fetch DB teams (for mapping dropdowns) ──
-  const { data: dbTeams } = useQuery({
-    queryKey: ['teams'],
-    queryFn: async () => {
-      const { data, error } = await supabase.from('teams').select('id, name').order('id');
-      if (error) throw error;
-      return data;
-    },
-  });
+  const { data: dbTeams } = useTeams();
 
   const selectedLeague = allLeagues?.find((l) => l.league_id === selectedLeagueId) ?? currentLeague;
 

@@ -5,6 +5,7 @@ import { MatchupScoresView } from "@/types/database";
 import { useStandingsData } from "./standings/useStandingsData";
 import BracketView from "./playoff-bracket/BracketView";
 import { getPlayoffConfig } from "@/utils/playoffRegistry";
+import { useTeams } from "@/hooks/useTeams";
 
 // Seasons are addressed by season id (id == season number in this database).
 const PlayoffBracket = ({ season }: { season: string }) => {
@@ -26,14 +27,7 @@ const PlayoffBracket = ({ season }: { season: string }) => {
     enabled: !!config,
   });
 
-  const { data: teams, isLoading: teamsLoading } = useQuery({
-    queryKey: ["teams"],
-    queryFn: async () => {
-      const { data, error } = await supabase.from("teams").select("*");
-      if (error) throw error;
-      return data;
-    },
-  });
+  const { data: teams, isLoading: teamsLoading } = useTeams();
 
   // Seeds come from the deduplicated regular-season standings.
   const { teamSeeds, isLoading: standingsLoading } = useStandingsData(seasonId);

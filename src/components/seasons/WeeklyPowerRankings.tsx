@@ -179,7 +179,7 @@ const WeeklyPowerRankings = ({ seasonId }: Props) => {
 
     const allTeamIds = Object.keys(nameById)
       .map(Number)
-      .sort((a, b) => nameById[a].localeCompare(nameById[b]));
+      .sort((a, b) => a - b); // site-wide team order (team id)
 
     const n = allTeamIds.length;
     if (n === 0) {

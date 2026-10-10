@@ -20,21 +20,12 @@ import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { getAllSeasons } from "@/utils/seasonUtils";
+import { useTeams } from "@/hooks/useTeams";
 
 const DraftHistory = () => {
   const [selectedSeason, setSelectedSeason] = useState("1");
 
-  const { data: teams } = useQuery({
-    queryKey: ["teams"],
-    queryFn: async () => {
-      const { data: teamsData, error } = await supabase
-        .from("teams")
-        .select("*")
-        .order("id");
-      if (error) throw error;
-      return teamsData;
-    },
-  });
+  const { data: teams } = useTeams();
 
   const { data: draftPicks, isLoading } = useQuery({
     queryKey: ["draft-picks", selectedSeason],

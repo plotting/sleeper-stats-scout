@@ -2320,7 +2320,7 @@ const Analytics = () => {
       if (m.home_team_id && m.home_team_name) map.set(m.home_team_id, m.home_team_name);
       if (m.away_team_id && m.away_team_name) map.set(m.away_team_id, m.away_team_name);
     }
-    return [...map.entries()].map(([teamId, teamName]) => ({ teamId, teamName })).sort((a, b) => a.teamName.localeCompare(b.teamName));
+    return [...map.entries()].map(([teamId, teamName]) => ({ teamId, teamName })).sort((a, b) => a.teamId - b.teamId); // site-wide team order (team id)
   }, [allMatchups]);
 
   return (

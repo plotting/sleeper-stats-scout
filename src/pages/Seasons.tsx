@@ -15,6 +15,7 @@ import WeeklyScores from "./WeeklyScores";
 import WeeklyRecords from "./WeeklyRecords";
 import HeadToHead from "./HeadToHead";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useTeams } from "@/hooks/useTeams";
 
 const Seasons = () => {
   const [selectedSeason, setSelectedSeason] = useState(String(CURRENT_SEASON_NUMBER));
@@ -26,17 +27,7 @@ const Seasons = () => {
     setActiveTab("overview");
   }, [selectedSeason]);
 
-  const { data: teams } = useQuery({
-    queryKey: ["teams"],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("teams")
-        .select("*")
-        .order("id");
-      if (error) throw error;
-      return data;
-    },
-  });
+  const { data: teams } = useTeams();
 
   return (
     <div className="min-h-screen container mx-auto px-4 py-6">
