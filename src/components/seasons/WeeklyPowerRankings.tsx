@@ -339,17 +339,16 @@ const WeeklyPowerRankings = ({ seasonId }: Props) => {
       }
     }
     const ppg = (t: Acc) => (t.g > 0 ? t.pf / t.g : 0);
-    const leagueAvg = [...acc.values()].reduce((s2, t) => s2 + ppg(t), 0) / Math.max(acc.size, 1);
     const out = [...acc.values()].map((t) => {
       const apG = t.apW + t.apL + t.apT;
       const apPct = apG > 0 ? (t.apW + t.apT * 0.5) / apG : 0;
-      const expected = apPct * t.g;
-      const oppPpg = t.opps.length > 0 ? t.opps.reduce((s2, id) => s2 + ppg(acc.get(id)!), 0) / t.opps.length : 0;
-      return { ...t, ppg: ppg(t), apPct, luck: t.w + t.t * 0.5 - expected, oppPpg, sosDiff: oppPpg - leagueAvg, power: (chartData[chartData.length - 1]?.[`t${t.id}`] as number | undefined) ?? 99 };
+      // opponents' combined season record, one entry per game played (same idea as the Strength of Schedule tab)
+      let oW = 0, oL = 0, oT = 0;
+      for (const id of t.opps) { const o = acc.get(id)!; oW += o.w; oL += o.l; oT += o.t; }
+      const oG = oW + oL + oT;
+      return { ...t, ppg: ppg(t), apPct, oW, oL, oT, oPct: oG > 0 ? (oW + oT * 0.5) / oG : 0, power: (chartData[chartData.length - 1]?.[`t${t.id}`] as number | undefined) ?? 99 };
     });
-    // 1 = toughest schedule (highest average opponent PPG)
-    const bySos = [...out].sort((x, y) => y.oppPpg - x.oppPpg);
-    return out.map((t) => ({ ...t, sosRank: bySos.findIndex((x) => x.id === t.id) + 1 })).sort((x, y) => x.power - y.power);
+    return out.sort((x, y) => x.power - y.power);
   }, [rows, chartData, seasonId]);
 
   if (isLoading) {
@@ -497,8 +496,8 @@ const WeeklyPowerRankings = ({ seasonId }: Props) => {
             <div className="pt-4 border-t border-white/10">
               <p className="text-sm font-semibold text-slate-200">All-play &amp; schedule</p>
               <p className="text-xs text-slate-500 mb-2">
-                Season to date, in the chart's current order. All-play is each team's record against every team's score each week; luck is actual wins minus the wins that
-                all-play record predicts. Opp PPG is the average scoring of the opponents faced (a higher number is a tougher schedule; 1 = toughest).
+                Season to date, in the chart's current order. All-play is each team's record against every team's score each week. Opponents is the combined record of the
+                teams faced, one entry per game (a higher win % is a tougher schedule).
               </p>
               <div className="overflow-x-auto">
                 <Table>
@@ -510,9 +509,8 @@ const WeeklyPowerRankings = ({ seasonId }: Props) => {
                       <TableHead className="text-right">PPG</TableHead>
                       <TableHead className="text-right">All-play</TableHead>
                       <TableHead className="text-right">AP win%</TableHead>
-                      <TableHead className="text-right">Luck (W)</TableHead>
-                      <TableHead className="text-right">Opp PPG</TableHead>
-                      <TableHead className="text-right">Schedule</TableHead>
+                      <TableHead className="text-right">Opponents' record</TableHead>
+                      <TableHead className="text-right">Opp win %</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -524,9 +522,8 @@ const WeeklyPowerRankings = ({ seasonId }: Props) => {
                         <TableCell className="text-right font-mono text-sm">{t.ppg.toFixed(1)}</TableCell>
                         <TableCell className="text-right font-mono text-sm">{t.apW}-{t.apL}{t.apT > 0 ? `-${t.apT}` : ""}</TableCell>
                         <TableCell className="text-right font-mono text-sm">{(t.apPct * 100).toFixed(1)}%</TableCell>
-                        <TableCell className={cn("text-right font-mono text-sm", t.luck > 0.25 ? "text-emerald-400" : t.luck < -0.25 ? "text-red-400" : "text-slate-400")}>{t.luck > 0 ? "+" : ""}{t.luck.toFixed(1)}</TableCell>
-                        <TableCell className="text-right font-mono text-sm">{t.oppPpg.toFixed(1)} <span className={t.sosDiff > 0 ? "text-red-400" : "text-emerald-400"}>({t.sosDiff > 0 ? "+" : ""}{t.sosDiff.toFixed(1)})</span></TableCell>
-                        <TableCell className="text-right font-mono text-sm text-slate-300">#{t.sosRank}{t.sosRank === 1 ? " toughest" : t.sosRank === tableRows.length ? " easiest" : ""}</TableCell>
+                        <TableCell className="text-right font-mono text-sm">{t.oW}-{t.oL}{t.oT > 0 ? `-${t.oT}` : ""}</TableCell>
+                        <TableCell className="text-right font-mono text-sm text-slate-300">{(t.oPct * 100).toFixed(1)}%</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
