@@ -6,6 +6,7 @@ import { supabase } from "@/integrations/supabase/client";
 import type { MatchupScoresView } from "@/types/database";
 import TeamHeader from "@/components/team/TeamHeader";
 import TeamStatsCards from "@/components/team/TeamStatsCards";
+import TeamLuckStats from "@/components/team/TeamLuckStats";
 import TeamMatchups from "@/components/team/TeamMatchups";
 import TeamDraftHistory from "@/components/team/TeamDraftHistory";
 import TeamTradesHistory from "@/components/team/TeamTradesHistory";
@@ -213,6 +214,8 @@ const TeamPage = () => {
         consolationRecords={consolationRecords} 
         isLoading={recordsLoading || consolationLoading} 
       />
+
+      <TeamLuckStats teamId={parsedTeamId} selectedSeason={selectedSeason} />
 
       <div className="grid grid-cols-1 gap-6 mt-6">
         {selectedSeason !== 'career' && (
