@@ -11,8 +11,10 @@ import ScheduleTable from "@/components/weekly-scores/ScheduleTable";
 import { CURRENT_SEASON_NUMBER } from "@/utils/seasonUtils";
 import { getPlayoffStartWeek } from "@/utils/playoffRegistry";
 import { useTeams } from "@/hooks/useTeams";
-const WeeklyScores = () => {
-  const [selectedSeason, setSelectedSeason] = useState(String(CURRENT_SEASON_NUMBER));
+// Standalone (/weekly-scores) it has its own season picker; inside Seasons the page's picker drives it via seasonId.
+const WeeklyScores = ({ seasonId }: { seasonId?: number } = {}) => {
+  const [ownSeason, setSelectedSeason] = useState(String(CURRENT_SEASON_NUMBER));
+  const selectedSeason = seasonId != null ? String(seasonId) : ownSeason;
 
   const playoffStartWeek = getPlayoffStartWeek(parseInt(selectedSeason));
   const regularSeasonWeeks = playoffStartWeek - 1;
@@ -115,10 +117,12 @@ const WeeklyScores = () => {
             <h1 className="text-4xl font-bold text-white mb-2">Weekly Scores</h1>
             <p className="text-muted-foreground">Track team records and scores week by week</p>
           </div>
-          <SeasonSelector 
-            selectedSeason={selectedSeason}
-            onSeasonChange={setSelectedSeason}
-          />
+          {seasonId == null && (
+            <SeasonSelector
+              selectedSeason={selectedSeason}
+              onSeasonChange={setSelectedSeason}
+            />
+          )}
         </div>
       </header>
 
