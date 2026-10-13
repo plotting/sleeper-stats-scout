@@ -94,7 +94,7 @@ const Seasons = () => {
         </TabsContent>
 
         <TabsContent value="scores">
-          <WeeklyScores />
+          <WeeklyScores seasonId={seasonNumber} />
         </TabsContent>
 
         <TabsContent value="by-week">
