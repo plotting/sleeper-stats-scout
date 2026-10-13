@@ -11,6 +11,7 @@ import { StreaksSection } from "@/components/records/StreaksSection";
 import { AllTimeScheduleRecords } from "@/components/records/AllTimeScheduleRecords";
 import { TopPerformancesSection } from "@/components/records/TopPerformancesSection";
 import { TradeRecordsSection } from "@/components/records/TradeRecordsSection";
+import { LuckRecordsSection } from "@/components/records/LuckRecordsSection";
 
 const Records = () => {
   const { data: matchups, isLoading: matchupsLoading } = useQuery({
@@ -501,6 +502,10 @@ const Records = () => {
           <section>
             <h2 className="text-lg font-semibold mb-4">Schedules</h2>
             <AllTimeScheduleRecords matchups={matchups || []} />
+          </section>
+          <section>
+            <h2 className="text-lg font-semibold mb-4">Scoring Luck</h2>
+            <LuckRecordsSection matchups={matchups || []} yearMap={yearMap} />
           </section>
           <section>
             <h2 className="text-lg font-semibold mb-4">Miscellaneous</h2>
