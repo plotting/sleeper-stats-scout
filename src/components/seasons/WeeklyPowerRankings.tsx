@@ -3,6 +3,8 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getPlayoffStartWeek } from "@/utils/playoffRegistry";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { cn } from "@/lib/utils";
 import {
   LineChart,
   Line,
@@ -313,6 +315,43 @@ const WeeklyPowerRankings = ({ seasonId }: Props) => {
     return { chartData: weekPoints, teamKeys, teamNameMap, teamColorMap, numTeams: n };
   }, [rows, mode]);
 
+  // Season-to-date all-play and schedule table that sits under the chart, ordered like the chart's latest ranking.
+  const tableRows = useMemo(() => {
+    if (!rows || chartData.length === 0) return [];
+    const regular = rows.filter((r) => r.week_number != null && r.week_number >= 1 && r.week_number < getPlayoffStartWeek(seasonId) && r.home_team_id != null && r.away_team_id != null && r.home_score != null && r.away_score != null);
+    type Acc = { id: number; name: string; w: number; l: number; t: number; pf: number; g: number; apW: number; apL: number; apT: number; opps: number[] };
+    const acc = new Map<number, Acc>();
+    const get = (id: number, name: string | null) => acc.get(id) ?? (acc.set(id, { id, name: name ?? `Team ${id}`, w: 0, l: 0, t: 0, pf: 0, g: 0, apW: 0, apL: 0, apT: 0, opps: [] }), acc.get(id)!);
+    const byWeek = new Map<number, Array<{ id: number; score: number }>>();
+    for (const r of regular) {
+      const h = get(r.home_team_id!, r.home_team_name), a = get(r.away_team_id!, r.away_team_name);
+      h.pf += r.home_score!; a.pf += r.away_score!; h.g++; a.g++;
+      if (r.home_score! > r.away_score!) { h.w++; a.l++; } else if (r.home_score! < r.away_score!) { a.w++; h.l++; } else { h.t++; a.t++; }
+      h.opps.push(r.away_team_id!); a.opps.push(r.home_team_id!);
+      const wk = byWeek.get(r.week_number!) ?? byWeek.set(r.week_number!, []).get(r.week_number!)!;
+      wk.push({ id: h.id, score: r.home_score! }, { id: a.id, score: r.away_score! });
+    }
+    for (const scores of byWeek.values()) {
+      for (const me of scores) for (const o of scores) {
+        if (o.id === me.id) continue;
+        const t = acc.get(me.id)!;
+        if (me.score > o.score) t.apW++; else if (me.score < o.score) t.apL++; else t.apT++;
+      }
+    }
+    const ppg = (t: Acc) => (t.g > 0 ? t.pf / t.g : 0);
+    const leagueAvg = [...acc.values()].reduce((s2, t) => s2 + ppg(t), 0) / Math.max(acc.size, 1);
+    const out = [...acc.values()].map((t) => {
+      const apG = t.apW + t.apL + t.apT;
+      const apPct = apG > 0 ? (t.apW + t.apT * 0.5) / apG : 0;
+      const expected = apPct * t.g;
+      const oppPpg = t.opps.length > 0 ? t.opps.reduce((s2, id) => s2 + ppg(acc.get(id)!), 0) / t.opps.length : 0;
+      return { ...t, ppg: ppg(t), apPct, luck: t.w + t.t * 0.5 - expected, oppPpg, sosDiff: oppPpg - leagueAvg, power: (chartData[chartData.length - 1]?.[`t${t.id}`] as number | undefined) ?? 99 };
+    });
+    // 1 = toughest schedule (highest average opponent PPG)
+    const bySos = [...out].sort((x, y) => y.oppPpg - x.oppPpg);
+    return out.map((t) => ({ ...t, sosRank: bySos.findIndex((x) => x.id === t.id) + 1 })).sort((x, y) => x.power - y.power);
+  }, [rows, chartData, seasonId]);
+
   if (isLoading) {
     return (
       <Card className="border-white/10">
@@ -453,6 +492,48 @@ const WeeklyPowerRankings = ({ seasonId }: Props) => {
               </div>
             ))}
           </div>
+
+          {tableRows.length > 0 && (
+            <div className="pt-4 border-t border-white/10">
+              <p className="text-sm font-semibold text-slate-200">All-play &amp; schedule</p>
+              <p className="text-xs text-slate-500 mb-2">
+                Season to date, in the chart's current order. All-play is each team's record against every team's score each week; luck is actual wins minus the wins that
+                all-play record predicts. Opp PPG is the average scoring of the opponents faced (a higher number is a tougher schedule; 1 = toughest).
+              </p>
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-8">#</TableHead>
+                      <TableHead>Team</TableHead>
+                      <TableHead className="text-right">Record</TableHead>
+                      <TableHead className="text-right">PPG</TableHead>
+                      <TableHead className="text-right">All-play</TableHead>
+                      <TableHead className="text-right">AP win%</TableHead>
+                      <TableHead className="text-right">Luck (W)</TableHead>
+                      <TableHead className="text-right">Opp PPG</TableHead>
+                      <TableHead className="text-right">Schedule</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {tableRows.map((t) => (
+                      <TableRow key={t.id}>
+                        <TableCell className="text-slate-500">{t.power}</TableCell>
+                        <TableCell className="font-medium">{t.name}</TableCell>
+                        <TableCell className="text-right font-mono text-sm">{t.w}-{t.l}{t.t > 0 ? `-${t.t}` : ""}</TableCell>
+                        <TableCell className="text-right font-mono text-sm">{t.ppg.toFixed(1)}</TableCell>
+                        <TableCell className="text-right font-mono text-sm">{t.apW}-{t.apL}{t.apT > 0 ? `-${t.apT}` : ""}</TableCell>
+                        <TableCell className="text-right font-mono text-sm">{(t.apPct * 100).toFixed(1)}%</TableCell>
+                        <TableCell className={cn("text-right font-mono text-sm", t.luck > 0.25 ? "text-emerald-400" : t.luck < -0.25 ? "text-red-400" : "text-slate-400")}>{t.luck > 0 ? "+" : ""}{t.luck.toFixed(1)}</TableCell>
+                        <TableCell className="text-right font-mono text-sm">{t.oppPpg.toFixed(1)} <span className={t.sosDiff > 0 ? "text-red-400" : "text-emerald-400"}>({t.sosDiff > 0 ? "+" : ""}{t.sosDiff.toFixed(1)})</span></TableCell>
+                        <TableCell className="text-right font-mono text-sm text-slate-300">#{t.sosRank}{t.sosRank === 1 ? " toughest" : t.sosRank === tableRows.length ? " easiest" : ""}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+          )}
         </div>
       </CardContent>
     </Card>
