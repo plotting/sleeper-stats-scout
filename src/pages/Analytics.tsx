@@ -1248,7 +1248,7 @@ function PlayoffSim({
                 <TableRow>
                   <TableHead>Team</TableHead>
                   {Array.from({ length: numTeams }, (_, i) => (
-                    <TableHead key={i} className="text-center w-14">{i + 1}</TableHead>
+                    <TableHead key={i} className="text-center min-w-14">{i + 1}</TableHead>
                   ))}
                 </TableRow>
               </TableHeader>
@@ -1267,13 +1267,13 @@ function PlayoffSim({
                         <TableCell
                           key={seedIdx}
                           className={cn(
-                            "text-center font-mono text-xs p-1",
+                            "text-center font-mono text-[11px] p-1 whitespace-nowrap",
                             seedIdx < effectiveBracketSize && "bg-amber-400/[0.06]",
                           )}
                         >
-                          {pct >= 0.001 ? (
+                          {pct > 0 ? (
                             <span className={pct >= 0.5 ? "text-white font-semibold" : "text-slate-400"}>
-                              {fmt(pct * 100, pct >= 0.1 ? 0 : 1)}%
+                              {fmtOdds(pct)}
                             </span>
                           ) : (
                             <span className="text-slate-700">—</span>
