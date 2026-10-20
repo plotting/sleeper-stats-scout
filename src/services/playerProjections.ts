@@ -43,7 +43,11 @@ const STREAMED_STD_MULTIPLIER = 1.3; // extra uncertainty for a sampled free age
 // team's simulated playoff odds collapse toward an unrealistic 100% because
 // the model is more confident in its own point estimate than it should be.
 // Added in quadrature alongside the position-based variance below.
-const BASELINE_TEAM_STD = 10;
+// Calibrated against the league's own history: a team's weekly score varies about 22 points
+// (21-24 across seasons 1-13) around its own average, and the projection can't be sharper than
+// that by much. 10 gave a team std of ~19 and single-game odds that were too confident
+// (an 11-point projected edge read as ~66%); 16 gives ~23, so that edge reads ~63%.
+const BASELINE_TEAM_STD = 16;
 
 interface ProjectedPlayer {
   playerId: string;
