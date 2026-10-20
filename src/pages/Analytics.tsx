@@ -36,6 +36,15 @@ import { fetchPlayoffSimHistory, type PlayoffSimHistoryRow } from "@/services/pl
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+// Playoff odds (0-1) as a percent. Long shots keep four decimals so a team that is unlikely but alive doesn't read as 0.0%;
+// zero simulated runs shows as "<0.0001%" (the sim's floor), not 0, since that isn't proof of elimination.
+function fmtOdds(p: number) {
+  const pct = p * 100;
+  if (pct >= 1) return `${pct.toFixed(2)}%`;
+  if (pct < 0.00005) return '<0.0001%';
+  return `${pct.toFixed(4)}%`;
+}
+
 function fmt(n: number, decimals = 1) {
   return n.toFixed(decimals);
 }
@@ -1177,7 +1186,7 @@ function PlayoffSim({
               const fromResults = r.delta_results != null ? r.delta_results * 100 : total;
               const delta = fromResults;
               const split = total != null && r.delta_results != null
-                ? `Odds ${fmt(before! * 100, 1)}% → ${fmt(r.playoff_pct * 100, 1)}%: results ${signedFmt(fromResults!, 1)} pts, lineups / injuries / projection updates ${signedFmt(total - fromResults!, 1)} pts`
+                ? `Odds ${fmtOdds(before!)} → ${fmtOdds(r.playoff_pct)}: results ${signedFmt(fromResults!, 1)} pts, lineups / injuries / projection updates ${signedFmt(total - fromResults!, 1)} pts`
                 : undefined;
               // within ~2 standard errors of the two simulations' own noise, the change isn't real
               const noise = 200 * Math.sqrt(0.25 / Math.max(r.num_sims, 1) + 0.25 / Math.max(prevRows?.[0]?.num_sims ?? r.num_sims, 1));
@@ -1208,7 +1217,7 @@ function PlayoffSim({
                     #{fmt(r.proj_seed, 1)}
                   </TableCell>
                   <TableCell className={cn("text-right font-mono font-semibold text-sm", pctColor(r.playoff_pct))}>
-                    {fmt(r.playoff_pct * 100, 1)}%
+                    {fmtOdds(r.playoff_pct)}
                     {delta != null && (Math.abs(delta) < Math.max(0.3, noise) ? (
                       <span title={split} className="ml-1.5 text-[10px] font-normal text-slate-600">±0.0</span>
                     ) : (
