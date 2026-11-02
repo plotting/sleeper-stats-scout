@@ -34,7 +34,6 @@ import { buildRosterToTeamMap } from "@/services/sleeperSync";
 import { computeTeamWeekProjections, type TeamWeekProjection } from "@/services/playerProjections";
 import { fmtOdds } from "@/utils/oddsFormat";
 import SeasonSim from "@/components/analytics/SeasonSim";
-import ScoreStreaks from "@/components/analytics/ScoreStreaks";
 import { fetchPlayoffSimHistory, type PlayoffSimHistoryRow } from "@/services/playoffSimHistory";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -2367,9 +2366,6 @@ const Analytics = () => {
           <TabsTrigger value="season-sim">
             <Shuffle className="h-3.5 w-3.5 mr-1.5" />Season Sim
           </TabsTrigger>
-          <TabsTrigger value="streaks">
-            <TrendingUp className="h-3.5 w-3.5 mr-1.5" />Hot &amp; Cold Runs
-          </TabsTrigger>
           <TabsTrigger value="career-rankings">
             <Crown className="h-3.5 w-3.5 mr-1.5" />Career Rankings
           </TabsTrigger>
@@ -2514,23 +2510,6 @@ const Analytics = () => {
                 <p className="text-slate-400 text-sm animate-pulse">Loading…</p>
               ) : matchups && allMatchups ? (
                 <SeasonSim matchups={matchups} allMatchups={allMatchups} dbSeasons={dbSeasons} />
-              ) : null}
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* Best / worst runs of consecutive weeks */}
-        <TabsContent value="streaks" className="mt-4">
-          <Card className="p-6">
-            <CardHeader className="px-0 pt-0">
-              <CardTitle className="text-lg">Hot &amp; Cold Runs</CardTitle>
-              <CardDescription>The highest and lowest scoring stretches of 2 to 10 straight weeks, league-wide or for one team</CardDescription>
-            </CardHeader>
-            <CardContent className="px-0 pb-0">
-              {isLoading ? (
-                <p className="text-slate-400 text-sm animate-pulse">Loading…</p>
-              ) : allMatchups ? (
-                <ScoreStreaks allMatchups={allMatchups} selectedSeason={selectedSeason} />
               ) : null}
             </CardContent>
           </Card>
