@@ -32,18 +32,12 @@ import {
 import { fetchLeagueRosters, fetchLeague, LEAGUE_ID } from "@/services/sleeperApi";
 import { buildRosterToTeamMap } from "@/services/sleeperSync";
 import { computeTeamWeekProjections, type TeamWeekProjection } from "@/services/playerProjections";
+import { fmtOdds } from "@/utils/oddsFormat";
+import SeasonSim from "@/components/analytics/SeasonSim";
+import ScoreStreaks from "@/components/analytics/ScoreStreaks";
 import { fetchPlayoffSimHistory, type PlayoffSimHistoryRow } from "@/services/playoffSimHistory";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-// Playoff odds (0-1) as a percent. Long shots keep four decimals so a team that is unlikely but alive doesn't read as 0.0%;
-// zero simulated runs shows as "<0.0001%" (the sim's floor), not 0, since that isn't proof of elimination.
-function fmtOdds(p: number) {
-  const pct = p * 100;
-  if (pct >= 1) return `${pct.toFixed(2)}%`;
-  if (pct < 0.00005) return '<0.0001%';
-  return `${pct.toFixed(4)}%`;
-}
 
 function fmt(n: number, decimals = 1) {
   return n.toFixed(decimals);
@@ -2370,6 +2364,12 @@ const Analytics = () => {
           <TabsTrigger value="playoff-sim">
             <Shuffle className="h-3.5 w-3.5 mr-1.5" />Simulated Odds
           </TabsTrigger>
+          <TabsTrigger value="season-sim">
+            <Shuffle className="h-3.5 w-3.5 mr-1.5" />Season Sim
+          </TabsTrigger>
+          <TabsTrigger value="streaks">
+            <TrendingUp className="h-3.5 w-3.5 mr-1.5" />Hot &amp; Cold Runs
+          </TabsTrigger>
           <TabsTrigger value="career-rankings">
             <Crown className="h-3.5 w-3.5 mr-1.5" />Career Rankings
           </TabsTrigger>
@@ -2495,6 +2495,42 @@ const Analytics = () => {
                 <p className="text-slate-400 text-sm animate-pulse">Loading…</p>
               ) : allMatchups ? (
                 <ParallelUniverseTab allMatchups={allMatchups} yearMap={yearMap} />
+              ) : null}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* What-if season simulator */}
+        <TabsContent value="season-sim" className="mt-4">
+          <Card className="p-6">
+            <CardHeader className="px-0 pt-0">
+              <CardTitle className="text-lg">Season Simulator — {seasonLabel}</CardTitle>
+              <CardDescription>
+                Play out the rest of the schedule to see where the standings land, or pick results for specific games and see what changes
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="px-0 pb-0">
+              {isLoading ? (
+                <p className="text-slate-400 text-sm animate-pulse">Loading…</p>
+              ) : matchups && allMatchups ? (
+                <SeasonSim matchups={matchups} allMatchups={allMatchups} dbSeasons={dbSeasons} />
+              ) : null}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Best / worst runs of consecutive weeks */}
+        <TabsContent value="streaks" className="mt-4">
+          <Card className="p-6">
+            <CardHeader className="px-0 pt-0">
+              <CardTitle className="text-lg">Hot &amp; Cold Runs</CardTitle>
+              <CardDescription>The highest and lowest scoring stretches of 2 to 10 straight weeks, league-wide or for one team</CardDescription>
+            </CardHeader>
+            <CardContent className="px-0 pb-0">
+              {isLoading ? (
+                <p className="text-slate-400 text-sm animate-pulse">Loading…</p>
+              ) : allMatchups ? (
+                <ScoreStreaks allMatchups={allMatchups} selectedSeason={selectedSeason} />
               ) : null}
             </CardContent>
           </Card>
