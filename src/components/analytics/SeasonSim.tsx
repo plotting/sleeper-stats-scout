@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useDeferredValue, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -77,10 +77,25 @@ export default function SeasonSim({
   };
 
   const bracketSize = getPlayoffBracketSize(seasonId);
+  // The buttons answer instantly; the 20,000-season rerun follows right behind (and the table dims while it catches up).
+  const simLocks = useDeferredValue(locks);
+  const catchingUp = simLocks !== locks;
   const outlook = useMemo(
-    () => (input && !projLoading ? simulateSeason({ teams: input.simTeams, games: input.futureGames, locks, numSims: NUM_SIMS, bracketSize }) : []),
-    [input, locks, bracketSize, projLoading],
+    () => (input && !projLoading ? simulateSeason({ teams: input.simTeams, games: input.futureGames, locks: simLocks, numSims: NUM_SIMS, bracketSize }) : []),
+    [input, simLocks, bracketSize, projLoading],
   );
+  // each team's record counting the results you've picked (they're facts for the table, not part of the simulation)
+  const picked = useMemo(() => {
+    const m = new Map<number, { w: number; l: number }>();
+    for (const g of input?.futureGames ?? []) {
+      const lock = locks.get(gameKey(g));
+      if (!lock) continue;
+      const win = lock === "home" ? g.homeId : g.awayId, lose = lock === "home" ? g.awayId : g.homeId;
+      m.set(win, { w: (m.get(win)?.w ?? 0) + 1, l: m.get(win)?.l ?? 0 });
+      m.set(lose, { w: m.get(lose)?.w ?? 0, l: (m.get(lose)?.l ?? 0) + 1 });
+    }
+    return m;
+  }, [input, locks]);
 
   if (!bare || !input) {
     return <p className="text-sm text-slate-400">No games left to simulate for this season.</p>;
@@ -113,13 +128,13 @@ export default function SeasonSim({
         </span>
       </div>
 
-      <div className="overflow-x-auto">
+      <div className={cn("overflow-x-auto transition-opacity", catchingUp && "opacity-50")}>
         <Table>
           <TableHeader>
             <TableRow>
               <TableHead className="w-8">#</TableHead>
               <TableHead>Team</TableHead>
-              <TableHead className="text-right">Now</TableHead>
+              <TableHead className="text-right">{lockedCount > 0 ? "With picks" : "Now"}</TableHead>
               <TableHead className="text-right">Proj wins</TableHead>
               <TableHead className="text-right">Likely finish</TableHead>
               <TableHead className="text-right">Range (80%)</TableHead>
@@ -137,7 +152,7 @@ export default function SeasonSim({
                 <TableRow key={t.teamId} className={cn(i < bracketSize && "bg-amber-400/[0.05]")}>
                   <TableCell className="text-slate-500">{i + 1}</TableCell>
                   <TableCell><Link to={`/team/${t.teamId}`} className="text-primary hover:underline font-medium text-sm">{t.teamName}</Link></TableCell>
-                  <TableCell className="text-right font-mono text-sm text-slate-400">{rec(t.wins, t.losses, t.ties)}</TableCell>
+                  <TableCell className="text-right font-mono text-sm text-slate-400">{rec(t.wins + (picked.get(t.teamId)?.w ?? 0), t.losses + (picked.get(t.teamId)?.l ?? 0), t.ties)}</TableCell>
                   <TableCell className="text-right font-mono text-sm font-semibold">{(o.avgWins).toFixed(1)}</TableCell>
                   <TableCell className="text-right font-mono text-sm">{likelyW % 1 === 0 ? `${likelyW}-${likelyL}` : `${likelyW}`}</TableCell>
                   <TableCell className="text-right font-mono text-sm text-slate-400">{o.winsLow}–{o.winsHigh} W</TableCell>
