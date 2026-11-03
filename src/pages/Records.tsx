@@ -11,6 +11,7 @@ import { StreaksSection } from "@/components/records/StreaksSection";
 import { AllTimeScheduleRecords } from "@/components/records/AllTimeScheduleRecords";
 import { TopPerformancesSection } from "@/components/records/TopPerformancesSection";
 import { TradeRecordsSection } from "@/components/records/TradeRecordsSection";
+import ScoreStreaks from "@/components/records/ScoreStreaks";
 import { LuckRecordsSection } from "@/components/records/LuckRecordsSection";
 
 const Records = () => {
@@ -484,6 +485,10 @@ const Records = () => {
             {matchups && (
               <TopPerformancesSection allMatchups={matchups} yearMap={yearMap} />
             )}
+          </section>
+          <section>
+            <h2 className="text-lg font-semibold mb-4">Hot &amp; Cold Runs</h2>
+            {matchups && <ScoreStreaks allMatchups={matchups} />}
           </section>
         </TabsContent>
 

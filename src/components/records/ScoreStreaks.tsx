@@ -67,8 +67,9 @@ function RunsTable({ title, runs, seasonLabel, tone }: { title: string; runs: St
   );
 }
 
-/** Best and worst runs of consecutive weeks, any length from 2 to 10, league-wide or for one team. */
-export default function ScoreStreaks({ allMatchups, selectedSeason }: { allMatchups: MatchupScoresView[]; selectedSeason: string }) {
+/** Best and worst runs of consecutive weeks, any length from 2 to 10, league-wide or for one team. With `selectedSeason` the
+ *  scope can be narrowed to that season; without it the table is all-time. */
+export default function ScoreStreaks({ allMatchups, selectedSeason }: { allMatchups: MatchupScoresView[]; selectedSeason?: string }) {
   const [length, setLength] = useState(3);
   const [scope, setScope] = useState<"all" | "season">("all");
   const [teamId, setTeamId] = useState<string>("all");
@@ -86,7 +87,7 @@ export default function ScoreStreaks({ allMatchups, selectedSeason }: { allMatch
     return [...map.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.id - b.id); // site-wide team order
   }, [allMatchups]);
 
-  const opts = { teamId: teamId === "all" ? undefined : Number(teamId), seasonId: scope === "season" ? Number(selectedSeason) : undefined, includePlayoffs: playoffs, limit: 10 };
+  const opts = { teamId: teamId === "all" ? undefined : Number(teamId), seasonId: scope === "season" && selectedSeason ? Number(selectedSeason) : undefined, includePlayoffs: playoffs, limit: 10 };
   const high = useMemo(() => findRuns(allMatchups, length, { ...opts, order: "high" }), [allMatchups, length, scope, teamId, playoffs, selectedSeason]); // eslint-disable-line react-hooks/exhaustive-deps
   const low = useMemo(() => findRuns(allMatchups, length, { ...opts, order: "low" }), [allMatchups, length, scope, teamId, playoffs, selectedSeason]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -110,16 +111,18 @@ export default function ScoreStreaks({ allMatchups, selectedSeason }: { allMatch
             </SelectContent>
           </Select>
         </div>
-        <div>
-          <p className="text-xs text-slate-500 mb-1">Seasons</p>
-          <Select value={scope} onValueChange={(v) => setScope(v as "all" | "season")}>
-            <SelectTrigger className="w-[180px]"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All seasons</SelectItem>
-              <SelectItem value="season">{seasonLabel(Number(selectedSeason))}</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
+        {selectedSeason && (
+          <div>
+            <p className="text-xs text-slate-500 mb-1">Seasons</p>
+            <Select value={scope} onValueChange={(v) => setScope(v as "all" | "season")}>
+              <SelectTrigger className="w-[180px]"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All seasons</SelectItem>
+                <SelectItem value="season">{seasonLabel(Number(selectedSeason))}</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        )}
         <Button variant={playoffs ? "default" : "outline"} size="sm" onClick={() => setPlayoffs((p) => !p)}>
           {playoffs ? "Including playoffs" : "Regular season only"}
         </Button>
