@@ -1,5 +1,6 @@
 import { supabase } from '@/integrations/supabase/client';
 import { normalizeBracket } from '@/utils/playoffBracket';
+import { leagueDateOf, utcDateOf } from '@/utils/tradeDate';
 import {
   fetchLeagueUsers,
   fetchLeagueRosters,
@@ -570,7 +571,7 @@ export async function syncTrades(
     .map((d) => d.last_picked ?? d.start_time)
     .filter((t): t is number => t != null);
   const draftCutoffMs = draftEndTimes.length > 0 ? Math.max(...draftEndTimes) : null;
-  const draftCutoffDate = draftCutoffMs != null ? new Date(draftCutoffMs).toISOString().split('T')[0] : null;
+  const draftCutoffDate = draftCutoffMs != null ? leagueDateOf(draftCutoffMs) : null;
   if (draftCutoffDate != null) {
     log(`Season ${year} draft cutoff: ${draftCutoffDate}`);
   } else if (previousSeasonId != null) {
@@ -637,12 +638,13 @@ export async function syncTrades(
     return;
   }
   const dbTxIds = new Set<string>();
+  const dbTxRows = new Map<string, { id: number; date: string }>(); // for re-dating trades stored with the old UTC day
   // Older rows have no Sleeper id: match them by team pair + date, then claim them.
   const legacyByKey = new Map<string, number[]>();
   const pairKey = (a: number | null, b: number | null, date: string) =>
     `${Math.min(a ?? 0, b ?? 0)}-${Math.max(a ?? 0, b ?? 0)}-${date}`;
   for (const r of existingRows ?? []) {
-    if (r.sleeper_transaction_id) { dbTxIds.add(r.sleeper_transaction_id); continue; }
+    if (r.sleeper_transaction_id) { dbTxIds.add(r.sleeper_transaction_id); dbTxRows.set(r.sleeper_transaction_id, { id: r.id, date: String(r.trade_date).slice(0, 10) }); continue; }
     const k = pairKey(r.team1_id, r.team2_id, r.trade_date);
     legacyByKey.set(k, [...(legacyByKey.get(k) ?? []), r.id]);
   }
@@ -653,6 +655,7 @@ export async function syncTrades(
   );
 
   let newTrades = 0;
+  let redated = 0;
 
   for (let week = 1; week <= totalWeeks; week++) {
     try {
@@ -662,14 +665,25 @@ export async function syncTrades(
       );
 
       for (const tx of trades) {
+        // A trade is dated when it was completed (status_updated), on the league's Eastern calendar day.
+        const tradeMs = tx.status_updated ?? tx.created;
+        const tradeDate = leagueDateOf(tradeMs);
+
+        // Already stored: fix its date if it was saved with the old (UTC, proposal-time) day, then move on.
+        const stored = dbTxRows.get(tx.transaction_id);
+        if (stored) {
+          if (stored.date !== tradeDate) {
+            const { error: dateErr } = await supabase.from('trades').update({ trade_date: tradeDate }).eq('id', stored.id);
+            if (!dateErr) { stored.date = tradeDate; redated++; }
+          }
+          continue;
+        }
         if (syncedIds.has(tx.transaction_id) || dbTxIds.has(tx.transaction_id)) continue;
 
         const rosterIds = tx.roster_ids ?? [];
         const team1Id = rosterIds[0] != null ? rosterMap.get(rosterIds[0]) : undefined;
         const team2Id = rosterIds[1] != null ? rosterMap.get(rosterIds[1]) : undefined;
         if (!team1Id || !team2Id) continue;
-
-        const tradeDate = new Date(tx.created).toISOString().split('T')[0];
 
         // Trades on/before this season's draft belong to the season that
         // just finished; a not-yet-scheduled draft means every trade so far
@@ -679,7 +693,8 @@ export async function syncTrades(
         const isBeforeOrAtDraft = draftCutoffDate == null ? true : tradeDate <= draftCutoffDate;
         const effectiveSeasonId = isBeforeOrAtDraft && previousSeasonId != null ? previousSeasonId : seasonId;
 
-        const legacyIds = legacyByKey.get(pairKey(team1Id, team2Id, tradeDate));
+        // legacy rows were dated by the UTC day of `created`, so look for that day too
+        const legacyIds = legacyByKey.get(pairKey(team1Id, team2Id, tradeDate)) ?? legacyByKey.get(pairKey(team1Id, team2Id, utcDateOf(tx.created)));
         if (legacyIds && legacyIds.length > 0) {
           const claimId = legacyIds.shift() as number;
           const { error: claimErr } = await supabase
@@ -787,7 +802,7 @@ export async function syncTrades(
     onProgress?.((week / totalWeeks) * 100);
   }
 
-  log(`Trades sync complete for ${year}: ${newTrades} new trades`, 'success');
+  log(`Trades sync complete for ${year}: ${newTrades} new trades${redated > 0 ? `, ${redated} re-dated` : ''}`, 'success');
 }
 
 // ─── Repair existing trade descriptions ──────────────────────────────────────

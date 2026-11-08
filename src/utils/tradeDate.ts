@@ -11,3 +11,17 @@ export function formatTradeDate(value: string): string {
   const [y, m, d] = value.slice(0, 10).split('-').map(Number);
   return `${MONTHS[m - 1]} ${d}, ${y}`;
 }
+
+/** The league plays on US Eastern time, so a trade is dated by the Eastern calendar day it happened on. (Taking the UTC day
+ *  pushes any trade after about 8 PM Eastern onto the next day.) */
+export const LEAGUE_TIME_ZONE = 'America/New_York';
+
+/** "YYYY-MM-DD" of an epoch-ms timestamp on the league's calendar. */
+export function leagueDateOf(ms: number): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: LEAGUE_TIME_ZONE, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ms));
+}
+
+/** "YYYY-MM-DD" in UTC, which is how trades were dated before. */
+export function utcDateOf(ms: number): string {
+  return new Date(ms).toISOString().split('T')[0];
+}
