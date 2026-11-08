@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import { displayDesc, nameKey, parseResolvedPick } from "@/utils/dynastyValue";
 import { assess, TIER_LABEL, type CalcAsset, type Depth } from "@/utils/marketCalc";
 import { loadValuesOn } from "./assetData";
+import { formatTradeDate } from "@/utils/tradeDate";
 
 interface Item { item_type: string; item_description: string; to_team_id: number | null }
 interface LeagueTrade { id: number; trade_date: string; team1_id: number; team2_id: number; trade_items: Item[] }
@@ -187,7 +188,7 @@ export function LeagueTrades({ entries, depth, onOpen }: { entries: CalcAsset[];
         return (
           <div key={t.id} className="rounded-lg border border-white/10 px-3 py-2 flex flex-wrap items-center gap-3">
             <div className="min-w-0 flex-1 space-y-1 text-xs">
-              <p className="text-[11px] text-slate-500">{new Date(t.trade_date).toLocaleDateString()}</p>
+              <p className="text-[11px] text-slate-500">{formatTradeDate(t.trade_date)}</p>
               <p><span className="text-slate-300 font-medium">{n1}</span> <span className="text-slate-500">got</span> {list(g1)}</p>
               <p><span className="text-slate-300 font-medium">{n2}</span> <span className="text-slate-500">got</span> {list(g2)}</p>
             </div>

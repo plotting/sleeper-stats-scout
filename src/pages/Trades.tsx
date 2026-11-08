@@ -25,6 +25,7 @@ import TradeAssetModal from "@/components/TradeAssetModal";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTradeValuation } from "@/hooks/useTradeValuation";
+import { parseTradeDate } from "@/utils/tradeDate";
 import {
   getNFLWeek, getFirstPlayableWeek, parseUnresolvedPickFut,
   type TradeItem,
@@ -39,15 +40,6 @@ function displayDesc(raw: string): string {
     .replace(/\s*\[fut:\d+\]/g, '')
     .replace(/\s*\(via [^)]+\)/g, '')
     .trim();
-}
-
-/**
- * Parse a trade_date string from Supabase (stored as midnight UTC, e.g. "2025-07-26 00:00:00+00")
- * into a local Date at noon to avoid the UTC→local-time day-shift.
- */
-function parseTradeDateLocal(isoStr: string): Date {
-  const datePart = isoStr.slice(0, 10); // "2025-07-26"
-  return new Date(`${datePart}T12:00:00`); // noon local — safely within the correct day
 }
 
 /** Sort key for a pick description — players come first, then picks by year/round/slot. */
@@ -263,7 +255,7 @@ const Trades = () => {
             </TableHeader>
             <TableBody>
               {trades.map((trade) => {
-                const tradeDate = parseTradeDateLocal(trade.trade_date);
+                const tradeDate = parseTradeDate(trade.trade_date);
                 const tradeYear = tradeDate.getFullYear();
                 const { week: tradeWeek, inSeason: tradeInSeason } = getNFLWeek(tradeDate);
                 // First week the acquired player can actually play (Sun/Mon trades push to next week)
@@ -436,7 +428,7 @@ const Trades = () => {
                             ? <ChevronDown className="h-3 w-3 text-slate-400" />
                             : <ChevronRight className="h-3 w-3 text-slate-500" />
                           }
-                          {format(parseTradeDateLocal(trade.trade_date), "MMM d, yyyy")}{tradeInSeason && <span className="block text-[10px] text-slate-500 mt-0.5">Wk {displayWeek}</span>}
+                          {format(parseTradeDate(trade.trade_date), "MMM d, yyyy")}{tradeInSeason && <span className="block text-[10px] text-slate-500 mt-0.5">Wk {displayWeek}</span>}
                         </div>
                       </TableCell>
                       <TableCell colSpan={4} className="pt-3 pb-3">
@@ -526,7 +518,7 @@ const Trades = () => {
                           ? <ChevronDown className="h-3 w-3 text-slate-400" />
                           : <ChevronRight className="h-3 w-3 text-slate-500" />
                         }
-                        {format(parseTradeDateLocal(trade.trade_date), "MMM d, yyyy")}{tradeInSeason && <span className="block text-[10px] text-slate-500 mt-0.5">Wk {displayWeek}</span>}
+                        {format(parseTradeDate(trade.trade_date), "MMM d, yyyy")}{tradeInSeason && <span className="block text-[10px] text-slate-500 mt-0.5">Wk {displayWeek}</span>}
                       </div>
                     </TableCell>
                     <TableCell className="font-medium align-top pt-3">

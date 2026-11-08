@@ -12,6 +12,7 @@ import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { formatTradeDate } from "@/utils/tradeDate";
 
 interface TradeAssetModalProps {
   open: boolean;
@@ -138,7 +139,7 @@ const TradeAssetModal = ({ open, onOpenChange, assetDescription }: TradeAssetMod
                       </Link>
                     </div>
                     <div className="text-sm text-slate-400 shrink-0">
-                      {format(new Date(trade.trade_date), "MMM d, yyyy")}
+                      {formatTradeDate(trade.trade_date)}
                     </div>
                   </div>
 
