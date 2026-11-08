@@ -31,7 +31,8 @@ if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
 }
 const MIN_TRADES = Number(process.env.MIN_TRADES ?? 30);
 const MAX_AGE_DAYS = Number(process.env.MAX_AGE_DAYS ?? 548); // ~18 months: older trades reflect a different market
-const HALF_LIFE_DAYS = Number(process.env.HALF_LIFE_DAYS ?? 120); // values drift, so older trades count less
+// values drift, so older trades count less. 60 beat 120 on held-out recent trades in all three test periods (see the sweep results: ~2% lower average gap)
+const HALF_LIFE_DAYS = Number(process.env.HALF_LIFE_DAYS ?? 60);
 const now = new Date();
 // Depth discount per extra piece on a side (richest first). Default 1 = none: values fit to real trades already
 // contain the market's consolidation premium. Only lower it if the panel's uneven-trade line stays consistently positive.
