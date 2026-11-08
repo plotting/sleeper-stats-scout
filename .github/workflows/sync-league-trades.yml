@@ -1,0 +1,30 @@
+name: Sync league trades
+
+# Pulls our league's completed trades from Sleeper into the trades table (see scripts/sync-league-trades.ts)
+# so the League trades card and trade history fill themselves in. Already-synced trades are skipped, so this
+# is cheap to run often. Trades happen all year, including the offseason, so it isn't limited to the season.
+# Needs the SUPABASE_SERVICE_ROLE_KEY secret.
+on:
+  schedule:
+    - cron: '40 */6 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: sync-league-trades
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npx tsx scripts/sync-league-trades.ts
+        env:
+          TSX_TSCONFIG_PATH: tsconfig.app.json
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
