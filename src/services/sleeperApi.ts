@@ -102,6 +102,7 @@ export interface SleeperTransaction {
   type: 'trade' | 'free_agent' | 'waiver' | 'commissioner';
   status: 'complete' | 'failed';
   created: number; // epoch ms
+  status_updated?: number; // epoch ms; for a trade, when it was accepted/completed (created can be when it was proposed)
   roster_ids: number[];
   adds: Record<string, number> | null;   // player_id → roster_id (receiving)
   drops: Record<string, number> | null;  // player_id → roster_id (sending)
