@@ -1,7 +1,7 @@
 const ITEMS: Array<[string, string[]]> = [
   ["How are trade values calculated?", [
     "Values come from thousands of completed trades in public Sleeper dynasty leagues with a lineup like yours (1 QB, 2 RB, 2 WR, 1 TE, 3 flex). Every trade is assumed to be roughly even, so we find the values that make the two sides of as many trades as possible balance.",
-    "Only the last 18 months of trades are used (older ones reflect a different market). Within that, recent trades count more (a trade's weight halves every 120 days), clean 1-for-1 deals carry the most signal, and outlier trades are capped so one lopsided deal can't drag a price. The most valuable player is set to 10,000. The fit re-runs daily and the crawler keeps adding new trades.",
+    "Only the last 18 months of trades are used (older ones reflect a different market). Within that, recent trades count more (a trade's weight halves every 60 days), clean 1-for-1 deals carry the most signal, and outlier trades are capped so one lopsided deal can't drag a price. The most valuable player is set to 10,000. The fit re-runs daily and the crawler keeps adding new trades.",
   ]],
   ["What is the consolidation premium?", [
     "In real trades, a side that gives one great asset for several lesser ones is accepted at a lower plain-sum value than the pile of pieces. The fit measures that premium per trade shape (2-for-1, 3-for-1, …) and the calculator multiplies the single-asset side by it.",
