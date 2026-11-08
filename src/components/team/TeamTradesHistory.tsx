@@ -6,6 +6,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { format } from "date-fns";
 import { useState } from "react";
 import TradeAssetModal from "@/components/TradeAssetModal";
+import { formatTradeDate } from "@/utils/tradeDate";
 
 interface TeamTradesHistoryProps {
   teamId: number;
@@ -89,7 +90,7 @@ const TeamTradesHistory = ({ teamId, selectedSeason }: TeamTradesHistoryProps) =
                   <div>
                     <p className="font-medium">Trade with {otherTeam.name}</p>
                     <p className="text-sm text-muted-foreground">
-                      {format(new Date(trade.trade_date), "MMM d, yyyy")} 
+                      {formatTradeDate(trade.trade_date)} 
                       {isCareerView && ` • Season ${trade.season_id}`}
                     </p>
                   </div>

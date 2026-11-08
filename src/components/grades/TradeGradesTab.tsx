@@ -9,6 +9,7 @@ import { displayDesc } from "@/utils/dynastyValue";
 import { GRADE_STYLE, relativeGrades } from "@/utils/gradeScale";
 import { useTradeValuation } from "@/hooks/useTradeValuation";
 import type { TradeItem } from "@/utils/tradeHelpers";
+import { parseTradeDate } from "@/utils/tradeDate";
 
 // A trade counts as a win/loss for a side when its net VORP clears this margin.
 const EVEN_MARGIN = 10;
@@ -79,7 +80,7 @@ const TradeGradesTab = () => {
     let counted = 0;
     for (const t of trades ?? []) {
       if (t.team1_id == null || t.team2_id == null || !t.team1 || !t.team2) continue;
-      const date = new Date(t.trade_date);
+      const date = parseTradeDate(t.trade_date);
       const v1 = valuation.computeTeamVorp(t.items, t.team1_id, date, t.id);
       const v2 = valuation.computeTeamVorp(t.items, t.team2_id, date, t.id);
       if (v1 === null && v2 === null) continue;
