@@ -102,7 +102,7 @@ const Seasons = () => {
         </TabsContent>
 
         <TabsContent value="h2h">
-          <HeadToHead />
+          <HeadToHead seasonId={seasonNumber} />
         </TabsContent>
       </Tabs>
     </div>

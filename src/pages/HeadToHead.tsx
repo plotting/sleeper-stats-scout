@@ -23,13 +23,14 @@ import {
 import { cn } from "@/lib/utils";
 import type { MatchupScoresView, Team } from "@/types/database";
 import { useTeams } from "@/hooks/useTeams";
+import SeasonH2H from "@/components/h2h/SeasonH2H";
 
 function fmt(n: number, d = 1) {
   return n.toFixed(d);
 }
 
 type Filter = "all" | "regular" | "playoff";
-type ViewMode = "breakdown" | "matrix";
+type ViewMode = "breakdown" | "matrix" | "season";
 
 interface H2HRow {
   opponentId: number;
@@ -254,10 +255,11 @@ function MatrixView({ teams, matchups, filter }: MatrixViewProps) {
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
-const HeadToHead = () => {
+// Inside Seasons the page's season picker drives the season view (seasonId); on its own the season view has its own picker.
+const HeadToHead = ({ seasonId }: { seasonId?: number } = {}) => {
   const [selectedTeamId, setSelectedTeamId] = useState<string>("");
   const [filter, setFilter] = useState<Filter>("all");
-  const [viewMode, setViewMode] = useState<ViewMode>("matrix");
+  const [viewMode, setViewMode] = useState<ViewMode>(seasonId != null ? "season" : "matrix");
 
   const { data: teams, isLoading: teamsLoading } = useTeams();
 
@@ -344,7 +346,7 @@ const HeadToHead = () => {
         </div>
         {/* View mode toggle */}
         <div className="flex gap-1 rounded-lg border border-white/10 p-1">
-          {(["matrix", "breakdown"] as ViewMode[]).map((v) => (
+          {(["season", "matrix", "breakdown"] as ViewMode[]).map((v) => (
             <button
               key={v}
               onClick={() => setViewMode(v)}
@@ -353,11 +355,20 @@ const HeadToHead = () => {
                 viewMode === v ? "bg-white/10 text-white font-medium" : "text-slate-400 hover:text-white",
               )}
             >
-              {v === "matrix" ? "All-Time Matrix" : "Team Breakdown"}
+              {v === "season" ? "By Season" : v === "matrix" ? "All-Time Matrix" : "Team Breakdown"}
             </button>
           ))}
         </div>
       </header>
+
+      {/* ── Season View ──────────────────────────────────────────────────── */}
+      {viewMode === "season" && (
+        teamsLoading || !teams ? (
+          <p className="text-slate-400 text-sm animate-pulse">Loading…</p>
+        ) : (
+          <SeasonH2H teams={teams} seasonId={seasonId} />
+        )
+      )}
 
       {/* ── Matrix View ──────────────────────────────────────────────────── */}
       {viewMode === "matrix" && (
